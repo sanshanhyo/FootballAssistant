@@ -15,6 +15,33 @@ var unknownPacket = completePacket; unknownPacket.Flags = 3;
 Assert(!NativePacketClient.IsComplete(unknownPacket), "packet original result remains explicitly unknown");
 var oversizedPacket = completePacket; oversizedPacket.OriginalKeysCount = ulong.MaxValue;
 Assert(!NativePacketClient.IsComplete(oversizedPacket), "packet count overflow rejected before multiplication");
+var requestWindow = new Dictionary<Guid, DateTimeOffset>();
+var requestNow = DateTimeOffset.UtcNow;
+var requestA = Guid.NewGuid(); var requestB = Guid.NewGuid();
+Assert(NativePacketClient.TryConsumeRequest(requestWindow, requestA, requestNow, requestNow), "first packet control nonce accepted");
+Assert(NativePacketClient.TryConsumeRequest(requestWindow, requestB, requestNow, requestNow), "different packet control nonce accepted");
+Assert(!NativePacketClient.TryConsumeRequest(requestWindow, Guid.Parse(requestA.ToString("B").ToUpperInvariant()), requestNow, requestNow.AddSeconds(1)), "A-B-A replay and alternate UUID spelling rejected");
+Assert(!NativePacketClient.TryConsumeRequest(requestWindow, Guid.NewGuid(), requestNow.AddSeconds(-31), requestNow), "expired packet control rejected");
+Assert(!NativePacketClient.TryConsumeRequest(requestWindow, Guid.NewGuid(), requestNow.AddSeconds(1), requestNow), "future packet control rejected");
+using (var unknownPacketStatus = JsonDocument.Parse(JsonSerializer.Serialize(NativePacketClient.Describe(new NativePacketManifest { Version = 1, StructSize = 112, State = 1 }))))
+{
+    foreach (var field in new[] { "call_sequence", "monotonic_ns", "native_thread_id", "original_keys_count", "original_payload_count", "copied_keys_bytes", "copied_payload_bytes" })
+        Assert(unknownPacketStatus.RootElement.GetProperty(field).ValueKind == JsonValueKind.Null, "pending packet " + field + " remains unknown");
+    Assert(unknownPacketStatus.RootElement.GetProperty("checked_packets").GetString() == "0", "known zero checked counter retained");
+    Assert(unknownPacketStatus.RootElement.GetProperty("skipped_packets").GetString() == "0", "known zero skipped counter retained");
+}
+var immutableTemp = Path.Combine(Path.GetTempPath(), "footballassistant-evidence-test-" + Guid.NewGuid());
+Directory.CreateDirectory(immutableTemp);
+try
+{
+    var evidencePath = Path.Combine(immutableTemp, "packet.bin");
+    NativePacketClient.WriteImmutableBytes(evidencePath, new byte[] { 1, 2, 3 });
+    NativePacketClient.WriteImmutableBytes(evidencePath, new byte[] { 1, 2, 3 });
+    try { NativePacketClient.WriteImmutableBytes(evidencePath, new byte[] { 4, 5, 6 }); throw new Exception("Changed packet evidence was accepted"); }
+    catch (IOException) { }
+    Assert(File.ReadAllBytes(evidencePath).SequenceEqual(new byte[] { 1, 2, 3 }), "packet evidence never overwritten by another copy");
+}
+finally { Directory.Delete(immutableTemp, true); }
 if (args.Length == 3 && args[0] == "--native-packet-abi-smoke")
 {
     var packetTemp = Path.Combine(Path.GetTempPath(), "footballassistant-packet-abi-" + Guid.NewGuid());

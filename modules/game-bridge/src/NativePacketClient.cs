@@ -41,6 +41,7 @@ internal sealed class NativePacketClient
     private readonly string privateRoot, observerSha;
     private readonly Action<string> trace;
     private string? consumedRequestId, activeRequestId;
+    private readonly Dictionary<Guid, DateTimeOffset> seenRequestIds = new();
     private ulong activeCaptureId;
     private int? lastControlResult;
     private string? lastSavedPacket;
@@ -89,17 +90,52 @@ internal sealed class NativePacketClient
         m.CopiedKeysBytes == m.OriginalKeysCount * 8 && m.CopiedPayloadBytes == m.OriginalPayloadCount &&
         m.CopiedKeysBytes + m.CopiedPayloadBytes <= 98_304;
 
-    private static object Describe(NativePacketManifest m) => new
+    internal static object Describe(NativePacketManifest m)
     {
+        var known = m.State == 4 && (m.Flags & 1) != 0;
+        var copied = m.State == 4 && (m.Flags & 2) != 0;
+        return new
+        {
         version = m.Version, struct_size = m.StructSize, state = m.State, flags = m.Flags,
-        capture_id = m.CaptureId.ToString(), call_sequence = m.CallSequence.ToString(), monotonic_ns = m.MonotonicNs.ToString(),
-        native_thread_id = m.NativeThreadId == 0 ? null : m.NativeThreadId.ToString(),
-        original_keys_count = m.OriginalKeysCount.ToString(), original_payload_count = m.OriginalPayloadCount.ToString(),
-        copied_keys_bytes = m.CopiedKeysBytes.ToString(), copied_payload_bytes = m.CopiedPayloadBytes.ToString(),
+        capture_id = m.CaptureId.ToString(), call_sequence = known ? m.CallSequence.ToString() : null,
+        monotonic_ns = known ? m.MonotonicNs.ToString() : null,
+        native_thread_id = known && m.NativeThreadId != 0 ? m.NativeThreadId.ToString() : null,
+        original_keys_count = known ? m.OriginalKeysCount.ToString() : null,
+        original_payload_count = known ? m.OriginalPayloadCount.ToString() : null,
+        copied_keys_bytes = copied ? m.CopiedKeysBytes.ToString() : null,
+        copied_payload_bytes = copied ? m.CopiedPayloadBytes.ToString() : null,
         checked_packets = m.CheckedPackets.ToString(), skipped_packets = m.SkippedPackets.ToString(),
         last_skip_reason = m.LastSkipReason, busy_skipped_total = m.BusySkippedTotal.ToString(),
         original_callback_result_known = false
-    };
+        };
+    }
+
+    internal static bool TryConsumeRequest(Dictionary<Guid, DateTimeOffset> seen, Guid id, DateTimeOffset requested, DateTimeOffset current)
+    {
+        if (requested > current || current - requested > TimeSpan.FromSeconds(30)) return false;
+        foreach (var expired in seen.Where(item => item.Value < current).Select(item => item.Key).ToArray()) seen.Remove(expired);
+        if (seen.ContainsKey(id) || seen.Count >= 128) return false;
+        seen.Add(id, requested.AddSeconds(30));
+        return true;
+    }
+
+    internal static void WriteImmutableBytes(string path, byte[] bytes)
+    {
+        void VerifyExisting()
+        {
+            if (new FileInfo(path).LinkTarget is not null || !File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes))
+                throw new IOException("Existing packet evidence differs; it will not be overwritten.");
+        }
+        if (File.Exists(path)) { VerifyExisting(); return; }
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) stream.Write(bytes);
+            try { File.Move(temporary, path); }
+            catch (IOException) when (File.Exists(path)) { VerifyExisting(); }
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
 
     // Called by the single background drain task, never by a game callback.
     public void Tick(string sessionId, string managedSha, bool observerInstalled)
@@ -145,7 +181,7 @@ internal sealed class NativePacketClient
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var signal = document.RootElement;
         var requestId = signal.GetProperty("request_id").GetString();
-        if (requestId == consumedRequestId || !Guid.TryParse(requestId, out _)) return;
+        if (!Guid.TryParse(requestId, out var requestGuid)) return;
         var requested = signal.GetProperty("requested_at").GetDateTimeOffset();
         var current = DateTimeOffset.UtcNow;
         if (signal.GetProperty("pid").GetInt32() != Environment.ProcessId ||
@@ -154,10 +190,18 @@ internal sealed class NativePacketClient
             signal.GetProperty("observer_sha256").GetString() != observerSha ||
             signal.GetProperty("game_plugin_sha256").GetString() != Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_PLUGIN_SHA256") ||
             requested > current || current - requested > TimeSpan.FromSeconds(30)) return;
-        consumedRequestId = requestId; // Any valid operation is tried once only.
+        if (!TryConsumeRequest(seenRequestIds, requestGuid, requested, current)) return;
+        requestId = requestGuid.ToString("D");
+        consumedRequestId = requestId; // UUID spellings share the same single-use window.
         var operation = signal.GetProperty("operation").GetString();
         if (operation == "arm")
         {
+            if (Directory.Exists(Path.Combine(privateRoot, "diagnostics", "native-packets", sessionId, requestId)))
+            {
+                lastControlResult = 100;
+                trace("Native packet request already has an evidence directory; no re-arm or overwrite.");
+                return;
+            }
             var request = DefaultRequest();
             lastControlResult = arm(ref request, 48, out var id);
             if (lastControlResult == 0) { activeCaptureId = id; activeRequestId = requestId; }
@@ -196,10 +240,22 @@ internal sealed class NativePacketClient
         var keysSha = Convert.ToHexString(SHA256.HashData(keys)).ToLowerInvariant();
         var payloadSha = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
         // Files only contain our native deep copies, never retained game pointers.
-        File.WriteAllBytes(Path.Combine(directory, "keys.bin.tmp"), keys);
-        File.WriteAllBytes(Path.Combine(directory, "payload.bin.tmp"), payload);
-        File.Move(Path.Combine(directory, "keys.bin.tmp"), Path.Combine(directory, "keys.bin"), true);
-        File.Move(Path.Combine(directory, "payload.bin.tmp"), Path.Combine(directory, "payload.bin"), true);
+        WriteImmutableBytes(Path.Combine(directory, "keys.bin"), keys);
+        WriteImmutableBytes(Path.Combine(directory, "payload.bin"), payload);
+        var path = Path.Combine(directory, "packet.json");
+        if (File.Exists(path))
+        {
+            using var existing = JsonDocument.Parse(File.ReadAllText(path));
+            var saved = existing.RootElement;
+            if (new FileInfo(path).LinkTarget is not null || saved.GetProperty("packet_id").GetString() != activeRequestId ||
+                saved.GetProperty("session_id").GetString() != sessionId || saved.GetProperty("managed_build_sha256").GetString() != managedSha ||
+                saved.GetProperty("observer_sha256").GetString() != observerSha || saved.GetProperty("keys_sha256").GetString() != keysSha ||
+                saved.GetProperty("payload_sha256").GetString() != payloadSha ||
+                saved.GetProperty("native").GetProperty("capture_id").GetString() != copied.CaptureId.ToString())
+                throw new IOException("Saved packet belongs to different evidence; it will not be overwritten.");
+            lastSavedPacket = path;
+            return; // An earlier save completed but native release may have failed.
+        }
         var manifest = new
         {
             schema_version = 1, packet_id = activeRequestId, pid = Environment.ProcessId, session_id = sessionId,
@@ -220,9 +276,7 @@ internal sealed class NativePacketClient
             keys_file = "keys.bin", payload_file = "payload.bin", keys_sha256 = keysSha, payload_sha256 = payloadSha,
             native = Describe(copied), key_to_value_mapping_known = false, business_values_mapped = false
         };
-        var path = Path.Combine(directory, "packet.json");
-        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(manifest));
-        File.Move(path + ".tmp", path, true);
+        WriteImmutableBytes(path, JsonSerializer.SerializeToUtf8Bytes(manifest));
         lastSavedPacket = path;
         trace("Saved one complete native packet; keys=" + copied.OriginalKeysCount + "; payload_bytes=" + payload.Length + "; payload_sha256=" + payloadSha + "; no game parser invoked.");
     }
