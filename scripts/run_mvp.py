@@ -123,7 +123,7 @@ def launch_backend(url: str) -> None:
     if state is None:
         raise RuntimeError("The configured loopback port responds with a different service; leaving it untouched.")
 
-    command = ["uv", "run", "--frozen", "--extra", "save", "football-assistant-backend"]
+    command = ["uv", "run", "--frozen", "--extra", "save", "--extra", "agent", "football-assistant-backend"]
     log_descriptor = open_backend_log()
     try:
         options: dict[str, object] = {

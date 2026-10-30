@@ -231,6 +231,29 @@ class ObservationStore:
             row,_ = self._selected()
             return json.loads(row["latest_snapshot"] or row["latest_envelope"]) if row else None
 
+    def reader_snapshot(self,after=0,limit=100,*,event_id=None):
+        """Page the selected source without merging saves, sessions or diagnostics."""
+        with self._lock,self._db:
+            self._refresh()
+            row,reason = self._selected()
+            body = json.loads(row["latest_snapshot"] or row["latest_envelope"]) if row else None
+            if event_id is not None and (body is None or body["event_id"] != event_id):
+                raise ObservationConflict("Snapshot changed")
+            facts = body["payload"].get("facts",[]) if body else []
+            items = facts[after:after+limit]
+            cursor = after+len(items)
+            metadata = {key:value for key,value in body.items() if key!="payload"} if body else None
+            payload_metadata = {key:value for key,value in body["payload"].items() if key!="facts"} if body else None
+            raw_ui = any(fact["entity_kind"] in ("ui_element","ui_text") for fact in facts)
+            return {"reader_api":1,"source_status":{**self._stream_status(row),"selection_reason":reason} if row else self.source_status(),
+                    "observation":metadata,"payload_metadata":payload_metadata,"facts":items,
+                    "snapshot_event_id":body["event_id"] if body else None,
+                    "facts_total":len(facts),"next_cursor":cursor,"has_more":cursor<len(facts),
+                    "partial":body is None or body["payload"]["kind"]!="fact_snapshot" or body["status"]!="available" or raw_ui,
+                    "semantic_scope":"raw_ui_observation" if raw_ui else "adapter_observation",
+                    "limitations":["UI text may contain hidden or cached elements; positions do not establish football entity identity."] if raw_ui else [],
+                    "native_records":{"state":"awaiting_decoded_native_records","payload_decoded":False,"field_values_known":False}}
+
     def source_status(self):
         with self._lock,self._db:
             self._refresh()

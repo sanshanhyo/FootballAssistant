@@ -29,5 +29,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: '0.9.9'
-      - run: uv sync --frozen --python 3.14 --extra save
-      - run: uv run --frozen --extra save pytest -q
+      - name: Verify reader base install has no model SDK
+        run: uv sync --frozen --python 3.14 --no-dev
+      - run: uv run --no-sync python -c "import importlib.util; from football_assistant_data.reader import create_reader_app; assert importlib.util.find_spec('pydantic_ai') is None; assert importlib.util.find_spec('openai') is None; create_reader_app()"
+      - run: uv sync --frozen --python 3.14 --extra save --extra agent
+      - run: uv run --frozen --extra save --extra agent pytest -q

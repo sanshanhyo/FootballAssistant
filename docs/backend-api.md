@@ -7,10 +7,10 @@
 在项目根目录执行：
 
 ```sh
-uv run football-assistant-backend
+uv run --extra agent football-assistant-backend
 ```
 
-已有 uv 时该命令按 `uv.lock` 同步项目 `.venv` 并启动。首次可显式运行 `uv sync --frozen --python 3.14`，Windows 在 PowerShell 同样使用 uv；开发版本要求 Python ≥3.12，本机与 CI 计划使用 3.14。CI 配置存在不代表 Windows 实测已通过。
+已有 uv 时该命令按 `uv.lock` 同步项目 `.venv` 并启动。首次可显式运行 `uv sync --frozen --python 3.14 --extra agent`，Windows 在 PowerShell 同样使用 uv；开发版本要求 Python ≥3.12，本机与 CI 计划使用 3.14。CI 配置存在不代表 Windows 实测已通过。
 
 把 `.env.example` 复制为本机 `.env`，填入用户选择的现有 OpenAI 兼容服务的 `FOOTBALL_ASSISTANT_BASE_URL`、`FOOTBALL_ASSISTANT_MODEL`、`FOOTBALL_ASSISTANT_API_KEY`。本项目不会读取其他项目的密钥。不配置模型也可运行健康、数据与记忆接口，聊天明确返回 503。2026-10-30 已按用户有限额度授权，用 OpenCode Go / mimo-v2.6-flash 完成 2 次真实请求，其中第 2 次经打包桌宠窗口，基于实际存档的两个实验性摘要字段回答并完成本机 TTS；当前授权 2 次预算已用完。这不代表完整球队/球员读取。
 
@@ -65,7 +65,7 @@ uv run --extra save football-assistant-save-probe --confirmed-copy "/path/to/sta
 
 认证失败 401；Schema/输入错误 422；请求过大 413；模型未配置 503 / `model_not_configured`；模型连接、超时或文本响应失败 502 / `model_unavailable`。业务错误使用 `detail:{code,message}`；框架输入验证错误仍使用标准 422 结构。错误响应不回显 API key、完整服务异常或模型请求正文，没有固定文本兜底伪装模型成功。可用 `FOOTBALL_ASSISTANT_MAX_OUTPUT_TOKENS` 限制输出，`FOOTBALL_ASSISTANT_MODEL_EXTRA_BODY` 传明确的兼容服务选项；`FOOTBALL_ASSISTANT_MODEL_REQUEST_LIMIT` 与 `FOOTBALL_ASSISTANT_MODEL_BUDGET_ID` 使用 SQLite 持久请求计数，失败也计数，超限返回 429 / `model_request_limit`。当前有限测试配置总上限 2、输出 160、关闭 thinking、零自动重试，本轮不会自动提高或重置该授权预算。用户之后批准继续时，可手动把 `.env` 的 `FOOTBALL_ASSISTANT_MODEL_REQUEST_LIMIT` 改为新的正整数总上限并重启后端，例如 3 表示现有 2 次后再允许 1 次；保持 `FOOTBALL_ASSISTANT_MODEL_BUDGET_ID`、数据目录和 SQLite 不变，不删除计数或聊天记录。
 
-运行 `uv run --extra save pytest -q`。覆盖本机鉴权、body 上限、Schema、观测重复、记忆重启/删除、失败模型连接，以及明确标记的本地 HTTP provider fixture 经过真实 PydanticAI/OpenAI SDK 的对话与历史通路。该 fixture 只证明接口联通，不是用户真实模型或真实游戏验收。Windows/macOS CI 已配置，只有实际跑出的结果才能作为跨平台通过证据。
+运行 `uv run --extra save --extra agent pytest -q`。覆盖本机鉴权、body 上限、Schema、观测重复、记忆重启/删除、失败模型连接，以及明确标记的本地 HTTP provider fixture 经过真实 PydanticAI/OpenAI SDK 的对话与历史通路。该 fixture 只证明接口联通，不是用户真实模型或真实游戏验收。Windows/macOS CI 已配置，只有实际跑出的结果才能作为跨平台通过证据。
 
 模型接入依据 [PydanticAI 兼容 API 官方文档](https://pydantic.dev/docs/ai/models/compatible-apis/)，使用 `OpenAIChatModel` + `OpenAICompatibleProvider`，显式服务地址/密钥，模型 SDK 不重试；事实上下文、人格和显式记忆随每轮请求发送给用户所选服务。
 

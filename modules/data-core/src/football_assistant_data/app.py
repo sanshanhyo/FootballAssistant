@@ -18,8 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
-from football_assistant_agent.service import AgentService, ModelBudgetExceeded, ModelNotConfigured, ModelUnavailable
-from football_assistant_agent.storage import CompanionStore
 from football_assistant_contracts.validation import validate_observation
 from .config import Settings
 from .storage import ObservationConflict, ObservationStore, private_directory, utc_now
@@ -99,8 +97,12 @@ def _write_runtime(settings: Settings) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or Settings.from_env()
+def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -> FastAPI:
+    settings = settings or Settings.from_env(reader_only=not enable_agent)
+    # Reader imports never import PydanticAI, OpenAI or companion storage.
+    if enable_agent:
+        from football_assistant_agent.service import AgentService, ModelBudgetExceeded, ModelNotConfigured, ModelUnavailable
+        from football_assistant_agent.storage import CompanionStore
 
     @asynccontextmanager
     async def lifespan(app):
@@ -108,15 +110,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         observations = ObservationStore(settings.data_dir / "observations.sqlite", settings.stale_seconds,runtime_stale_seconds=settings.runtime_stale_seconds,runtime_disconnect_seconds=settings.runtime_disconnect_seconds)
         app.state.registries = RegistryStore(observations)
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
-        companion = CompanionStore(settings.data_dir / "companion.sqlite")
-        app.state.observations, app.state.companion = observations, companion
-        app.state.agent = AgentService(settings,companion)
+        app.state.observations = observations
+        companion = None
+        if enable_agent:
+            companion = CompanionStore(settings.data_dir / "companion.sqlite")
+            app.state.companion = companion
+            app.state.agent = AgentService(settings,companion)
         _write_runtime(settings)
         try:
             yield
         finally:
             observations.close()
-            companion.close()
+            if companion is not None:
+                companion.close()
             try:
                 runtime = json.loads(settings.runtime_file.read_text())
                 if runtime.get("pid") == os.getpid() and secrets.compare_digest(runtime.get("token",""),settings.token):
@@ -135,16 +141,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status":"ok","service":"football-assistant","version":"0.1.0"}
+        return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
 
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
+        if not enable_agent:
+            return {"source_status":app.state.observations.source_status(),"mode":"reader","agent_enabled":False}
         return {"source_status":app.state.observations.source_status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.companion.counts()}
 
-    @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
-    async def companion_state():
-        state = "model_unconfigured" if not settings.model_configured else "model_error" if app.state.agent.last_error else "ready"
-        return {"state":"idle","mood":"neutral","status":state,"source_status":app.state.observations.source_status()}
+    if enable_agent:
+        @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
+        async def companion_state():
+            state = "model_unconfigured" if not settings.model_configured else "model_error" if app.state.agent.last_error else "ready"
+            return {"state":"idle","mood":"neutral","status":state,"source_status":app.state.observations.source_status()}
+
+    @app.get("/v1/reader/status",dependencies=[Depends(authorized)])
+    async def reader_status():
+        return {"service":"football-assistant","reader_api":1,"agent_enabled":enable_agent,
+                "source_status":app.state.observations.source_status(),
+                "latest_event_cursor":app.state.observations.events(0,1)["latest_cursor"],
+                "native_records":{"state":"awaiting_decoded_native_records","payload_decoded":False,
+                                  "field_values_known":False,"scope":"headers_are_diagnostics_only"}}
+
+    @app.get("/v1/reader/snapshot",dependencies=[Depends(authorized)])
+    async def reader_snapshot(after: int = Query(default=0,ge=0,le=2000),
+                              limit: int = Query(default=100,ge=1,le=200),
+                              event_id: str | None = Query(default=None,max_length=128)):
+        try:
+            return app.state.observations.reader_snapshot(after,limit,event_id=event_id)
+        except ObservationConflict:
+            raise HTTPException(409,detail={"code":"snapshot_changed","message":"Snapshot changed; restart paging at zero."}) from None
 
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
@@ -243,36 +269,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def interfaces(catalog_id: str = Query(min_length=1,max_length=256),after: int = Query(default=0,ge=0,le=9223372036854775807),limit: int = Query(default=100,ge=1,le=200),access_status: str | None = Query(default=None,max_length=64)):
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
-    @app.post("/v1/chat",dependencies=[Depends(authorized)])
-    async def chat(body: ChatRequest):
-        try:
-            return await app.state.agent.chat(body.message,body.conversation_id,app.state.observations.context())
-        except ModelBudgetExceeded as error:
-            raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
-        except ModelNotConfigured as error:
-            raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
-        except ModelUnavailable as error:
-            raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+    if enable_agent:
+        @app.post("/v1/chat",dependencies=[Depends(authorized)])
+        async def chat(body: ChatRequest):
+            try:
+                return await app.state.agent.chat(body.message,body.conversation_id,app.state.observations.context())
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
 
-    @app.get("/v1/memories",dependencies=[Depends(authorized)])
-    async def memories():
-        return {"memories":app.state.companion.memories()}
+        @app.get("/v1/memories",dependencies=[Depends(authorized)])
+        async def memories():
+            return {"memories":app.state.companion.memories()}
 
-    @app.post("/v1/memories",dependencies=[Depends(authorized)],status_code=201)
-    async def create_memory(body: MemoryRequest):
-        return app.state.companion.add_memory(body.content)
+        @app.post("/v1/memories",dependencies=[Depends(authorized)],status_code=201)
+        async def create_memory(body: MemoryRequest):
+            return app.state.companion.add_memory(body.content)
 
-    @app.delete("/v1/memories/{memory_id}",dependencies=[Depends(authorized)])
-    async def delete_memory(memory_id: UUID):
-        if not app.state.companion.delete_memory(str(memory_id)):
-            raise HTTPException(404,detail={"code":"memory_not_found","message":"记忆不存在。"})
-        return {"deleted":True}
+        @app.delete("/v1/memories/{memory_id}",dependencies=[Depends(authorized)])
+        async def delete_memory(memory_id: UUID):
+            if not app.state.companion.delete_memory(str(memory_id)):
+                raise HTTPException(404,detail={"code":"memory_not_found","message":"记忆不存在。"})
+            return {"deleted":True}
 
     return app
 
 
-def main():
-    settings = Settings.from_env()
+def serve(settings: Settings, *, enable_agent: bool = True):
+    from .server_lock import writer_guard
+    with writer_guard(settings):
+        _serve(settings,enable_agent=enable_agent)
+
+
+def _serve(settings: Settings, *, enable_agent: bool):
     # Bind before lifespan writes runtime.json: a second launch must not replace
     # the running service's credential file before discovering the port is busy.
     with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as listener:
@@ -286,5 +318,9 @@ def main():
             raise SystemExit("Backend port is unavailable; use the running instance or choose another port.") from None
         listener.listen(128)
         listener.setblocking(False)
-        server = uvicorn.Server(uvicorn.Config(create_app(settings),host="127.0.0.1",port=settings.port,access_log=False))
+        server = uvicorn.Server(uvicorn.Config(create_app(settings,enable_agent=enable_agent),host="127.0.0.1",port=settings.port,access_log=False))
         server.run(sockets=[listener])
+
+
+def main():
+    serve(Settings.from_env())

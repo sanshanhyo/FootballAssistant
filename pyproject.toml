@@ -11,18 +11,20 @@ dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn>=0.34,<1",
   "pydantic>=2.10,<3",
-  "pydantic-ai-slim[openai]>=1,<3",
   "python-dotenv>=1,<2",
   "jsonschema[format]>=4.26,<5",
 ]
 
 [project.optional-dependencies]
+agent = ["pydantic-ai-slim[openai]>=1,<3"]
 save = ["fmsave==0.7.0"]
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1"]
 
 [project.scripts]
+football-assistant-reader = "football_assistant_data.reader_cli:main"
+football-assistant-reader-server = "football_assistant_data.reader:main"
 football-assistant-backend = "football_assistant_data.app:main"
 football-assistant-import = "football_assistant_data.cli:main"
 football-assistant-save-probe = "football_assistant_save.adapter:main"

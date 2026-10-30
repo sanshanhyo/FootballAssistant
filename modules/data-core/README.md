@@ -8,4 +8,4 @@ Metadata registration exposes inventory completeness separately from verified re
 
 `GET /v1/monitoring`, `/v1/events`, `/v1/monitoring/fields` and `/v1/interfaces*` support desktop polling without chat. Events are a future Agent scheduling entry; there is no automatic LLM dispatch. Existing model budget stays unchanged.
 
-Start with `uv run --frozen --extra save football-assistant-backend`. See [Backend API](../../docs/backend-api.md) for authentication, protocol details and current limitations. Tests use synthetic fixtures; real continuous-runtime success requires actual bridge captures and separate live verification.
+Start with `uv run --frozen --extra save --extra agent football-assistant-backend`. See [Backend API](../../docs/backend-api.md) for authentication, protocol details and current limitations. Tests use synthetic fixtures; real continuous-runtime success requires actual bridge captures and separate live verification.

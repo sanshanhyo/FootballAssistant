@@ -33,12 +33,18 @@ uv run --frozen --extra save football-assistant-import-save \
 
 将示例路径替换为自己的存档路径；该导入流程对上述首个样本实测退出码为 `0`。成功后打开桌宠并聊天，可基于这份快照回复；保存新进度后需再次手动运行命令。退出码 `2` 表示格式/build 不受支持且没有事实被导入；`1` 表示稳定性、文件、后端或导入错误。未经 UI 逐份核对的新 snapshot 不得称为已交叉验证。
 
+## 独立读取控制台
+
+读取层可独立运行，无需模型、API Key 或桌宠。双击 `scripts/Reader.command`（macOS）或 `scripts/Reader.cmd`（Windows）打开命令框；脚本用隔离的 `.venv-reader` 环境，优先复用已有认证服务。输入 `help`、`status`、`snapshot`、`raw-ui`、`watch` 或 `quit`，输出为 JSON Lines。`quit` 只退出控制台。
+
+当前已有服务可只读复用：`uv run --no-sync python scripts/launch_reader.py --no-start status`。独立服务、分页参数和数据限制见[读取控制台](docs/reader-console.md)。Native headers 与计数属于诊断，尚未提供已解码的足球字段值。
+
 ## 启动 Companion
 
 ```sh
 cd /path/to/FootballAssistant
-uv run --frozen --extra save python scripts/run_mvp.py --check
-uv run --frozen --extra save python scripts/run_mvp.py
+uv run --frozen --extra save --extra agent python scripts/run_mvp.py --check
+uv run --frozen --extra save --extra agent python scripts/run_mvp.py
 ```
 
 `--check` 只检查 `uv`、当前平台桌面包与后端健康状态，不启动或停止进程。默认命令复用健康的本机服务，或在未运行时启动服务并打开已打包桌宠。后端日志写入 `local-data/backend.log`；macOS 下目录属当前用户且权限为 `0700`，日志为 `0600`。缺少桌面包时，macOS 构建命令为 `cd apps/companion && npm ci && npm run pack:mac`，Windows x64 为 `cd apps/companion && npm ci && npm run pack:win`。

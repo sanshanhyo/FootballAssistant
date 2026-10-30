@@ -24,6 +24,7 @@ local-saves/
 __pycache__/
 *.py[cod]
 .venv/
+.venv-reader/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

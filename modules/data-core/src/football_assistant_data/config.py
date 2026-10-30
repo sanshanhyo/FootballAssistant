@@ -36,13 +36,20 @@ class Settings:
         return all((self.base_url, self.model, self.api_key))
 
     @classmethod
-    def from_env(cls) -> "Settings":
-        load_dotenv(ROOT / ".env", override=False)
+    def from_env(cls, *, reader_only: bool = False) -> "Settings":
+        if not reader_only:
+            load_dotenv(ROOT / ".env", override=False)
         data_dir = Path(os.environ.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data")).expanduser().resolve()
         runtime_file = Path(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json")).expanduser().resolve()
         port = int(os.environ.get("FOOTBALL_ASSISTANT_PORT", "17827"))
         if not 1 <= port <= 65535:
             raise ValueError("FOOTBALL_ASSISTANT_PORT must be 1..65535")
+        if reader_only:
+            # Independent reader needs no .env or model configuration.
+            return cls(data_dir=data_dir,runtime_file=runtime_file,port=port,
+                       token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
+                       runtime_stale_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_STALE_SECONDS","10")),
+                       runtime_disconnect_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_DISCONNECT_SECONDS","30")))
         return cls(
             data_dir=data_dir, runtime_file=runtime_file, port=port,
             token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
