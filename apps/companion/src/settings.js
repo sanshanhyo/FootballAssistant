@@ -110,6 +110,15 @@
     $('simulate-scenario').disabled = state.mode !== 'mock';
     $('scenario').disabled = state.mode !== 'mock';
   }
+  function renderCharacter() {
+    const character = state?.character;
+    $('character-name').textContent = character ? `${character.displayName} / ${character.englishName}` : '角色资料待读取';
+    $('character-id').textContent = character ? `角色 ID：${character.characterId}` : '';
+    $('character-visual').textContent = character ? `${character.visual?.label || '视觉待确认'} · 正式桌宠素材尚未接入。` : '';
+    $('character-fallback').hidden = !character?.fallback;
+    const requestedLabel = typeof character?.requestedCharacterId === 'string' ? character.requestedCharacterId.slice(0, 120) : '';
+    $('character-fallback').textContent = character?.fallback ? `配置中的角色 ${requestedLabel}${character.requestedCharacterId.length > 120 ? '…' : ''} 当前不可用，暂时显示内置角色；原角色 ID 已完整保留。` : '';
+  }
   function renderConnection() {
     const synthetic = state.synthetic === true;
     const modeLabel = synthetic ? '模拟模式' : '真实模式 · 未接入';
@@ -183,7 +192,7 @@
     tools = new Map((Array.isArray(next.tools) ? next.tools : []).filter(item => UI.belongsToSession(item, state)).map(item => [item.tool.id, item]));
     historyLoad += 1; memoryLoad += 1;
     if (switched) { history = []; historyLimit = 40; renderHistory(); $('speech-state').textContent = '会话已切换，语音已停止'; }
-    renderConnection(); renderPreferences(); renderTasks(); renderObservations();
+    renderCharacter(); renderConnection(); renderPreferences(); renderTasks(); renderObservations();
     if (next.storageWarning) showError(next.storageWarning);
     if (activePage === 'records') scheduleRecords();
   }

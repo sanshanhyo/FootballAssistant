@@ -141,13 +141,26 @@
 
   function currentReplies() { return [...messages.values()].filter(message => message.role === 'assistant' && UI.belongsToSession(message, state)); }
 
+  function renderCharacter() {
+    const character = state?.character;
+    if (!character) return;
+    const pet = $('pet');
+    pet.dataset.characterId = character.characterId;
+    // The built-in resolver supplies an inert visual key; business UI never uses an asset path.
+    pet.dataset.visualResource = character.visual?.resourceKey || '';
+    pet.setAttribute('aria-label', `${character.displayName}：单击打字，长按说话，拖动移动，右键设置`);
+    pet.title = `${character.displayName} / ${character.englishName} · ${character.visual?.label || '视觉待确认'}`;
+    $('chat-form').setAttribute('aria-label', `给${character.displayName}发消息`);
+  }
+
   function renderBubble() {
     const replies = currentReplies();
     if (followLatest || !replies.some(item => item.id === selectedMessageId)) selectedMessageId = replies.at(-1)?.id || null;
     lastReply = replies.find(item => item.id === selectedMessageId) || null;
     $('read-last').disabled = !lastReply;
     $('compact-text').textContent = lastReply?.text || (state?.mode === 'real' ? '真实后端尚未接入。可以从设置切换为模拟演示。' : state?.connection?.state === 'disconnected' ? '模拟连接已中断，等待恢复。' : '单击桌宠输入消息，长按说话。');
-    $('message-origin').textContent = lastReply?.origin === 'proactive' ? '主动消息' : '桌宠';
+    const name = state?.character?.displayName || '桌宠';
+    $('message-origin').textContent = lastReply?.origin === 'proactive' ? `${name} · 主动消息` : name;
     const badges = $('message-badges'); badges.replaceChildren();
     badges.append(badge(state?.synthetic === true ? '模拟模式' : state?.mode === 'real' ? '真实 · 未接入' : '状态待确认', state?.synthetic ? 'synthetic' : 'unknown'));
     if (state?.connection?.state === 'disconnected' || state?.connection?.state === 'unavailable') badges.append(badge('未连接', 'disconnected'));
@@ -210,6 +223,7 @@
       $('message').value = ''; resetDraftNote(); resizeComposer(); $('message-details').open = false;
     }
     state = next;
+    renderCharacter();
     if (Array.isArray(next.messages)) messages = new Map(next.messages.filter(item => UI.belongsToSession(item, next)).map(item => [item.id, item]));
     if (Array.isArray(next.tools)) { tools.clear(); next.tools.forEach(item => { if (UI.belongsToSession(item, next)) tools.set(`${item.requestId}:${item.tool.id}`, item); }); }
     if (Array.isArray(next.pendingRequests)) {

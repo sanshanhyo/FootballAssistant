@@ -11,7 +11,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
-    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/renderer.js && node --check src/settings.js && npm test",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/character.cjs && node --check src/renderer.js && node --check src/settings.js && npm test",
     "pack:mac": "electron-builder --mac dir --arm64",
     "pack:win": "electron-builder --win zip --x64"
   },

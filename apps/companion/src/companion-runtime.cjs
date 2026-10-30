@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS } = require('./reader-clients.cjs');
+const { DEFAULT_CHARACTER_ID, storedCharacterId, characterPresentation } = require('./character.cjs');
 const PREFERENCE_VALUES = Object.freeze({
   expression: ['auto', 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'notice', 'happy', 'puzzled', 'error'],
   sttProvider: ['openai', 'mock'],
@@ -24,7 +25,9 @@ class CompanionRuntime extends EventEmitter {
     this.realClient = options.realClient || new DisconnectedReaderClient();
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
     this.proactivity = 80; this.historyEnabled = false;
+    this.characterId = DEFAULT_CHARACTER_ID;
     this.preferences = { expression: 'auto', sttProvider: 'openai', ttsProvider: 'system' };
+    this.savedEnvelope = {};
     this.messages = []; this.memories = []; this.pending = new Map();
     this.tools = new Map();
     this.writeQueue = Promise.resolve(); this.closed = false;
@@ -35,7 +38,12 @@ class CompanionRuntime extends EventEmitter {
       const stat = await fs.stat(this.file);
       if (!stat.isFile() || stat.size > 2_000_000) throw new Error('本地记录过大。');
       const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
-      if (saved.version !== 1) return this.state();
+      if (saved.version !== 1) {
+        this.storageWarning = '本地记录版本暂不支持；原文件保持不变，当前更改不会写入该文件。';
+        return this.state();
+      }
+      this.savedEnvelope = saved;
+      this.characterId = storedCharacterId(saved.characterId);
       if (Number.isInteger(saved.proactivity) && saved.proactivity >= 0 && saved.proactivity <= 100) this.proactivity = saved.proactivity;
       this.historyEnabled = saved.historyEnabled === true;
       if (saved.preferences && typeof saved.preferences === 'object' && !Array.isArray(saved.preferences)) {
@@ -56,6 +64,7 @@ class CompanionRuntime extends EventEmitter {
     return {
       mode: this.mode, epoch: this.epoch, sessionId: this.sessionId, proactivity: this.proactivity,
       preferences: { ...this.preferences },
+      character: characterPresentation(this.characterId),
       connection: { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(), synthetic: mock,
       limitations: mock ? [...MOCK_LIMITATIONS] : ['真实后端尚未接入；不会自动回退到模拟数据。'],
@@ -69,7 +78,7 @@ class CompanionRuntime extends EventEmitter {
   changed() { this.publish({ type: 'state', state: this.state() }); }
   persist() {
     if (!this.file || this.storageWarning) return Promise.resolve();
-    const value = JSON.stringify({ version: 1, proactivity: this.proactivity, preferences: this.preferences, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
+    const value = JSON.stringify({ ...this.savedEnvelope, version: 1, characterId: this.characterId, proactivity: this.proactivity, preferences: { ...this.savedEnvelope.preferences, ...this.preferences }, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
     this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const temporary = `${this.file}.tmp`;
