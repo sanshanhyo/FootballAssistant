@@ -20,6 +20,7 @@ import uvicorn
 
 from football_assistant_contracts.validation import validate_observation
 from .config import Settings
+from .display_profile import MAX_FACTS, project_display_profile
 from .storage import ObservationConflict, ObservationStore, private_directory, utc_now
 from .monitoring import CatalogRequest, HeartbeatRequest
 from .registries import ProbeRequest, RegistryBatch, RegistryStore
@@ -171,6 +172,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             return app.state.observations.reader_snapshot(after,limit,event_id=event_id)
         except ObservationConflict:
             raise HTTPException(409,detail={"code":"snapshot_changed","message":"Snapshot changed; restart paging at zero."}) from None
+
+    @app.get("/v1/reader/profile",dependencies=[Depends(authorized)])
+    async def reader_profile():
+        return project_display_profile(app.state.observations.reader_snapshot(0,MAX_FACTS))
 
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):

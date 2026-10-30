@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from .config import ROOT
+from .display_profile import MAX_FACTS, project_display_profile
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
@@ -86,7 +87,7 @@ class ReaderClient:
             raise ReaderError("invalid_response","Local service did not return a JSON object.") from None
 
     def get(self,path: str,**query):
-        allowed = ("/v1/reader/status","/v1/reader/snapshot","/v1/status","/v1/monitoring/fields",
+        allowed = ("/v1/reader/profile","/v1/reader/status","/v1/reader/snapshot","/v1/status","/v1/monitoring/fields",
                    "/v1/monitoring","/v1/events","/v1/interfaces/native-observers")
         if path not in allowed and not (path.startswith("/v1/events/") and path.removeprefix("/v1/events/").isdigit()):
             raise ReaderError("unsupported","Reader only supports its fixed read-only API commands.")
@@ -142,3 +143,15 @@ class ReaderClient:
             page = {**page,"facts":[fact for fact in page["facts"] if fact.get("entity_kind") in ("ui_element","ui_text")],
                     "filter":"raw_ui_only","pagination_scope":"all_source_facts"}
         return page
+
+    def profile(self):
+        """Read an experimental UI display profile, with local legacy projection."""
+        try:
+            return self.get("/v1/reader/profile")
+        except ReaderError as error:
+            if error.code != "http_404":
+                raise
+        snapshot = self.snapshot(after=0,limit=MAX_FACTS)
+        # Legacy fields/status are separate requests: reject navigation between them.
+        snapshot = {**snapshot,"later_source_status":self.status().get("source_status",{})}
+        return project_display_profile(snapshot)

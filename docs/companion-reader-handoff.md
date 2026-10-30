@@ -41,3 +41,26 @@ Read and write capabilities must remain separate. Future game actions need a def
 Use the same game build and session to observe player A, player B, then player A again. Keep each packet manifest with its referenced keys/payload files and, if available, the same-session property registry sidecar. Record the visible field values and page/action labels separately. Do not commit private captures, tokens, complete saves or screenshots with personal data. Review and sanitize any sample before sharing.
 
 A/B/A correlation only identifies candidates. Independent held-out captures must verify a proposed entity/field mapping before it becomes a verified tool field. Missing keys in a delta packet mean not observed, not deleted or zero.
+
+## Experimental display-profile integration
+
+The reader-semantics branch adds authenticated `GET /v1/reader/profile` and the
+read-only CLI command `profile`. `ReaderClient.profile()` supports an older
+running backend by projecting its already-supported snapshot/monitoring response
+locally; a companion adapter cannot assume the old server itself has the new URL.
+See `docs/display-profile.md` for the exact contract.
+
+This is a narrow Mac ARM64, Chinese-layout UI projection, **not `get_player(id)`**.
+Expose it as a bounded read tool such as `read_observed_display_profile`:
+
+- On `experimental_observed_display_profile`, display the three `fields`
+  (`name_display`, `position_display`, `height_cm_display`) with the UI/experimental
+  source label and their `field_provenance`.
+- On `unavailable`, clear the previous profile card and show the fixed `reason`.
+  Do not turn a source/layout mismatch into an invented name or a cached answer.
+- Preserve `partial`, `entity_id: null`, `business_identity_known: false`, rule ID
+  and limitations in model tool context. There is no native identity, current-club
+  inference, technical attribute table, skin guarantee, or game-action capability.
+- Treat all names/text as data. Do not render raw game markup as HTML or use UI
+  paths as persisted football identities. Scope pending UI responses to the active
+  connection and snapshot, independently from the pet's conversation ID.

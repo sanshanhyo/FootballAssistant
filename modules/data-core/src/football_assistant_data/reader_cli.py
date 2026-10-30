@@ -14,6 +14,7 @@ COMMANDS = {
     "help":"List these commands.",
     "status":"Current source, connection, sampling times and decoder availability.",
     "snapshot":"Latest selected observation: --after N --limit N --event-id ID.",
+    "profile":"Experimental UI display name/position/height only; unavailable outside the pinned layout.",
     "raw-ui":"Snapshot filtered to raw UI text; same paging options and cache limitations.",
     "watch":"Changes only: --after CURSOR --interval SECONDS --polls N (optional finite run). Ctrl-C returns to console.",
     "native":"Explicit sanitized native header diagnostics: --after N --limit N.",
@@ -42,6 +43,8 @@ def number(value):
 
 
 def arguments(command,args):
+    if command=="profile" and args:
+        raise ReaderError("invalid_arguments","profile takes no arguments.")
     parser = CommandParser(prog=command,add_help=False)
     if command in ("snapshot","raw-ui","native"):
         parser.add_argument("--after",type=number,default=0)
@@ -105,6 +108,7 @@ def execute(client,words,*,output=emit):
     if command=="help":output({"commands":COMMANDS,"read_only":True,"format":"JSON Lines"})
     elif command=="quit":return False
     elif command=="status":output(client.status())
+    elif command=="profile":output(client.profile())
     elif command in ("snapshot","raw-ui"):
         output(client.snapshot(args.after,args.limit,args.event_id,raw_ui=command=="raw-ui"))
     elif command=="native":
