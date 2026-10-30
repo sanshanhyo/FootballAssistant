@@ -114,7 +114,8 @@
     const character = state?.character;
     $('character-name').textContent = character ? `${character.displayName} / ${character.englishName}` : '角色资料待读取';
     $('character-id').textContent = character ? `角色 ID：${character.characterId}` : '';
-    $('character-visual').textContent = character ? `${character.visual?.label || '视觉待确认'} · 正式桌宠素材尚未接入。` : '';
+    $('character-visual').textContent = character ? `${character.visual?.label || '视觉待确认'} · 当前使用默认形象。` : '';
+    $('expression').disabled = character?.visual?.kind === 'builtin-image';
     $('character-fallback').hidden = !character?.fallback;
     const requestedLabel = typeof character?.requestedCharacterId === 'string' ? character.requestedCharacterId.slice(0, 120) : '';
     $('character-fallback').textContent = character?.fallback ? `配置中的角色 ${requestedLabel}${character.requestedCharacterId.length > 120 ? '…' : ''} 当前不可用，暂时显示内置角色；原角色 ID 已完整保留。` : '';

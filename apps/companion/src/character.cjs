@@ -13,18 +13,19 @@ const DEFAULT_CHARACTER = Object.freeze({
   characterId: DEFAULT_CHARACTER_ID,
   displayName: '埃克拉',
   englishName: 'Eckera',
-  visualResource: 'builtin.companion-placeholder',
+  visualResource: 'builtin.eckera-default',
 });
 
-const PLACEHOLDER_VISUAL = Object.freeze({
-  kind: 'css-placeholder',
-  resourceKey: 'companion-placeholder',
-  label: '占位视觉',
+const DEFAULT_VISUAL = Object.freeze({
+  kind: 'builtin-image',
+  resourceKey: 'eckera-default',
+  source: 'assets/characters/official.eckera/default.png',
+  label: '内置角色图',
 });
 
 // References are opaque built-in keys, never paths, URLs, scripts or permissions.
 function getBuiltinVisualResource(reference) {
-  return reference === DEFAULT_CHARACTER.visualResource ? PLACEHOLDER_VISUAL : null;
+  return reference === DEFAULT_CHARACTER.visualResource ? DEFAULT_VISUAL : null;
 }
 
 function storedCharacterId(value) {

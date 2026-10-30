@@ -80,7 +80,8 @@
     const manual = preferences().expression;
     const expression = manual !== 'auto' ? manual : next;
     $('pet').dataset.expression = UI.EXPRESSIONS[expression] ? expression : 'idle';
-    $('expression-label').textContent = UI.EXPRESSIONS[expression] || UI.EXPRESSIONS.idle;
+    // The current character has one static image; this label reports interaction state.
+    $('expression-label').textContent = UI.EXPRESSIONS[next] || UI.EXPRESSIONS.idle;
   }
 
   function refreshExpression() {
@@ -146,12 +147,34 @@
     if (!character) return;
     const pet = $('pet');
     pet.dataset.characterId = character.characterId;
-    // The built-in resolver supplies an inert visual key; business UI never uses an asset path.
+    // Only the built-in resolver supplies this local image reference.
     pet.dataset.visualResource = character.visual?.resourceKey || '';
+    const image = $('character-image');
+    const visual = character.visual;
+    const source = visual?.kind === 'builtin-image' && typeof visual.source === 'string' ? new URL(visual.source, document.baseURI).href : '';
+    if (source && image.src !== source) {
+      image.hidden = false;
+      $('character-visual-error').hidden = true;
+      image.src = source;
+    } else if (!source) {
+      image.hidden = true;
+      $('character-visual-error').hidden = false;
+    }
     pet.setAttribute('aria-label', `${character.displayName}：单击打字，长按说话，拖动移动，右键设置`);
     pet.title = `${character.displayName} / ${character.englishName} · ${character.visual?.label || '视觉待确认'}`;
     $('chat-form').setAttribute('aria-label', `给${character.displayName}发消息`);
   }
+
+  $('character-image').addEventListener('load', () => {
+    $('character-image').hidden = false;
+    $('character-visual-error').hidden = true;
+    updateRects();
+  });
+  $('character-image').addEventListener('error', () => {
+    $('character-image').hidden = true;
+    $('character-visual-error').hidden = false;
+    updateRects();
+  });
 
   function renderBubble() {
     const replies = currentReplies();

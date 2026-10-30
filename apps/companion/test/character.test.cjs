@@ -13,14 +13,20 @@ async function withFile(action) {
   finally { await fs.rm(directory, { recursive: true, force: true }); }
 }
 
-test('the sole built-in identity resolves its visual only through an inert resource key', () => {
+test('the sole built-in identity resolves its packaged PNG only through an inert resource key', async () => {
   assert.equal(DEFAULT_CHARACTER_ID, 'official.eckera');
   assert.equal(DEFAULT_CHARACTER.characterId, DEFAULT_CHARACTER_ID);
   assert.equal(DEFAULT_CHARACTER.displayName, '埃克拉');
   assert.equal(DEFAULT_CHARACTER.englishName, 'Eckera');
   assert.ok(Object.isFrozen(DEFAULT_CHARACTER));
   const visual = getBuiltinVisualResource(DEFAULT_CHARACTER.visualResource);
-  assert.equal(visual.kind, 'css-placeholder');
+  assert.equal(visual.kind, 'builtin-image');
+  const assetRoot = path.resolve(__dirname, '../src/assets/characters');
+  const imageFile = path.resolve(__dirname, '../src', visual.source);
+  assert.ok(imageFile.startsWith(`${assetRoot}${path.sep}`));
+  assert.equal(path.extname(imageFile), '.png');
+  const image = await fs.readFile(imageFile);
+  assert.deepEqual([...image.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
   assert.ok(Object.isFrozen(visual));
   for (const reference of ['file:///sensitive', '../../private', 'https://invalid.test/portrait', 'javascript:alert(1)', () => {}]) {
     assert.equal(getBuiltinVisualResource(reference), null);

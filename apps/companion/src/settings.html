@@ -40,7 +40,7 @@
       <section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
         <section class="card"><div class="card-heading"><h2>当前角色</h2><span class="subtle-label">内置角色</span></div><p id="character-name">角色资料待读取</p><p id="character-id" class="muted"></p><p id="character-visual" class="muted"></p><p id="character-fallback" class="muted" hidden></p></section>
         <section class="card"><div class="card-heading"><h2>主动性</h2><output id="proactivity-value" for="proactivity" class="range-value">80%</output></div><label class="sr-only" for="proactivity">主动性百分比</label><input id="proactivity" type="range" min="0" max="100" step="1" value="80"><div class="range-labels"><span>安静陪伴</span><span>更多提醒</span></div><p class="muted">默认 80%。此偏好将交给后端决定提醒策略；当前通过模拟消息演示，不会自动调用模型。</p><button id="simulate-event" class="secondary-button">演示一条主动消息</button></section>
-        <section class="card"><h2>表情</h2><div class="setting-row"><div><label for="expression">桌宠表情</label><p>可跟随聆听、等待和播报状态自动切换。</p></div><select id="expression"><option value="auto">跟随交互</option></select></div><div class="asset-note"><span aria-hidden="true">◉</span><p>当前内置角色使用占位视觉和表情。<br><span class="muted">正式桌宠素材和对话框尚未接入。</span></p></div></section>
+        <section class="card"><h2>表情</h2><div class="setting-row"><div><label for="expression">桌宠表情</label><p>当前角色只有一张默认图，表情选择暂不可用；原偏好继续保留。</p></div><select id="expression" disabled><option value="auto">跟随交互</option></select></div><div class="asset-note"><span aria-hidden="true">◉</span><p>默认形象取自你提供的角色设定图。<br><span class="muted">聆听、识别与播报状态仍由文字提示；当前不切换人物表情。</span></p></div></section>
       </section>
 
       <section id="page-records" class="settings-page" aria-labelledby="page-title" hidden>
