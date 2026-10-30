@@ -14,6 +14,8 @@ COMMANDS = {
     "help":"List these commands.",
     "status":"Current source, connection, sampling times and decoder availability.",
     "snapshot":"Latest selected observation: --after N --limit N --event-id ID.",
+    "business-status":"Native business capability gates; no UI or legacy fallback.",
+    "business-snapshot":"Native business snapshot envelope; unavailable until a verified producer exists.",
     "profile":"Experimental UI display name/position/height only; unavailable outside the pinned layout.",
     "raw-ui":"Snapshot filtered to raw UI text; same paging options and cache limitations.",
     "watch":"Changes only: --after CURSOR --interval SECONDS --polls N (optional finite run). Ctrl-C returns to console.",
@@ -109,6 +111,8 @@ def execute(client,words,*,output=emit):
     elif command=="quit":return False
     elif command=="status":output(client.status())
     elif command=="profile":output(client.profile())
+    elif command=="business-status":output(client.business_status())
+    elif command=="business-snapshot":output(client.business_snapshot())
     elif command in ("snapshot","raw-ui"):
         output(client.snapshot(args.after,args.limit,args.event_id,raw_ui=command=="raw-ui"))
     elif command=="native":

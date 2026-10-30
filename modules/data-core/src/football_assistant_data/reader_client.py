@@ -87,7 +87,7 @@ class ReaderClient:
             raise ReaderError("invalid_response","Local service did not return a JSON object.") from None
 
     def get(self,path: str,**query):
-        allowed = ("/v1/reader/profile","/v1/reader/status","/v1/reader/snapshot","/v1/status","/v1/monitoring/fields",
+        allowed = ("/v1/reader/business/status","/v1/reader/business/snapshot","/v1/reader/profile","/v1/reader/status","/v1/reader/snapshot","/v1/status","/v1/monitoring/fields",
                    "/v1/monitoring","/v1/events","/v1/interfaces/native-observers")
         if path not in allowed and not (path.startswith("/v1/events/") and path.removeprefix("/v1/events/").isdigit()):
             raise ReaderError("unsupported","Reader only supports its fixed read-only API commands.")
@@ -155,3 +155,11 @@ class ReaderClient:
         # Legacy fields/status are separate requests: reject navigation between them.
         snapshot = {**snapshot,"later_source_status":self.status().get("source_status",{})}
         return project_display_profile(snapshot)
+
+    def business_status(self):
+        """Business readiness only; never falls back to legacy/UI routes."""
+        return self.get("/v1/reader/business/status")
+
+    def business_snapshot(self):
+        """Explicit business envelope, including unavailable/production gates."""
+        return self.get("/v1/reader/business/snapshot")
