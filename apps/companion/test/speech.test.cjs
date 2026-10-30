@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const { realpathSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
@@ -200,7 +201,9 @@ test('Edge uses fixed executable with text file input and removes temporary audi
   } });
   try {
     const result = await service.speak(operation({ provider: 'edge', text }));
-    assert.equal(invocation.file, await fs.realpath(executable));
+    // Use the same canonicalization API as production; Windows 8.3 and long paths
+    // can name the same executable with different spellings across sync/async APIs.
+    assert.equal(invocation.file, realpathSync(executable));
     assert.equal(invocation.options.shell, false);
     assert.equal(invocation.args.some(arg => arg.includes(text)), false);
     assert.equal(result.audio.byteLength, 3);

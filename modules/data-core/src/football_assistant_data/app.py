@@ -7,7 +7,7 @@ import secrets
 import socket
 import tempfile
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 from pathlib import Path
 from uuid import UUID
 
@@ -19,7 +19,9 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
 from football_assistant_contracts.validation import validate_observation
+from .business_store import BusinessSnapshotStore
 from .config import Settings
+from .display_profile import MAX_FACTS, project_display_profile
 from .storage import ObservationConflict, ObservationStore, private_directory, utc_now
 from .monitoring import CatalogRequest, HeartbeatRequest
 from .registries import ProbeRequest, RegistryBatch, RegistryStore
@@ -38,6 +40,10 @@ class ChatRequest(BaseModel):
         if not value:
             raise ValueError("message must not be blank")
         return value
+
+
+class BusinessAdviceRequest(ChatRequest):
+    capability: Literal["player_info", "transfer_analysis", "tactical_analysis", "schedule_analysis"]
 
 
 class MemoryRequest(BaseModel):
@@ -111,6 +117,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.registries = RegistryStore(observations)
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
+        app.state.business_snapshots = BusinessSnapshotStore()
         companion = None
         if enable_agent:
             companion = CompanionStore(settings.data_dir / "companion.sqlite")
@@ -120,6 +127,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         try:
             yield
         finally:
+            app.state.business_snapshots.invalidate()
             observations.close()
             if companion is not None:
                 companion.close()
@@ -171,6 +179,18 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             return app.state.observations.reader_snapshot(after,limit,event_id=event_id)
         except ObservationConflict:
             raise HTTPException(409,detail={"code":"snapshot_changed","message":"Snapshot changed; restart paging at zero."}) from None
+
+    @app.get("/v1/reader/business/status",dependencies=[Depends(authorized)])
+    async def business_reader_status():
+        return app.state.business_snapshots.status()
+
+    @app.get("/v1/reader/business/snapshot",dependencies=[Depends(authorized)])
+    async def business_reader_snapshot():
+        return app.state.business_snapshots.read()
+
+    @app.get("/v1/reader/profile",dependencies=[Depends(authorized)])
+    async def reader_profile():
+        return project_display_profile(app.state.observations.reader_snapshot(0,MAX_FACTS))
 
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
@@ -270,6 +290,20 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        @app.post("/v1/agent/business-advice",dependencies=[Depends(authorized)])
+        async def business_advice(body: BusinessAdviceRequest):
+            # Only the server-owned channel supplies data. Request bodies cannot
+            # override provenance, readiness or provide their own snapshot.
+            snapshot = app.state.business_snapshots.read()["snapshot"]
+            try:
+                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot)
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:

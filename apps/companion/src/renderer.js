@@ -68,7 +68,7 @@
   }
 
   function updateSendAvailability() {
-    $('send').disabled = !state || state.mode !== 'mock' || state.connection?.state === 'disconnected' || !$('message').value.trim();
+    $('send').disabled = !state || !state.canSend || state.connection?.state === 'disconnected' || !$('message').value.trim();
   }
 
   function setComposer(open, focus = false) {
@@ -179,7 +179,7 @@
       });
     }
     updateSendAvailability();
-    $('message').placeholder = next.mode !== 'mock' ? '后端未接入，暂不能发送' : next.connection?.state === 'disconnected' ? '连接已中断' : '输入消息…';
+    $('message').placeholder = !next.canSend ? '后端未接入，暂不能发送' : next.connection?.state === 'disconnected' ? '连接已中断' : '输入消息…';
     renderBubble(); renderTasks();
     if (next.storageWarning) showError(next.storageWarning);
   }
@@ -216,7 +216,7 @@
   async function send(event) {
     event?.preventDefault();
     const text = $('message').value.trim();
-    if (!text || !state || state.mode !== 'mock' || state.connection?.state === 'disconnected') return;
+    if (!text || !state || !state.canSend || state.connection?.state === 'disconnected') return;
     const context = { sessionId:state.sessionId, epoch:state.epoch };
     $('message').value = ''; resetDraftNote(); resizeComposer();
     showError('');

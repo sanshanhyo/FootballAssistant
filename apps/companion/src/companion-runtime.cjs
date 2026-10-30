@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS } = require('./reader-clients.cjs');
+const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS, businessMetadata, adviceCapability } = require('./reader-clients.cjs');
 const { DEFAULT_CHARACTER_ID, storedCharacterId, characterPresentation } = require('./character.cjs');
 const PREFERENCE_VALUES = Object.freeze({
   expression: ['auto', 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'notice', 'happy', 'puzzled', 'error'],
@@ -23,6 +23,7 @@ class CompanionRuntime extends EventEmitter {
     this.file = options.file;
     this.mockClient = options.mockClient || new MockReaderClient();
     this.realClient = options.realClient || new DisconnectedReaderClient();
+    this.realConnection = null; this.connectionController = null;
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
     this.proactivity = 80; this.historyEnabled = false;
     this.characterId = DEFAULT_CHARACTER_ID;
@@ -62,12 +63,13 @@ class CompanionRuntime extends EventEmitter {
   state() {
     const mock = this.mode === 'mock';
     return {
+      canSend: mock ? !this.mockDisconnected : typeof this.realClient.reply === 'function',
       mode: this.mode, epoch: this.epoch, sessionId: this.sessionId, proactivity: this.proactivity,
       preferences: { ...this.preferences },
       character: characterPresentation(this.characterId),
-      connection: { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
-      historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(), synthetic: mock,
-      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实后端尚未接入；不会自动回退到模拟数据。'],
+      connection: !mock && this.realConnection ? { ...this.realConnection, backendId: this.backendId } : { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
+      historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(this.realConnection?.readiness), synthetic: mock,
+      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据；业务建议只使用服务端验证事实。'],
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
       pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
       tools: [...this.tools.values()].filter(item => item.sessionId === this.sessionId && item.epoch === this.epoch),
@@ -88,15 +90,29 @@ class CompanionRuntime extends EventEmitter {
     return this.writeQueue;
   }
   cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
+  refreshConnection() {
+    this.connectionController?.abort();
+    if (this.mode !== 'real' || typeof this.realClient.reply !== 'function') return;
+    const controller = this.connectionController = new AbortController();
+    const epoch = this.epoch;
+    this.realConnection = { state: 'loading', label: '真实模式 · 正在连接', reason: null };
+    this.realClient.status({ signal: controller.signal }).then(result => {
+      if (controller.signal.aborted || this.closed || epoch !== this.epoch) return;
+      this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: result.metadata.limitations.join('、') || null, readiness: result.readiness }; this.changed();
+    }).catch(error => {
+      if (controller.signal.aborted || this.closed || epoch !== this.epoch) return;
+      this.realConnection = { state: 'unavailable', label: '真实模式 · 服务不可用', reason: error.message }; this.changed();
+    });
+  }
   switchSession() {
-    this.cancelAll(); this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    this.cancelAll(); this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
     return this.state();
   }
   setMode(input) {
     const mode = typeof input === 'string' ? input : input?.mode;
     if (!['mock', 'real'].includes(mode)) throw new Error('模式无效。');
     const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'unconfigured';
-    this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
     return this.state();
   }
   setProactivity(value) {
@@ -123,7 +139,8 @@ class CompanionRuntime extends EventEmitter {
     if (!this.active(request)) return;
     const id = `${request.id}:snapshot`;
     const labels = { running: '读取模拟观测', completed: '模拟观测读取完成', cancelled: '模拟读取已取消', error: '模拟读取失败' };
-    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || metadata(request.sessionId) } };
+    if (this.mode === 'real') Object.assign(labels, { running: '请求真实服务', completed: '真实服务已回复', cancelled: '真实请求已取消', error: '真实请求失败' });
+    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.capability ? 'agent.business-advice' : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
     this.tools.set(id, event);
     if (this.tools.size > 100) this.tools.delete(this.tools.keys().next().value);
     this.publish(event);
@@ -132,10 +149,15 @@ class CompanionRuntime extends EventEmitter {
     const message = text(input?.text ?? input?.message, 4_000, '消息');
     if (input?.generation !== undefined && input.generation !== this.epoch) throw new Error('会话已切换，请重新发送。');
     if (input?.conversationId !== undefined && input.conversationId !== this.sessionId) throw new Error('会话已切换，请重新发送。');
-    if (this.mode !== 'mock') throw new Error('真实后端尚未接入，消息没有发送；可显式切换到模拟模式演示。');
+    if (this.mode !== 'mock' && typeof this.realClient.reply !== 'function') throw new Error('真实后端尚未接入，消息没有发送；可显式切换到模拟模式演示。');
     if (this.mockDisconnected) throw new Error('模拟连接已失效；请选择其他模拟场景恢复连接。');
     if (this.pending.size >= 4) throw new Error('已有 4 个请求在处理，请稍候或取消。');
-    const request = { id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const capability = this.mode === 'real' ? adviceCapability(message, input?.capability) : null;
+    const request = { capability, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    if (this.mode === 'real') {
+      // Previous cards are historical, not current values after a new read or failure.
+      for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];
+    }
     this.pending.set(request.id, request);
     this.addMessage({ id: randomUUID(), role: 'user', origin: 'user', text: message, createdAt: new Date().toISOString(), requestId: request.id, sessionId: this.sessionId, epoch: this.epoch, metadata: { source: 'user', sourceLabel: '用户输入', sessionId: this.sessionId, sampledAt: new Date().toISOString(), partial: false, limitations: [], synthetic: false, freshness: 'current' }, cards: [] });
     this.changed();
@@ -145,16 +167,23 @@ class CompanionRuntime extends EventEmitter {
   async complete(request) {
     try {
       this.tool(request, 'running');
-      const result = await this.client().snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
+      const result = request.mode === 'real'
+        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, signal: request.controller.signal })
+        : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
+      if (request.mode === 'real') {
+        this.connectionController?.abort();
+        this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: request.capability ? result.metadata.limitations.join('、') || null : null, readiness: request.capability ? result.metadata.readiness : this.realConnection?.readiness };
+      }
       this.tool(request, 'completed', result.metadata);
-      this.addMessage({ id: randomUUID(), role: 'assistant', origin: 'reply', text: '【模拟回复】已收到你的消息。这是前端交互演示，尚未调用 AI 或读取游戏。下面的信息卡展示来源、未知值和数据限制。', createdAt: new Date().toISOString(), requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, metadata: result.metadata, cards: result.cards });
+      this.addMessage({ id: randomUUID(), role: 'assistant', origin: 'reply', text: request.mode === 'real' ? result.text : '【模拟回复】已收到你的消息。这是前端交互演示，尚未调用 AI 或读取游戏。下面的信息卡展示来源、未知值和数据限制。', createdAt: new Date().toISOString(), requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, metadata: result.metadata, cards: result.cards });
       this.pending.delete(request.id);
       this.publish({ type: 'request', requestId: request.id, status: 'completed', sessionId: request.sessionId, epoch: request.epoch });
       this.changed();
     } catch (error) {
       if (!this.active(request)) return;
       this.tool(request, 'error');
+      if (request.mode === 'real') this.realConnection = { state: 'unavailable', label: '真实模式 · 请求失败', reason: error.message };
       this.pending.delete(request.id);
       this.publish({ type: 'request', requestId: request.id, status: 'error', error: error.message, sessionId: request.sessionId, epoch: request.epoch });
       this.changed();
@@ -185,7 +214,7 @@ class CompanionRuntime extends EventEmitter {
     this.addMessage(message); this.changed(); return { messageId: message.id };
   }
   getHistory() { return { enabled: this.historyEnabled, messages: [...this.messages] }; }
-  async clearHistory() { this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); await this.persist(); this.changed(); return this.getHistory(); }
+  async clearHistory() { this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); await this.persist(); this.changed(); return this.getHistory(); }
   getMemories() { return { entries: [...this.memories] }; }
   async saveMemory(input) {
     const memory = { id: randomUUID(), text: text(input?.text, 2_000, '记忆内容'), createdAt: new Date().toISOString(), source: 'user-confirmed' };
@@ -197,7 +226,7 @@ class CompanionRuntime extends EventEmitter {
     const before = this.memories.length; this.memories = this.memories.filter(item => item.id !== id);
     await this.persist(); this.changed(); return { deleted: before !== this.memories.length };
   }
-  async close() { this.cancelAll(); this.closed = true; await this.writeQueue; this.removeAllListeners(); }
+  async close() { this.connectionController?.abort(); this.cancelAll(); this.closed = true; await this.writeQueue; this.removeAllListeners(); }
 }
 
 module.exports = { CompanionRuntime };

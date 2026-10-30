@@ -3,6 +3,8 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPref
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { RealReaderClient } = require('./reader-clients.cjs');
+const { request, defaultRuntimeFile } = require('./backend.cjs');
 const { CompanionRuntime } = require('./companion-runtime.cjs');
 const { createSpeechService } = require('./speech-service.cjs');
 const { allowsMicrophone, allowsWindowIpc, stopSpeechForRole } = require('./companion-security.cjs');
@@ -219,7 +221,7 @@ async function buildWindow() {
   }
 }
 async function main() {
-  runtime = new CompanionRuntime({ file: path.join(app.getPath('userData'), 'companion-ui.json') });
+  runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(defaultRuntimeFile(), endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await runtime.init(); runtime.on('event', emit);
   registerIpc();
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
