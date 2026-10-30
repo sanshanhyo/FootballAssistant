@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { CompanionRuntime } = require('../src/companion-runtime.cjs');
 const { MockReaderClient, DisconnectedReaderClient, metadata } = require('../src/reader-clients.cjs');
-const { allowsMicrophone } = require('../src/companion-security.cjs');
+const { allowsMicrophone, allowsWindowIpc, stopSpeechForRole } = require('../src/companion-security.cjs');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 function controlledClient() {
@@ -140,4 +140,80 @@ test('simulated disconnection cancels pending replies and requires an explicit r
   const recovering = runtime.simulateEvent('default'); await tick();
   client.resolutions[2](); await recovering;
   assert.equal(runtime.state().connection.state, 'simulated'); await runtime.close();
+});
+
+test('shared preferences are validated atomically, broadcast to subscribers and persisted independently of history', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'companion-preferences-'));
+  const file = path.join(directory, 'state.json');
+  try {
+    const runtime = new CompanionRuntime({ file }); await runtime.init();
+    const pet = []; const settings = [];
+    runtime.on('event', event => { if (event.type === 'state') pet.push(event.state); });
+    runtime.on('event', event => { if (event.type === 'state') settings.push(event.state); });
+    const initialSession = runtime.state().sessionId;
+    const changed = runtime.setPreferences({ expression: 'happy', sttProvider: 'mock', ttsProvider: 'azure' });
+    assert.deepEqual(changed.preferences, { expression: 'happy', sttProvider: 'mock', ttsProvider: 'azure' });
+    assert.deepEqual(pet.at(-1).preferences, settings.at(-1).preferences);
+    assert.equal(changed.sessionId, initialSession);
+    assert.equal(changed.historyEnabled, false);
+    for (const patch of [{ expression: 'untrusted' }, { sttProvider: 'mock', endpoint: 'https://arbitrary.invalid' }, { command: 'echo nope' }, { __proto__: null }, [], null]) {
+      assert.throws(() => runtime.setPreferences(patch), /偏好设置/);
+      assert.deepEqual(runtime.state().preferences, changed.preferences);
+    }
+    await runtime.close();
+    const restored = new CompanionRuntime({ file }); await restored.init();
+    assert.deepEqual(restored.state().preferences, changed.preferences);
+    assert.equal(restored.getHistory().messages.length, 0); await restored.close();
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('opening a second window can restore current tools with provenance and cancellation terminal state', async () => {
+  const client = controlledClient(); const runtime = new CompanionRuntime({ mockClient: client });
+  const request = runtime.sendMessage({ text: '设置打开前的请求' }); await tick();
+  const snapshot = runtime.state();
+  assert.equal(snapshot.messages[0].requestId, request.requestId);
+  assert.equal(snapshot.tools.length, 1); assert.equal(snapshot.tools[0].tool.status, 'running');
+  assert.equal(snapshot.tools[0].tool.metadata.synthetic, true);
+  assert.equal(snapshot.tools[0].tool.metadata.sessionId, snapshot.sessionId);
+  assert.ok(Object.hasOwn(snapshot.tools[0].tool.metadata, 'partial'));
+  assert.ok(Array.isArray(snapshot.tools[0].tool.metadata.limitations));
+  runtime.cancelRequest(request.requestId);
+  assert.equal(runtime.state().tools[0].tool.status, 'cancelled');
+  client.resolutions[0](); await tick();
+  assert.equal(runtime.state().tools[0].tool.status, 'cancelled');
+  assert.equal(runtime.state().messages.filter(item => item.role === 'assistant').length, 0);
+  runtime.switchSession(); assert.equal(runtime.state().tools.length, 0);
+  assert.equal(runtime.state().messages.length, 0); await runtime.close();
+});
+
+test('settings window has fixed management IPC access but never pet input, microphone, speech or drag access', () => {
+  const settings = { role: 'settings', trustedMainFrame: true, currentUrl: 'file:///app/settings.html', pageUrl: 'file:///app/settings.html' };
+  for (const method of ['get-state', 'set-preferences', 'set-mode', 'cancel-request', 'clear-history', 'delete-memory', 'speech-capabilities', 'stop-speech']) {
+    assert.equal(allowsWindowIpc(settings, method), true, method);
+  }
+  for (const method of ['send-message', 'transcribe', 'speak', 'microphone-permission', 'drag-start', 'input-rects', 'shell', 'fetch']) {
+    assert.equal(allowsWindowIpc(settings, method), false, method);
+  }
+  assert.equal(allowsWindowIpc({ ...settings, currentUrl: 'file:///app/index.html' }, 'get-state'), false);
+  assert.equal(allowsWindowIpc({ ...settings, trustedMainFrame: false }, 'get-state'), false);
+  assert.equal(allowsWindowIpc({ ...settings, role: '__proto__' }, 'get-state'), false);
+  const pet = { role: 'pet', trustedMainFrame: true, currentUrl: 'file:///app/index.html', pageUrl: 'file:///app/index.html' };
+  assert.equal(allowsWindowIpc(pet, 'transcribe'), true);
+  assert.equal(allowsWindowIpc(pet, 'input-rects'), true);
+  assert.equal(allowsWindowIpc(pet, 'arbitrary-command'), false);
+});
+
+test('settings stop notifies renderer cleanup while pet stops never echo into the next voice operation', () => {
+  let mainStops = 0; let rendererStops = 0; let petOperation = 'old';
+  const actions = {
+    stop: () => { mainStops += 1; return { stopped: true }; },
+    notifyPet: event => { assert.equal(event.type, 'stop-speech'); rendererStops += 1; petOperation = null; },
+  };
+  assert.deepEqual(stopSpeechForRole('pet', actions), { stopped: true });
+  petOperation = 'new';
+  assert.equal(rendererStops, 0); assert.equal(petOperation, 'new');
+  stopSpeechForRole('settings', actions);
+  assert.equal(mainStops, 2); assert.equal(rendererStops, 1); assert.equal(petOperation, null);
+  assert.throws(() => stopSpeechForRole('untrusted', actions), /无效的窗口角色/);
+  assert.equal(mainStops, 2); assert.equal(rendererStops, 1);
 });

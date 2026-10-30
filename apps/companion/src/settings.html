@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>FootballAssistant · 设置</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <div class="settings-app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">◉</span><div>FootballAssistant<span>桌宠设置</span></div></div>
+      <nav aria-label="设置分类">
+        <button class="nav-item active" data-page="connection" aria-controls="page-connection" aria-current="page"><span aria-hidden="true">◌</span>连接与数据</button>
+        <button class="nav-item" data-page="voice" aria-controls="page-voice"><span aria-hidden="true">≋</span>语音</button>
+        <button class="nav-item" data-page="companion" aria-controls="page-companion"><span aria-hidden="true">☺</span>陪伴与表情</button>
+        <button class="nav-item" data-page="records" aria-controls="page-records"><span aria-hidden="true">▤</span>历史与记忆</button>
+      </nav>
+      <div class="sidebar-footer"><span id="sidebar-mode" class="badge synthetic">模拟模式</span><p>单击桌宠输入文字<br>长按桌宠使用语音</p><button id="quit" class="text-button">退出应用</button></div>
+    </aside>
+    <main>
+      <header class="page-header"><div><p class="eyebrow">COMPANION</p><h1 id="page-title">连接与数据</h1><p id="page-description">查看连接状态、数据来源和任务进度。</p></div><span id="header-status" class="status-indicator">准备中</span></header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div id="error" class="notice error" role="alert" hidden></div>
+
+      <section id="page-connection" class="settings-page" aria-labelledby="page-title">
+        <section class="card connection-card"><div class="card-heading"><h2>当前连接</h2><span id="mode-badge" class="badge synthetic">模拟模式</span></div><p id="connection-label" class="connection-label">正在读取状态…</p><p id="connection-reason" class="muted">不会自动连接游戏或调用模型。</p><div class="setting-row"><div><label for="mode">数据模式</label><p>真实后端接入前，模拟与真实模式明确分开。</p></div><select id="mode"><option value="mock">模拟演示</option><option value="real">真实后端（待接入）</option></select></div><dl class="key-values"><dt>当前会话</dt><dd id="session-id" class="mono">未知</dd><dt>来源</dt><dd id="backend-id">未知</dd><dt>服务能力</dt><dd id="reader-capabilities">未知</dd></dl><ul id="connection-limitations" class="limitations"></ul></section>
+        <section class="card"><div class="card-heading"><h2>模拟数据演示</h2><span class="badge synthetic">仅演示</span></div><p class="muted">示例会显示在桌宠气泡中，不读取游戏，也不调用模型。</p><div class="inline-controls"><label class="sr-only" for="scenario">模拟数据场景</label><select id="scenario"><option value="default">默认观测</option><option value="missing">缺失数据</option><option value="stale">过期数据</option><option value="partial">不完整数据</option><option value="disconnected">连接中断</option></select><button id="simulate-scenario" class="primary-button">发送示例</button></div></section>
+        <section class="card"><div class="card-heading"><h2>任务进度</h2><span id="task-count" class="subtle-label">暂无任务</span></div><div id="tasks" class="stack" aria-live="polite"></div></section>
+        <section class="card"><div class="card-heading"><h2>最近观测与信息卡</h2><span id="observation-count" class="subtle-label">暂无观测</span></div><div id="observations" class="stack"></div></section>
+      </section>
+
+      <section id="page-voice" class="settings-page" aria-labelledby="page-title" hidden>
+        <section class="card"><h2>语音转文字</h2><p class="muted">按住桌宠开始录音，松开后转为可编辑草稿，再由你发送。</p><div class="setting-row"><div><label for="stt-provider">转写服务</label><p>服务切换时会停止当前语音操作。</p></div><select id="stt-provider"><option value="openai">云端转写</option><option value="mock">模拟转写</option></select></div><p id="stt-note" class="service-note">正在读取服务状态…</p><div id="stt-capabilities" class="provider-list"></div></section>
+        <section class="card"><h2>语音播报</h2><p class="muted">点击桌宠回复气泡中的播报按钮才会播放语音。</p><div class="setting-row"><div><label for="tts-provider">播报服务</label><p>不会自动改用其他服务。</p></div><select id="tts-provider"><option value="system">系统语音</option><option value="edge">Edge TTS</option><option value="openai">云端 TTS</option><option value="azure">Azure TTS</option><option value="mock">模拟播报</option></select></div><p id="tts-note" class="service-note">正在读取服务状态…</p><div id="tts-capabilities" class="provider-list"></div><div class="card-actions"><span id="speech-state" class="muted" aria-live="polite">尚未收到语音状态</span><button id="stop-speech" class="secondary-button">停止语音</button></div></section>
+        <p class="page-note">当前设置用于选择已接入的语音适配器。模拟转写不会识别实际录音，模拟播报不会播放声音；真实服务未就绪时会明确提示。</p>
+      </section>
+
+      <section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
+        <section class="card"><div class="card-heading"><h2>主动性</h2><output id="proactivity-value" for="proactivity" class="range-value">80%</output></div><label class="sr-only" for="proactivity">主动性百分比</label><input id="proactivity" type="range" min="0" max="100" step="1" value="80"><div class="range-labels"><span>安静陪伴</span><span>更多提醒</span></div><p class="muted">默认 80%。此偏好将交给后端决定提醒策略；当前通过模拟消息演示，不会自动调用模型。</p><button id="simulate-event" class="secondary-button">演示一条主动消息</button></section>
+        <section class="card"><h2>表情</h2><div class="setting-row"><div><label for="expression">桌宠表情</label><p>可跟随聆听、等待和播报状态自动切换。</p></div><select id="expression"><option value="auto">跟随交互</option></select></div><div class="asset-note"><span aria-hidden="true">◉</span><p>当前使用占位角色和表情。<br><span class="muted">角色素材、对话框和人格内容由你后续提供。</span></p></div></section>
+      </section>
+
+      <section id="page-records" class="settings-page" aria-labelledby="page-title" hidden>
+        <section class="card"><div class="card-heading"><h2>聊天历史</h2><button id="new-conversation" class="secondary-button">新对话</button></div><label class="switch-row" for="history-enabled"><span><strong>跨启动保留聊天历史</strong><small>关闭时只保留本次运行中的对话。聊天不会自动形成长期记忆。</small></span><input id="history-enabled" type="checkbox" role="switch"></label><div class="card-actions"><span id="history-count" class="muted">正在读取…</span><div class="row-actions"><button id="refresh-history" class="text-button">刷新</button><button id="clear-history" class="text-button danger">清除历史</button></div></div><div id="history-list" class="records-list"></div><button id="history-more" class="text-button" hidden>显示更多历史</button></section>
+        <section class="card"><div class="card-heading"><h2>明确保存的记忆</h2><span id="memory-count" class="subtle-label">0 条</span></div><p class="muted">只有你点击保存的内容才进入这里。可以随时查看和逐条删除。</p><label class="sr-only" for="memory-text">要保存的记忆内容</label><textarea id="memory-text" maxlength="2000" rows="3" placeholder="输入希望长期保留的内容…"></textarea><div class="card-actions"><span class="muted">不会自动提炼聊天内容</span><button id="save-memory" class="primary-button">保存这条记忆</button></div><div id="memory-list" class="records-list"></div></section>
+      </section>
+      <footer class="main-footer">FootballAssistant · 前端预览<span id="session-short">会话待建立</span></footer>
+    </main>
+  </div>
+  <script src="ui-state.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

@@ -5,7 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { CompanionRuntime } = require('./companion-runtime.cjs');
 const { createSpeechService } = require('./speech-service.cjs');
-const { allowsMicrophone } = require('./companion-security.cjs');
+const { allowsMicrophone, allowsWindowIpc, stopSpeechForRole } = require('./companion-security.cjs');
 const { resolveRect } = require('./vendor/displays.cjs');
 
 if (process.env.FA_COMPANION_USER_DATA_DIR) {
@@ -27,14 +27,30 @@ let pointerTimer;
 let lastDragAt = 0;
 const page = path.join(__dirname, 'index.html');
 const pageUrl = pathToFileURL(page).href;
+const settingsPage = path.join(__dirname, 'settings.html');
+const settingsPageUrl = pathToFileURL(settingsPage).href;
 const smokePath = process.env.FOOTBALL_ASSISTANT_SMOKE_REPORT;
-function emit(value) { if (win && !win.isDestroyed()) win.webContents.send('companion:event', value); }
+function emit(value) {
+  for (const window of [win, settingsWindow]) {
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('companion:event', value);
+  }
+}
+function emitPet(value) { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('companion:event', value); }
 const speech = createSpeechService({ onState: state => emit({ type: 'speech', state }) });
-function senderAllowed(event) { return win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame?.url === pageUrl && event.senderFrame === win.webContents.mainFrame; }
-function handle(name, action) {
+function senderRole(event, method) {
+  for (const [role, window, url] of [['pet', win, pageUrl], ['settings', settingsWindow, settingsPageUrl]]) {
+    if (!window || window.isDestroyed() || event.sender !== window.webContents) continue;
+    return allowsWindowIpc({ role, currentUrl: event.senderFrame?.url, pageUrl: url,
+      trustedMainFrame: event.senderFrame === window.webContents.mainFrame }, method) ? role : null;
+  }
+  return null;
+}
+function senderAllowed(event, method) { return Boolean(senderRole(event, method)); }
+function handle(name, action, { withSender = false } = {}) {
   ipcMain.handle(`companion:${name}`, async (event, ...args) => {
-    if (!senderAllowed(event)) return { ok: false, error: '无效的窗口请求。' };
-    try { return { ok: true, value: await action(...args) }; }
+    const role = senderRole(event, name);
+    if (!role) return { ok: false, error: '无效的窗口请求。' };
+    try { return { ok: true, value: await (withSender ? action({ role }, ...args) : action(...args)) }; }
     catch (error) { return { ok: false, error: error.message || '请求失败。', ...(error.code ? { code: error.code } : {}) }; }
   });
 }
@@ -61,18 +77,28 @@ function pointerFallback() {
   const hit = inputRects.some(rect => point.x >= bounds.x + rect.x && point.x < bounds.x + rect.x + rect.width && point.y >= bounds.y + rect.y && point.y < bounds.y + rect.y + rect.height);
   setIgnoring(!hit);
 }
-function showPet() { if (win && !win.isDestroyed()) { win.show(); win.focus(); pointerFallback(); emit({ type: 'visibility', visible: true }); } }
-function hidePet() { if (win && !win.isDestroyed()) { speech.stop(); emit({ type: 'visibility', visible: false }); win.hide(); } }
+function showPet() { if (win && !win.isDestroyed()) { win.show(); win.focus(); pointerFallback(); emitPet({ type: 'visibility', visible: true }); } }
+function hidePet() { if (win && !win.isDestroyed()) { speech.stop(); emitPet({ type: 'visibility', visible: false }); win.hide(); } }
 async function openSettings() {
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return { opened: true }; }
-  settingsWindow = new BrowserWindow({ width: 460, height: 280, title: 'FootballAssistant 设置', resizable: false, show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'settings-placeholder' } });
-  settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  settingsWindow.webContents.on('will-navigate', event => event.preventDefault());
-  settingsWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  settingsWindow.webContents.session.setPermissionCheckHandler(() => false);
-  const placeholder = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>FootballAssistant 设置</title><style>body{font:15px/1.8 system-ui,sans-serif;margin:36px;color:#24382e;background:#f8faf8}h1{font-size:22px}p{color:#58665f}</style><h1>设置</h1><p>设置界面将在后续开发。当前先完成桌宠的文字、语音和表情交互。</p></html>';
-  await settingsWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(placeholder)}`);
-  settingsWindow.show(); settingsWindow.on('closed', () => { settingsWindow = null; });
+  const area = screen.getPrimaryDisplay().workArea;
+  const window = new BrowserWindow({ width: Math.min(960, area.width), height: Math.min(740, area.height),
+    minWidth: Math.min(580, area.width), minHeight: Math.min(420, area.height),
+    title: 'FootballAssistant 设置', backgroundColor: '#111714', show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: ['--companion-window=settings'], contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'companion-settings' } });
+  settingsWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  window.webContents.session.setPermissionCheckHandler(() => false);
+  window.on('closed', () => { if (settingsWindow === window) settingsWindow = null; });
+  try {
+    await window.loadFile(settingsPage);
+    if (!window.isDestroyed()) window.show();
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
   return { opened: true };
 }
 function contextMenu() {
@@ -106,6 +132,14 @@ function registerIpc() {
   handle('cancel-request', id => runtime.cancelRequest(id));
   handle('new-conversation', () => { speech.stop(); return runtime.switchSession(); });
   handle('set-proactivity', value => runtime.setProactivity(value));
+  handle('set-preferences', patch => {
+    const before = runtime.state().preferences;
+    const next = runtime.setPreferences(patch);
+    if (before.sttProvider !== next.preferences.sttProvider || before.ttsProvider !== next.preferences.ttsProvider) {
+      speech.stop();
+    }
+    return next;
+  });
   handle('simulate-event', kind => runtime.simulateEvent(kind));
   handle('get-history', () => runtime.getHistory());
   handle('clear-history', () => { speech.stop(); return runtime.clearHistory(); });
@@ -123,7 +157,7 @@ function registerIpc() {
   handle('transcribe', input => speech.transcribe(speechInput(input)));
   handle('speak', input => speech.speak(speechInput(input)));
   handle('cancel-speech-operation', id => speech.cancel(id));
-  handle('stop-speech', () => speech.stop());
+  handle('stop-speech', ({ role }) => stopSpeechForRole(role, { stop: () => speech.stop(), notifyPet: emitPet }), { withSender: true });
   handle('microphone-permission', async () => {
     if (process.platform !== 'darwin') return { state: 'prompt' };
     const state = systemPreferences.getMediaAccessStatus('microphone');
@@ -142,7 +176,7 @@ function registerIpc() {
   });
   handle('drag-end', () => { drag = null; });
   ipcMain.on('companion:input-rects', (event, rects) => {
-    if (!senderAllowed(event) || !Array.isArray(rects) || rects.length > 30) return;
+    if (!senderAllowed(event, 'input-rects') || !Array.isArray(rects) || rects.length > 30) return;
     inputRects = rects.filter(rect => rect && ['x', 'y', 'width', 'height'].every(key => Number.isFinite(rect[key]) && Math.abs(rect[key]) <= 10_000) && rect.width > 0 && rect.height > 0);
     pointerFallback();
   });
@@ -152,12 +186,12 @@ function permitMicrophone(contents, permission, details, check = false) {
 }
 async function buildWindow() {
   const primary = screen.getPrimaryDisplay().workArea;
-  const width = Math.min(460, primary.width); const height = Math.min(760, primary.height);
+  const width = Math.min(520, primary.width); const height = Math.min(620, primary.height);
   win = new BrowserWindow({
     width, height, x: Math.max(primary.x, primary.x + primary.width - width - 24), y: Math.max(primary.y, primary.y + primary.height - height - 24),
     frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, maximizable: false, fullscreenable: false,
     alwaysOnTop: true, skipTaskbar: true, show: false, hasShadow: false, title: 'FootballAssistant',
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: ['--companion-window=pet'], contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');

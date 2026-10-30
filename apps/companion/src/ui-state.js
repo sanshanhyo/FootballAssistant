@@ -37,6 +37,10 @@
     };
   }
 
+  function shouldSubmitText(event, composing = false) {
+    return Boolean(event && event.key === 'Enter' && !event.shiftKey && !event.isComposing && !composing && event.keyCode !== 229);
+  }
+
   function belongsToSession(item, state) {
     return Boolean(item && state && item.sessionId === state.sessionId && item.epoch === state.epoch);
   }
@@ -76,5 +80,5 @@
     return Number.isNaN(time.getTime()) ? '采样时间未知' : time.toLocaleString('zh-CN', { hour12: false });
   }
 
-  return { EXPRESSIONS, createGesture, belongsToSession, createFence, valueLabel, observationLabels, timestampLabel };
+  return { EXPRESSIONS, createGesture, shouldSubmitText, belongsToSession, createFence, valueLabel, observationLabels, timestampLabel };
 });

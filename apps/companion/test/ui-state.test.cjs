@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createGesture, createFence, belongsToSession, valueLabel, observationLabels, timestampLabel } = require('../src/ui-state.js');
+const { createGesture, createFence, shouldSubmitText, belongsToSession, valueLabel, observationLabels, timestampLabel } = require('../src/ui-state.js');
 
 test('pet gesture distinguishes click, long hold and drag without starting voice while dragging', () => {
   const gesture = createGesture();
@@ -52,4 +52,14 @@ test('observation labels preserve synthetic, stale, partial and missing metadata
   assert.deepEqual(observationLabels({}), ['来源待确认', '时效未知', '完整性未知']);
   assert.equal(timestampLabel('not-a-date'), '采样时间未知');
   assert.equal(timestampLabel(null), '采样时间未知');
+});
+
+
+test('composer Enter respects Chinese IME and Shift+Enter drafts', () => {
+  assert.equal(shouldSubmitText({ key:'Enter' }), true);
+  assert.equal(shouldSubmitText({ key:'Enter', shiftKey:true }), false);
+  assert.equal(shouldSubmitText({ key:'Enter', isComposing:true }), false);
+  assert.equal(shouldSubmitText({ key:'Enter' }, true), false);
+  assert.equal(shouldSubmitText({ key:'Enter', keyCode:229 }), false);
+  assert.equal(shouldSubmitText({ key:'a' }), false);
 });

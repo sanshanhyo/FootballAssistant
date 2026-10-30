@@ -5,6 +5,11 @@ const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS } = require('./reader-clients.cjs');
+const PREFERENCE_VALUES = Object.freeze({
+  expression: ['auto', 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'notice', 'happy', 'puzzled', 'error'],
+  sttProvider: ['openai', 'mock'],
+  ttsProvider: ['system', 'edge', 'openai', 'azure', 'mock'],
+});
 
 function text(value, max, label) {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${label}为空或过长。`);
@@ -19,7 +24,9 @@ class CompanionRuntime extends EventEmitter {
     this.realClient = options.realClient || new DisconnectedReaderClient();
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
     this.proactivity = 80; this.historyEnabled = false;
+    this.preferences = { expression: 'auto', sttProvider: 'openai', ttsProvider: 'system' };
     this.messages = []; this.memories = []; this.pending = new Map();
+    this.tools = new Map();
     this.writeQueue = Promise.resolve(); this.closed = false;
   }
   async init() {
@@ -31,6 +38,11 @@ class CompanionRuntime extends EventEmitter {
       if (saved.version !== 1) return this.state();
       if (Number.isInteger(saved.proactivity) && saved.proactivity >= 0 && saved.proactivity <= 100) this.proactivity = saved.proactivity;
       this.historyEnabled = saved.historyEnabled === true;
+      if (saved.preferences && typeof saved.preferences === 'object' && !Array.isArray(saved.preferences)) {
+        for (const [key, values] of Object.entries(PREFERENCE_VALUES)) {
+          if (values.includes(saved.preferences[key])) this.preferences[key] = saved.preferences[key];
+        }
+      }
       this.memories = Array.isArray(saved.memories) ? saved.memories.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 2_000).slice(-200) : [];
       if (this.historyEnabled && Array.isArray(saved.messages)) this.messages = saved.messages.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 12_000).slice(-500);
     } catch (error) {
@@ -43,11 +55,13 @@ class CompanionRuntime extends EventEmitter {
     const mock = this.mode === 'mock';
     return {
       mode: this.mode, epoch: this.epoch, sessionId: this.sessionId, proactivity: this.proactivity,
+      preferences: { ...this.preferences },
       connection: { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(), synthetic: mock,
       limitations: mock ? [...MOCK_LIMITATIONS] : ['真实后端尚未接入；不会自动回退到模拟数据。'],
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
       pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
+      tools: [...this.tools.values()].filter(item => item.sessionId === this.sessionId && item.epoch === this.epoch),
       memoryCount: this.memories.length, storageWarning: this.storageWarning || null,
     };
   }
@@ -55,7 +69,7 @@ class CompanionRuntime extends EventEmitter {
   changed() { this.publish({ type: 'state', state: this.state() }); }
   persist() {
     if (!this.file || this.storageWarning) return Promise.resolve();
-    const value = JSON.stringify({ version: 1, proactivity: this.proactivity, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
+    const value = JSON.stringify({ version: 1, proactivity: this.proactivity, preferences: this.preferences, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
     this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const temporary = `${this.file}.tmp`;
@@ -66,19 +80,26 @@ class CompanionRuntime extends EventEmitter {
   }
   cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
   switchSession() {
-    this.cancelAll(); this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    this.cancelAll(); this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID(); this.changed();
     return this.state();
   }
   setMode(input) {
     const mode = typeof input === 'string' ? input : input?.mode;
     if (!['mock', 'real'].includes(mode)) throw new Error('模式无效。');
     const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'unconfigured';
-    this.cancelAll(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.changed();
     return this.state();
   }
   setProactivity(value) {
     if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error('主动性必须是 0–100 的整数。');
     this.proactivity = value; this.persist(); this.changed(); return this.state();
+  }
+  setPreferences(patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).length === 0) throw new Error('偏好设置无效。');
+    for (const [key, value] of Object.entries(patch)) {
+      if (!Object.hasOwn(PREFERENCE_VALUES, key) || !PREFERENCE_VALUES[key].includes(value)) throw new Error('偏好设置包含不支持的选项。');
+    }
+    this.preferences = { ...this.preferences, ...patch }; this.persist(); this.changed(); return this.state();
   }
   setHistoryEnabled(value) {
     if (typeof value !== 'boolean') throw new Error('历史记录设置无效。');
@@ -91,7 +112,12 @@ class CompanionRuntime extends EventEmitter {
   active(request) { return !this.closed && !request.controller.signal.aborted && this.pending.get(request.id) === request && request.epoch === this.epoch && request.sessionId === this.sessionId; }
   tool(request, status, meta) {
     if (!this.active(request)) return;
-    this.publish({ type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id: `${request.id}:snapshot`, name: 'reader.snapshot', status, label: status === 'running' ? '读取模拟观测' : '模拟观测读取完成', metadata: meta || metadata(request.sessionId) } });
+    const id = `${request.id}:snapshot`;
+    const labels = { running: '读取模拟观测', completed: '模拟观测读取完成', cancelled: '模拟读取已取消', error: '模拟读取失败' };
+    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || metadata(request.sessionId) } };
+    this.tools.set(id, event);
+    if (this.tools.size > 100) this.tools.delete(this.tools.keys().next().value);
+    this.publish(event);
   }
   sendMessage(input) {
     const message = text(input?.text ?? input?.message, 4_000, '消息');
@@ -119,6 +145,7 @@ class CompanionRuntime extends EventEmitter {
       this.changed();
     } catch (error) {
       if (!this.active(request)) return;
+      this.tool(request, 'error');
       this.pending.delete(request.id);
       this.publish({ type: 'request', requestId: request.id, status: 'error', error: error.message, sessionId: request.sessionId, epoch: request.epoch });
       this.changed();
@@ -128,6 +155,7 @@ class CompanionRuntime extends EventEmitter {
     if (typeof id !== 'string' || id.length > 128) throw new Error('请求标识无效。');
     const request = this.pending.get(id);
     if (!request) return { cancelled: false };
+    this.tool(request, 'cancelled');
     request.controller.abort(); this.pending.delete(id);
     this.publish({ type: 'request', requestId: id, status: 'cancelled', sessionId: request.sessionId, epoch: request.epoch });
     this.changed(); return { cancelled: true };
@@ -136,7 +164,7 @@ class CompanionRuntime extends EventEmitter {
     if (!['default', 'stale', 'missing', 'partial', 'disconnected'].includes(kind)) throw new Error('模拟事件类型无效。');
     if (this.mode !== 'mock') throw new Error('只有明确选择模拟模式时才能生成模拟事件。');
     if ((kind === 'disconnected') !== this.mockDisconnected) {
-      this.cancelAll(); this.mockDisconnected = kind === 'disconnected'; this.epoch += 1; this.changed();
+      this.cancelAll(); this.tools.clear(); this.mockDisconnected = kind === 'disconnected'; this.epoch += 1; this.changed();
     }
     const epoch = this.epoch; const sessionId = this.sessionId;
     const result = await this.mockClient.snapshot({ sessionId, kind });
@@ -148,7 +176,7 @@ class CompanionRuntime extends EventEmitter {
     this.addMessage(message); this.changed(); return { messageId: message.id };
   }
   getHistory() { return { enabled: this.historyEnabled, messages: [...this.messages] }; }
-  async clearHistory() { this.cancelAll(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); await this.persist(); this.changed(); return this.getHistory(); }
+  async clearHistory() { this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); await this.persist(); this.changed(); return this.getHistory(); }
   getMemories() { return { entries: [...this.memories] }; }
   async saveMemory(input) {
     const memory = { id: randomUUID(), text: text(input?.text, 2_000, '记忆内容'), createdAt: new Date().toISOString(), source: 'user-confirmed' };

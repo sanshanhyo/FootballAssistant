@@ -2,11 +2,25 @@
 
 日期：2026-10-30。开发分支：`feat/companion-ui`。起点：远程 `main` 的 `f7d1055eaac31cef1af3559195dadd94b239089f`。本阶段沿用 Electron，后端由 reader-semantics／后端开发线负责；不修改采集、协议解码或 Reader 数据模型。
 
+## 设置分离与输入条调整
+
+本轮从 `3fe586434ea5d4d0a82e1304243c0eb37ea8adde` 继续，按用户提供的两张截图将原桌宠管理面板移入正式设置窗口。单击桌宠只展开横向文字输入条，右侧为发送按钮；消息、工具状态和信息卡继续由桌宠气泡展示。输入条不再承载连接、语音、表情或记录管理控件。
+
+设置通过系统托盘／菜单栏或桌宠右键打开，独立窗口集中管理连接与模拟示例、语音服务选择、主动性与表情、聊天历史和显式记忆。设置窗口后打开时，从完整 state 恢复当前消息和工具状态，随后接收与桌宠相同的事件；清除历史、新对话及模式切换同时更新两窗口。
+
+`state.preferences` 为 `{expression, sttProvider, ttsProvider}`。`setPreferences(patch)` 只接受固定键及预定义枚举，不接受服务 URL、可执行文件或密钥。偏好单独持久化，不依赖是否开启聊天历史；语音 provider 变更会停止主进程音频任务，并由共享偏好变化使桌宠取消录音／转写／播放，防止旧操作继续。主动性仍默认 80%。设置点击停止语音会额外通知桌宠释放本地录音／播放器；桌宠自身的停止请求不回送停止事件，避免迟到回声取消下一次语音操作。
+
+设置窗口有独立的 preload 角色和 IPC 白名单，可以管理记录、取消已有工具请求和停止语音；不能发送聊天、请求麦克风、转写、播报或拖动桌宠。主进程同时核对发起窗口、主 frame 与精确本地页面 URL。设置页面的媒体权限始终拒绝。
+
+本地语音转文字本轮只做方案研究；没有下载模型、安装识别引擎或把未实现的本地服务显示为可用。现有 STT 服务配置与明确模拟模式保持原合同。
+
+建议后续使用 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 的 multilingual `small` 作为跨 macOS／Windows 的离线起点；官方模型表中未量化权重为 466 MiB。按住录音、松手整段识别可复用现有交互，但需要将 MediaRecorder 音频正确转换为 16 kHz、单声道、16-bit PCM WAV，并由主进程使用固定识别程序、固定模型路径及模型校验；不让 Renderer 指定任意命令。实际中文、英文球员姓名效果、内存与延迟尚未测试，不能把模型可用视为本机体验已经达标。
+
 ## 本阶段范围与默认值
 
 - 启动默认 **模拟模式**，不读取旧 `runtime.json`，不连接本机后端、游戏或聊天模型。明确切换真实模式时显示“后端尚未接入”，不会偷偷回退到模拟回复。
-- 桌宠与设置分别为独立窗口。菜单栏（macOS）／系统托盘（Windows）提供显示、隐藏、设置与退出；右键桌宠也能打开设置。设置窗口只有说明占位，具体设置内容留待后续。
-- 单击桌宠打开文字输入；长按启动麦克风录音，松手停止并转写到**可编辑草稿**，用户检查后手动发送。拖动超过阈值进入拖动，取消长按识别，避免误录音；Escape 可取消。
+- 桌宠与设置分别为独立窗口。菜单栏（macOS）／系统托盘（Windows）提供显示、隐藏、设置与退出；右键桌宠也能打开设置。管理控件集中于设置窗口，桌宠仅保留消息气泡、横向输入条和角色交互。
+- 单击桌宠打开横向文字输入条，右侧发送；长按启动麦克风录音，松手停止并转写到**可编辑草稿**，用户检查后手动发送。拖动超过阈值进入拖动，取消长按识别，避免误录音；Escape 可取消。
 - 文本输出使用对话框，支持用户回复、主动消息、工具进度和观测卡。人格正文、最终角色素材及对话框素材等待用户提供；占位资源不确立伙伴身份。
 - 表情由交互状态驱动，也可通过预览切换。音频播放默认手动触发，不因新消息、数据事件或启动而自动播报。
 - 主动性默认 **80%**，前端可调整并保存。当前只演示显式触发的模拟主动消息，不把 80% 擅自定义为随机丢弃通知的算法；正式事件触发策略由后端接入时协调。
@@ -20,11 +34,13 @@
 
 `window.companion` 只暴露命名方法，所有调用返回 `{ok:true,value}` 或 `{ok:false,error,code?}`。没有通用 invoke、文件读取、任意命令或任意 URL 接口。
 
-- 会话：`getState`、`setMode`、`sendMessage`、`cancelRequest`、`newConversation`、`setProactivity`、`simulateEvent`。
+- 会话：`getState`、`setMode`、`sendMessage`、`cancelRequest`、`newConversation`、`setProactivity`、`setPreferences`、`simulateEvent`。
 - 记录：`getHistory`、`clearHistory`、`setHistoryEnabled`、`getMemories`、`saveMemory`、`deleteMemory`。
 - 窗口：`openSettings`、`showContextMenu`、`dragStart/Move/End`、`inputRects`、`quit`。
 - 语音：`speechCapabilities`、`microphonePermission`、`transcribe`、`cancelSpeechOperation`、`speak`、`stopSpeech`。
 - 订阅：`subscribe(callback)` 返回取消订阅函数；事件包含 `state`、`message`、`tool`、`request`、`speech`、`visibility` 和 `stop-speech`。
+
+以上是桌宠角色的接口全集。设置角色仅获得固定管理子集；`sendMessage`、麦克风权限、`transcribe`、`speak`、单项语音操作取消、右键菜单与拖动接口仅桌宠可用。`state.tools` 保存当前会话工具快照及完整来源元数据，包含完成／取消／失败终态，供后打开的设置窗口恢复；会话切换时清空。
 
 每次模式、后端标识或会话切换都会增加 `epoch`、生成新 `sessionId`、取消旧任务与语音。消息／工具事件带原请求、会话与 epoch；异步结果只有仍属于当前请求及会话时才能进入界面。并行请求保持独立 requestId，最多同时四个；旧请求返回不能覆盖新会话。
 
@@ -59,7 +75,7 @@ STT 服务未配置时不会悄悄返回模拟转写。只有明确选择模拟�
 
 ## 本地记录与旧版本数据
 
-新记录保存在 Electron userData 下 `companion-ui.json`，含版本、主动性、用户选择保留的历史及显式记忆，使用临时文件加替换写入。退出前等待排队写入。
+新记录保存在 Electron userData 下 `companion-ui.json`，含版本、主动性、界面与语音偏好、用户选择保留的历史及显式记忆，使用临时文件加替换写入。退出前等待排队写入。旧版本没有偏好字段时使用明确的默认值，未知或不支持的偏好忽略，不升级为任意配置。
 
 旧 Renderer localStorage 的 conversation ID／事件游标，以及后端 SQLite 历史，均不自动导入新会话或当作长期记忆；旧数据不被覆盖。损坏或过大的新记录文件会产生可见警告并保留原文件，避免启动即覆写。
 
@@ -71,7 +87,15 @@ STT 服务未配置时不会悄悄返回模拟转写。只有明确选择模拟�
 
 本文件中的测试记录仅代表本分支实际完成的检查，不能沿用早期版本的真实模型／游戏验证作为新功能通过证据。
 
-本轮 `npm run check` **32/32 通过**。macOS arm64／Electron 45.1.0 开发态 GUI 分三轮完成 **36/36 检查**，打包 Mac smoke **2/2 通过**；相关 pageerror／console error 均为 0。Browser plugin 不可用，因此使用 Playwright Electron 路径。另执行入库的可复用离线 smoke，**6/6 通过**。这些 GUI 录音检查使用假媒体设备与权限桩，未调用真实后端、模型、云服务或系统语音。
+首轮提交 `3fe5864` 的 `npm run check` **32/32 通过**。macOS arm64／Electron 45.1.0 开发态 GUI 分三轮完成 **36/36 检查**，打包 Mac smoke **2/2 通过**；相关 pageerror／console error 均为 0。Browser plugin 不可用，因此使用 Playwright Electron 路径。另执行入库的可复用离线 smoke，**6/6 通过**。这些 GUI 录音检查使用假媒体设备与权限桩，未调用真实后端、模型、云服务或系统语音。
+
+本轮 `npm run check` **37/37 通过**，包含新 `settings.js` 语法检查；其中 runtime／安全测试 **13/13 通过**，增加跨窗口偏好广播及持久化、原子白名单校验、设置后开恢复工具及取消终态、设置与桌宠角色权限隔离，以及设置停止语音通知与桌宠停止不回声。
+
+正式设置与新输入条的双窗 GUI **28/28**，额外录音／已开始的假 Audio 清理 **3/3**，合计 **31/31 通过**；Mac 打包应用的双窗 smoke **4/4 通过**，pageerror／console error 均为 0。验证了横向输入条及中文输入法回车、各设置分类、共享偏好、完整来源信息、两窗口记录／会话同步、设置停止录音与播放器、取消转写上传和设置角色拒绝麦克风及禁止 IPC。测试只使用假媒体、隔离 userData 与阻断网络／外部语音进程的夹具，不代表真实麦克风或服务通过。
+
+可复用 `node test/electron-smoke.cjs` 已适配新桌宠／设置选择器，**6/6 通过**，退出码 0，网络／外部进程尝试及 Renderer 错误为 0。其六项为明确模拟启动、单击聊天及来源卡、设置切换后端隔离旧回复、显式记忆独立删除、模拟录音草稿、离线与控制台检查。这是完整 GUI 的子集；跨窗口语音选择会等待桌宠实际应用共享状态并恢复窗口焦点，再执行假媒体长按。脚本仅使用 fake-device，没有使用会绕过权限判断的 fake-ui 参数。
+
+本轮 Mac ARM64 与 Windows x64 ZIP 均构建成功；Mac 包已实际运行，Windows 未实机运行。两个 `app.asar` 的全部 17 个 `src` 文件 SHA256 与冻结源码一致，运行时 package 元数据一致；builder 正常剥离开发／构建字段，不做 package 文件逐字节相等的错误断言。此后仅更新未被 builder 收录的文档和 smoke 脚本，未改产品源码。当前预览输出为 ignored `apps/companion/dist/companion-pet-preview.png` 和 `companion-settings-preview.png`，已实际查看；详细离线 QA 证据保留于 `/tmp/football-companion-dualwindow-qa-20261030/`。真实麦克风／系统授权框、云端 STT／TTS／Edge、真实后端、Windows 实机、完整人工托盘操作、游戏全屏及多显示器仍未验证；本轮未安装 whisper.cpp 或模型。
 
 独立工作区首次安装时 Electron 的安装脚本未执行，已使用锁定版本的 `node node_modules/electron/install.js` 补齐本地运行时，没有改动全局 npm 策略、package 或 lock。随后实际 `npm start` 使用独立 userData 和清空云配置的环境启动并以 0 退出；`dev-start.json` 确认 Electron 45.1.0、mock、synthetic=true、bridge=true、nodeExposed=false。该启动没有调用后端、模型、麦克风或云语音。
 
