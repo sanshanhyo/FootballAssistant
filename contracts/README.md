@@ -21,7 +21,7 @@ Schema 使用 JSON Schema Draft 2020-12，协议版本为 `0.1.0`。它是初始
 
 `source.freshness` 表示来源性质，runtime 为 `live` 或 `unknown`，save 固定 `snapshot`；不构成“永不过期”的承诺。Data Core 未来需结合观测时间、当前会话和用途计算新鲜度。`save_metadata` 中的快照引用/摘要/文件时间/解析配置均可未知；生产真实观测时必须有实际来源依据。文件时间不等于游戏内时间。
 
-传输候选是仅本机回环 HTTP + JSON，入口鉴权与限流见架构文档。本阶段不运行服务器，不向项目或全局环境安装校验依赖；Schema 验证使用 `Draft202012Validator`，并开启 UUID 与 date-time 格式校验。两个例子表示“尚未探测”，没有伪装成已读取游戏的成功观测。
+传输候选是仅本机回环 HTTP + JSON，入口鉴权与限流见架构文档。本阶段不运行服务器，不向项目或全局环境安装校验依赖；Schema 验证使用 `Draft202012Validator`，并开启 UUID 与 date-time 格式校验；早期验收范围与结果见[初始化记录](../docs/initialization.md)。两个例子表示“尚未探测”，没有伪装成已读取游戏的成功观测。
 
 
 ## MVP v0.2 实现

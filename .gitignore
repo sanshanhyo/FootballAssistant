@@ -41,7 +41,3 @@ build/
 
 # Python build metadata
 *.egg-info/
-
-# Local session validation records
-/docs/initialization.md
-/apps/companion/VALIDATION.md
