@@ -66,7 +66,7 @@ def _bounded_tree(value, depth=0, budget=None):
         raise ValueError("unsupported_json_type")
 
 
-def _read_json(path: Path, limit=MAX_JSON_BYTES):
+def _read_json(path: Path, limit=MAX_JSON_BYTES, *, max_nodes=100_000):
     if path.is_symlink() or not path.is_file():
         raise ValueError("input_not_regular_file")
     with path.open("rb") as stream:
@@ -74,7 +74,7 @@ def _read_json(path: Path, limit=MAX_JSON_BYTES):
     if len(raw) > limit:
         raise ValueError("json_byte_budget")
     value = json.loads(raw, object_pairs_hook=_object, parse_constant=_reject_constant)
-    _bounded_tree(value)
+    _bounded_tree(value, budget=[max_nodes])
     if type(value) is not dict:
         raise ValueError("expected_json_object")
     return value, hashlib.sha256(raw).hexdigest()
@@ -117,7 +117,9 @@ def _manifest(path):
 def _registry(path):
     if path is None:
         return None, None
-    frame, digest = _read_json(path)
+    # A full 16,384-row registry with five descriptor fields needs over
+    # 180,000 key/value/container nodes. Keep this allowance registry-only.
+    frame, digest = _read_json(path, max_nodes=200_000)
     _source(frame.get("source"))
     rows = frame.get("registry_enumerations")
     if type(rows) is not list or len(rows) > 128 or any(type(row) is not dict for row in rows):

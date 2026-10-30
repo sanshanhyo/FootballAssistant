@@ -473,3 +473,62 @@ def test_scope_counters_include_candidates_beyond_output_truncation(tmp_path):
     assert result["candidate_change_count"] == 4
     assert result["truncated"] is True
     assert len(result["candidate_changes"]) == 1
+
+
+def test_full_synthetic_registry_above_legacy_node_budget_is_accepted(tmp_path):
+    sidecar = registry(tmp_path)
+    frame = json.loads(sidecar.read_text())
+    row = frame["registry_enumerations"][0]
+    # 9,130 five-field descriptors alone require 100,430 JSON tree nodes.
+    # These names are fabricated TEST labels, never private property metadata.
+    row["entries"] = [{"id": index, "name": f"TEST_property_{index}", "owner": None,
+                       "display_name": None, "value_type": None} for index in range(9130)]
+    row["expected_count"] = 9130
+    encoded = json.dumps(frame, separators=(",", ":"))
+    assert len(encoded.encode()) < 1_048_576
+    sidecar.write_text(encoded)
+    result = compare(tmp_path, registry_sidecar=sidecar)
+    assert result["status"] == "candidate_evidence_only"
+    assert result["captures"]["a"]["registry_sidecar_sha256"] == hashlib.sha256(sidecar.read_bytes()).hexdigest()
+    assert "TEST_property_" not in json.dumps(result)
+
+
+def test_registry_still_rejects_over_new_node_budget_below_byte_limit(tmp_path):
+    sidecar = registry(tmp_path)
+    frame = json.loads(sidecar.read_text())
+    frame["TEST_extra_scalars"] = [0] * 200_001
+    encoded = json.dumps(frame, separators=(",", ":"))
+    assert len(encoded.encode()) < 1_048_576
+    sidecar.write_text(encoded)
+    with pytest.raises(ValueError, match="json_structure_budget"):
+        compare(tmp_path, registry_sidecar=sidecar)
+
+
+def test_default_json_node_budget_remains_100000(tmp_path):
+    # Manifest files have an even tighter 64KiB cap, so exercise their default
+    # JSON loader budget directly rather than relaxing the manifest byte limit.
+    path = tmp_path / "TEST-default-loader.json"
+    path.write_text(json.dumps({"TEST_scalars": [0] * 100_001}, separators=(",", ":")))
+    with pytest.raises(ValueError, match="json_structure_budget"):
+        evidence._read_json(path)
+
+
+@pytest.mark.parametrize("constraint", ["bytes", "depth", "entries"])
+def test_larger_registry_node_budget_preserves_other_limits(tmp_path, constraint):
+    sidecar = registry(tmp_path)
+    frame = json.loads(sidecar.read_text())
+    if constraint == "bytes":
+        # Many individually bounded strings exceed the whole-document budget.
+        frame["TEST_padding"] = ["x" * 60_000] * 18
+    elif constraint == "depth":
+        nested = 0
+        for _ in range(50):
+            nested = [nested]
+        frame["TEST_nested"] = nested
+    else:
+        row = frame["registry_enumerations"][0]
+        row["entries"] = [{"id": index} for index in range(16_385)]
+        row["expected_count"] = 16_385
+    sidecar.write_text(json.dumps(frame, separators=(",", ":")))
+    with pytest.raises(ValueError):
+        compare(tmp_path, registry_sidecar=sidecar)

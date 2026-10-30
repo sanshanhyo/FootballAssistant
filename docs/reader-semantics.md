@@ -101,6 +101,10 @@ investigate, not a confirmed meaning or cause.
 
 Input manifest: 64 KiB each; registry sidecar: 1 MiB. Strict JSON rejects duplicate
 object keys, NaN/infinities, excessive depth/nodes/strings and oversized integers.
+The JSON tree budgets are 100,000 nodes for manifests and 200,000 nodes for
+registry sidecars (keys, values and containers all count), with depth limited
+to 48. The larger registry-only budget accommodates complete descriptor rows;
+the independent 1 MiB byte cap and 16,384-entry cap still apply.
 The existing capture limits remain 4,096 keys and 64 KiB payload per packet.
 Report changes default to 128, configurable from 1 through 512; the report also
 includes the full candidate count and `truncated` flag. Output has a 2 MiB cap.
@@ -142,3 +146,8 @@ checks + 20 existing packet/wire checks passed**. The complete Python suite repo
 **119 passed, 1 failed**, with the same baseline model SDK fixture failure described
 above. All new regression fixtures are synthetic; no private captured bytes or
 player names were added to this repository.
+
+Full-registry follow-up validation: **60 workbench + 20 packet/wire checks passed**;
+the same complete Linux suite reports **125 passed, 1 failed** (the unchanged
+baseline model SDK fixture). A privately supplied full registry now passes the
+registry-only structural budget; its contents are not included in this repository.
