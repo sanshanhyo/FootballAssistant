@@ -1,0 +1,59 @@
+"""Local configuration. Never print credentials or borrow other projects' settings."""
+from __future__ import annotations
+
+import os
+import json
+import secrets
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[4]
+
+
+@dataclass(frozen=True)
+class Settings:
+    data_dir: Path
+    runtime_file: Path
+    port: int = 17827
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
+    base_url: str = ""
+    model: str = ""
+    api_key: str = field(default="", repr=False)
+    model_timeout: float = 45.0
+    max_output_tokens: int = 180
+    model_extra_body: dict = field(default_factory=dict)
+    model_request_limit: int = 0
+    model_budget_id: str = "default"
+    runtime_stale_seconds: float = 10
+    runtime_disconnect_seconds: float = 30
+    stale_seconds: int = 300
+    max_request_bytes: int = 131072
+
+    @property
+    def model_configured(self) -> bool:
+        return all((self.base_url, self.model, self.api_key))
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        load_dotenv(ROOT / ".env", override=False)
+        data_dir = Path(os.environ.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data")).expanduser().resolve()
+        runtime_file = Path(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json")).expanduser().resolve()
+        port = int(os.environ.get("FOOTBALL_ASSISTANT_PORT", "17827"))
+        if not 1 <= port <= 65535:
+            raise ValueError("FOOTBALL_ASSISTANT_PORT must be 1..65535")
+        return cls(
+            data_dir=data_dir, runtime_file=runtime_file, port=port,
+            token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
+            base_url=os.environ.get("FOOTBALL_ASSISTANT_BASE_URL", "").strip(),
+            model=os.environ.get("FOOTBALL_ASSISTANT_MODEL", "").strip(),
+            api_key=os.environ.get("FOOTBALL_ASSISTANT_API_KEY", "").strip(),
+            model_timeout=float(os.environ.get("FOOTBALL_ASSISTANT_MODEL_TIMEOUT", "45")),
+            max_output_tokens=int(os.environ.get("FOOTBALL_ASSISTANT_MAX_OUTPUT_TOKENS", "180")),
+            model_extra_body=json.loads(os.environ.get("FOOTBALL_ASSISTANT_MODEL_EXTRA_BODY", "{}")),
+            model_request_limit=int(os.environ.get("FOOTBALL_ASSISTANT_MODEL_REQUEST_LIMIT", "0")),
+            model_budget_id=os.environ.get("FOOTBALL_ASSISTANT_MODEL_BUDGET_ID", "default"),
+            runtime_stale_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_STALE_SECONDS", "10")),
+            runtime_disconnect_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_DISCONNECT_SECONDS", "30")),
+        )

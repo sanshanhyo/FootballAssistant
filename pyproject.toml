@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "football-assistant"
+version = "0.1.0"
+description = "Read-only local FootballAssistant companion backend"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-ai-slim[openai]>=1,<3",
+  "python-dotenv>=1,<2",
+  "jsonschema[format]>=4.26,<5",
+]
+
+[project.optional-dependencies]
+save = ["fmsave==0.7.0"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1"]
+
+[project.scripts]
+football-assistant-backend = "football_assistant_data.app:main"
+football-assistant-import = "football_assistant_data.cli:main"
+football-assistant-save-probe = "football_assistant_save.adapter:main"
+football-assistant-save-summary = "football_assistant_save.summary:main"
+football-assistant-import-save = "football_assistant_save.import_cli:main"
+
+[tool.setuptools]
+packages = ["football_assistant_data", "football_assistant_agent", "football_assistant_save", "football_assistant_contracts"]
+
+[tool.setuptools.package-dir]
+football_assistant_data = "modules/data-core/src/football_assistant_data"
+football_assistant_agent = "modules/agent-core/src/football_assistant_agent"
+football_assistant_save = "modules/save-adapter/src/football_assistant_save"
+football_assistant_contracts = "contracts"
+
+[tool.setuptools.package-data]
+football_assistant_contracts = ["schemas/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["modules/data-core/tests", "modules/save-adapter/tests"]

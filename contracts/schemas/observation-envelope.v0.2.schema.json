@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:footballassistant:observation-envelope:0.2.0",
+  "title": "FootballAssistant observation envelope 0.2.0",
+  "description": "Read-only observations. Real and synthetic data always retain source and game provenance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "captured_at",
+    "observed_at",
+    "synthetic",
+    "source",
+    "game",
+    "status",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "observed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "game": {
+      "$ref": "#/$defs/game"
+    },
+    "status": {
+      "enum": [
+        "available",
+        "partial",
+        "unavailable"
+      ]
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/capability_report"
+        },
+        {
+          "$ref": "#/$defs/fact_snapshot"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "adapter_id",
+        "adapter_version",
+        "platform",
+        "freshness"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "runtime",
+            "save"
+          ]
+        },
+        "adapter_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapter_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "enum": [
+            "macos-arm64",
+            "macos-x64",
+            "windows-x64",
+            "unknown"
+          ]
+        },
+        "freshness": {
+          "enum": [
+            "live",
+            "snapshot",
+            "unknown"
+          ]
+        },
+        "save_metadata": {
+          "$ref": "#/$defs/save_metadata"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "save"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "save_metadata"
+            ],
+            "properties": {
+              "freshness": {
+                "const": "snapshot"
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "save_metadata"
+              ]
+            },
+            "properties": {
+              "freshness": {
+                "enum": [
+                  "live",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "save_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot_ref",
+        "sha256",
+        "file_modified_at",
+        "parse_profile"
+      ],
+      "properties": {
+        "snapshot_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_modified_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "parse_profile": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product",
+        "build",
+        "session_id",
+        "game_time"
+      ],
+      "properties": {
+        "product": {
+          "const": "FM27"
+        },
+        "build": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "game_time": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      }
+    },
+    "capability_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "capabilities"
+      ],
+      "properties": {
+        "kind": {
+          "const": "capability_report"
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "detail"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "runtime-observation",
+            "save-observation"
+          ]
+        },
+        "status": {
+          "enum": [
+            "available",
+            "not_probed",
+            "unsupported",
+            "unavailable"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "fact_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "facts"
+      ],
+      "properties": {
+        "kind": {
+          "const": "fact_snapshot"
+        },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2000,
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_kind",
+        "entity_id",
+        "field",
+        "value"
+      ],
+      "properties": {
+        "entity_kind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "entity_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "value": {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ],
+          "maxLength": 4000
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        }
+      }
+    }
+  }
+}

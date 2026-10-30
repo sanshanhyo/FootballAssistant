@@ -1,0 +1,94 @@
+name: Companion desktop
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - apps/companion/**
+      - modules/game-bridge/**
+      - .github/workflows/desktop.yml
+  pull_request:
+    paths:
+      - apps/companion/**
+      - modules/game-bridge/**
+      - .github/workflows/desktop.yml
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: mac
+            artifact: macos-arm64
+          - os: windows-latest
+            target: win
+            artifact: windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/companion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/companion/package-lock.json
+      - run: npm ci --no-fund --no-audit
+      - run: npm run check
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify GameBridge offline transport on Windows
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: dotnet run --project modules/game-bridge/tests/SelfTest.csproj
+      - name: Verify Windows native speech synthesis
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          try {
+            $outputPath = Join-Path $env:RUNNER_TEMP 'football-assistant-tts.wav'
+            $speaker.SetOutputToWaveFile($outputPath)
+            $speaker.Speak('Football Assistant speech smoke test')
+          } finally { $speaker.Dispose() }
+          if ((Get-Item $outputPath).Length -le 44) { throw 'TTS output is empty' }
+      - name: Package desktop
+        run: npm run pack:${{ matrix.target }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke built Windows application
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:FOOTBALL_ASSISTANT_SMOKE_REPORT = Join-Path $env:RUNNER_TEMP 'companion-smoke.json'
+          $env:FOOTBALL_ASSISTANT_SMOKE_EXIT = '1'
+          $appProcess = Start-Process '.\dist\win-unpacked\FootballAssistant.exe' -PassThru
+          if (-not $appProcess.WaitForExit(30000)) {
+            $appProcess.Kill()
+            throw 'Packaged desktop smoke timed out'
+          }
+          if ($appProcess.ExitCode -ne 0) { throw 'Packaged desktop failed to launch' }
+          $report = Get-Content $env:FOOTBALL_ASSISTANT_SMOKE_REPORT -Raw | ConvertFrom-Json
+          if ($report.platform -ne 'win32' -or $report.arch -ne 'x64') { throw 'Unexpected desktop target' }
+          if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
+      - name: Archive macOS application preserving executable permissions
+        if: runner.os == 'macOS'
+        run: tar -czf dist/FootballAssistant-macos-arm64.tar.gz -C dist/mac-arm64 FootballAssistant.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-${{ matrix.artifact }}
+          path: |
+            apps/companion/dist/*.zip
+            apps/companion/dist/*.tar.gz
+            ${{ runner.temp }}/companion-smoke.*
+          if-no-files-found: error
+          retention-days: 7

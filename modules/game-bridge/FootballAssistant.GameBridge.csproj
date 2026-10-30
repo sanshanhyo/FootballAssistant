@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>FootballAssistant.GameBridge</AssemblyName>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src/*.cs" />
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(BepInExCoreDir)/BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.Common">
+      <HintPath>$(BepInExCoreDir)/BepInEx.Unity.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>$(BepInExCoreDir)/BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="CheckBepInExReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(BepInExCoreDir)/BepInEx.Core.dll')"
+           Text="Set BepInExCoreDir to the separately audited BepInEx core. This project never installs a loader or changes a game." />
+  </Target>
+</Project>

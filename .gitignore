@@ -1,0 +1,47 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local secrets and runtime data
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+local-data/
+logs/
+*.log
+
+# Game / user inputs: keep actual binaries and saves outside the repository
+local-game/
+local-saves/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# C# / .NET
+[Bb]in/
+[Oo]bj/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+build/
+
+# Python build metadata
+*.egg-info/
+
+# Local session validation records
+/docs/initialization.md
+/apps/companion/VALIDATION.md

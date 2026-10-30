@@ -1,0 +1,33 @@
+name: Backend checks
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'modules/**'
+      - 'contracts/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'modules/**'
+      - 'contracts/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/backend.yml'
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.9'
+      - run: uv sync --frozen --python 3.14 --extra save
+      - run: uv run --frozen --extra save pytest -q

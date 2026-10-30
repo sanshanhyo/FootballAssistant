@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.1.0",
+  "event_id": "0f9c3fcf-6f08-4ccc-9aae-93d3589cf01a",
+  "captured_at": "2026-10-30T00:00:00Z",
+  "observed_at": null,
+  "synthetic": true,
+  "source": {
+    "kind": "save",
+    "adapter_id": "synthetic-save-adapter",
+    "adapter_version": "0.0.0-initialization",
+    "platform": "unknown",
+    "freshness": "snapshot",
+    "save_metadata": {
+      "snapshot_ref": null,
+      "sha256": null,
+      "file_modified_at": null,
+      "parse_profile": null
+    }
+  },
+  "game": {
+    "product": "FM27",
+    "build": null,
+    "session_id": null,
+    "game_time": null
+  },
+  "status": "unavailable",
+  "payload": {
+    "kind": "capability_report",
+    "capabilities": [
+      {
+        "id": "save-observation",
+        "status": "not_probed",
+        "detail": "纯合成初始化例子；尚未检查游戏文件或读取存档。"
+      }
+    ]
+  }
+}

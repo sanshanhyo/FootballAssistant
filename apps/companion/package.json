@@ -1,0 +1,30 @@
+{
+  "name": "football-assistant-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FootballAssistant MVP desktop companion",
+  "author": "FootballAssistant contributors",
+  "main": "src/main.cjs",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/renderer.js && npm test",
+    "pack:mac": "electron-builder --mac dir --arm64",
+    "pack:win": "electron-builder --win zip --x64"
+  },
+  "devDependencies": {
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "local.footballassistant.companion",
+    "productName": "FootballAssistant",
+    "artifactName": "FootballAssistant-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "THIRD_PARTY.md", "package.json"],
+    "mac": { "target": ["dir"], "category": "public.app-category.games", "identity": null },
+    "win": { "target": [{ "target": "zip", "arch": ["x64"] }], "signAndEditExecutable": false }
+  }
+}

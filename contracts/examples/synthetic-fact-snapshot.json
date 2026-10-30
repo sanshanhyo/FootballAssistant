@@ -1,0 +1,32 @@
+{
+  "schema_version": "0.2.0",
+  "event_id": "877ba4ca-52c2-4d67-8c9a-e6c5db7d212e",
+  "captured_at": "2026-10-30T00:00:00Z",
+  "observed_at": null,
+  "synthetic": true,
+  "source": {
+    "kind": "runtime",
+    "adapter_id": "synthetic-runtime-adapter",
+    "adapter_version": "0.0.0-initialization",
+    "platform": "unknown",
+    "freshness": "unknown"
+  },
+  "game": {
+    "product": "FM27",
+    "build": null,
+    "session_id": null,
+    "game_time": null
+  },
+  "status": "available",
+  "payload": {
+    "kind": "fact_snapshot",
+    "facts": [
+      {
+        "entity_kind": "demo_club",
+        "entity_id": "synthetic-club-1",
+        "field": "display_name",
+        "value": "纯合成示例俱乐部"
+      }
+    ]
+  }
+}
