@@ -9,17 +9,13 @@
 </head>
 <body>
   <main id="companion">
-    <section id="compact-bubble" aria-label="桌宠消息气泡">
-      <div class="bubble-top"><div id="message-badges" class="badges"><span class="badge synthetic">模拟模式</span></div><span id="message-origin" class="message-origin">桌宠</span></div>
-      <p id="compact-text" role="status">单击桌宠输入消息，长按说话。</p>
-      <p id="error" role="alert" hidden></p>
-      <section id="voice-feedback" class="voice-feedback" aria-live="polite" hidden><span id="recording-dot"></span><span id="voice-status"></span><button id="cancel-voice" class="quiet-button">取消</button></section>
-      <details id="tasks" class="task-details" hidden><summary id="task-summary">正在处理信息…</summary><div id="task-list"></div></details>
-      <details id="message-details" class="message-details" hidden><summary>来源与信息卡</summary><div id="message-detail-content"></div></details>
-      <div class="bubble-actions"><nav id="message-navigation" aria-label="浏览桌宠消息" hidden><button id="previous-message" class="quiet-button" aria-label="上一条消息">‹</button><span id="message-count"></span><button id="next-message" class="quiet-button" aria-label="下一条消息">›</button></nav><button id="read-last" class="quiet-button" disabled>朗读</button><button id="stop-speech" class="quiet-button" hidden>停止</button></div>
+    <section id="compact-bubble" aria-label="角色对白" hidden>
+      <svg class="bubble-fill" viewBox="0 0 1774 887" aria-hidden="true" focusable="false"><path fill="#fff" d="M46 428 C47 360 65 313 105 268 C154 203 222 148 305 113 C472 54 643 28 805 25 C935 29 1077 36 1200 46 C1321 56 1436 80 1510 125 C1543 137 1570 158 1602 190 C1671 258 1726 354 1726 424 C1730 516 1673 622 1600 683 L1726 859 L1514 737 C1256 838 633 814 315 774 C100 746 29 619 46 428Z"/></svg>
+      <img class="bubble-outline" src="assets/ui/speech-bubble.png" alt="" draggable="false" aria-hidden="true">
+      <div id="bubble-content"><div id="bubble-body"><p id="compact-text" role="status" tabindex="0"></p></div></div>
     </section>
-    <div id="pet-wrap"><span id="pet-hint">单击打字 · 长按说话<br><span>拖动移动 · 右键设置</span></span><button id="pet" data-expression="idle" aria-expanded="false" aria-controls="chat-form" aria-label="桌宠：单击打字，长按说话，拖动移动，右键设置"><img id="character-image" class="character-visual" alt="" draggable="false" hidden><span id="character-visual-error" hidden>角色图未载入</span><span id="expression-label">待机</span></button></div>
-    <section id="input-dock" aria-label="文字输入区域"><form id="chat-form" aria-label="给桌宠发消息" hidden><label class="sr-only" for="message">消息内容</label><textarea id="message" maxlength="4000" rows="1" placeholder="输入消息…" aria-describedby="draft-note"></textarea><button id="send" type="submit" disabled aria-label="发送消息" title="发送 · Enter">↑</button></form><p id="draft-note" hidden>Enter 发送 · Shift + Enter 换行</p></section>
+    <div id="pet-wrap"><button id="pet" data-expression="idle" aria-expanded="false" aria-controls="chat-form" aria-label="桌宠：单击打字，长按说话，拖动移动，右键设置"><img id="character-image" class="character-visual" alt="" draggable="false" hidden><span id="character-visual-error" hidden>角色图未载入</span><span id="expression-label">待机</span></button></div>
+    <section id="input-dock" aria-label="文字输入区域"><form id="chat-form" aria-label="给桌宠发消息" hidden><label class="sr-only" for="message">消息内容</label><textarea id="message" maxlength="4000" rows="1" placeholder="输入消息…" aria-describedby="draft-note"></textarea><button id="send" type="submit" disabled aria-label="发送消息" title="发送 · Enter">↑</button></form><div id="interaction-feedback" aria-live="polite" hidden><p id="error" role="alert" hidden></p><span id="voice-status" hidden></span><button id="cancel-voice" type="button" hidden>取消</button></div><p id="draft-note" hidden>Enter 发送 · Shift + Enter 换行</p></section>
   </main>
   <script src="ui-state.js"></script>
   <script src="renderer.js"></script>

@@ -8,8 +8,7 @@
   const tools = new Map();
   const requests = new Map();
   let lastReply = null;
-  let selectedMessageId = null;
-  let followLatest = true;
+  let renderedMessageKey = null;
   let noticeTimer;
   let speechInfo = null;
   let recording = null;
@@ -21,8 +20,8 @@
   let dragReady = Promise.resolve();
   let dragMovePending = false;
   let composing = false;
-  const gesture = UI.createGesture();
-  const voiceFence = UI.createFence();
+  const gesture = UI?.createGesture();
+  const voiceFence = UI?.createFence();
   const operationId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const unwrap = result => {
     if (!result?.ok) throw new Error(result?.error || '桌宠请求失败，请重试。');
@@ -38,7 +37,8 @@
 
   function updateRects() {
     if (!api?.inputRects) return;
-    const rects = [$('pet'), $('compact-bubble'), $('chat-form'), $('draft-note')].filter(item => item && !item.hidden).map(element => {
+    // The artwork's transparent corners pass through; only its content area is interactive.
+    const rects = [$('pet'), $('bubble-content'), $('chat-form'), $('interaction-feedback'), $('draft-note')].filter(item => item && !item.hidden).map(element => {
       const rect = element.getBoundingClientRect();
       return { x:rect.x, y:rect.y, width:rect.width, height:rect.height };
     });
@@ -48,7 +48,16 @@
   function showError(message) {
     $('error').textContent = message || '';
     $('error').hidden = !message;
+    if (message) setComposer(true);
+    updateInteractionFeedback();
     refreshExpression(); updateRects();
+  }
+
+  function updateInteractionFeedback() {
+    const active = speechPhase !== 'idle';
+    $('voice-status').hidden = !active;
+    $('cancel-voice').hidden = !active;
+    $('interaction-feedback').hidden = !active && $('error').hidden;
   }
 
   function resizeComposer() {
@@ -94,50 +103,9 @@
   function setVoiceStatus(message, phase = 'idle') {
     speechPhase = phase;
     $('voice-status').textContent = message || '';
-    $('voice-feedback').hidden = !message;
-    $('voice-feedback').classList.toggle('recording', phase === 'recording');
-    $('cancel-voice').hidden = !['recording', 'permission', 'transcribing', 'speaking'].includes(phase);
-    $('stop-speech').hidden = phase !== 'speaking';
+    if (['permission', 'recording', 'transcribing'].includes(phase)) setComposer(true);
+    updateInteractionFeedback();
     refreshExpression(); updateRects();
-  }
-
-  function metadataView(metadata = {}) {
-    metadata = metadata && typeof metadata === 'object' ? metadata : {};
-    const details = node('details', 'observation');
-    details.append(node('summary', '', '来源详情'));
-    details.append(node('p', '', `来源：${metadata.sourceLabel || (typeof metadata.source === 'string' ? metadata.source : metadata.source ? JSON.stringify(metadata.source) : '未知')} · 会话：${metadata.sessionId || '未知'}`));
-    details.append(node('p', '', `采样：${UI.timestampLabel(metadata.sampledAt)}`));
-    details.append(node('p', '', `partial：${metadata.partial === true ? '是' : metadata.partial === false ? '否' : '未知'} · synthetic：${metadata.synthetic === true ? '是（模拟）' : metadata.synthetic === false ? '否' : '未知'}`));
-    const limitations = Array.isArray(metadata.limitations) ? metadata.limitations : metadata.limitations ? [metadata.limitations] : [];
-    if (limitations.length) {
-      const list = node('ul'); limitations.forEach(value => list.append(node('li', '', value))); details.append(list);
-    } else details.append(node('p', '', '限制：未提供，不能据此视为完整或已验证。'));
-    return details;
-  }
-
-  function badge(label, kind = '') { return node('span', `badge ${kind}`, label); }
-  function metadataTags(metadata) {
-    const row = node('div', 'observation-tags');
-    UI.observationLabels(metadata).forEach(label => row.append(badge(label, label === '模拟数据' ? 'synthetic' : label.includes('过期') ? 'stale' : label.includes('完整') ? 'partial' : 'unknown')));
-    return row;
-  }
-
-  function cardView(card, inheritedMetadata) {
-    const element = node('section', 'info-card');
-    element.append(node('h3', '', card.title || '信息卡'));
-    const fields = node('dl', 'card-fields');
-    for (const field of Array.isArray(card.fields) ? card.fields : []) {
-      fields.append(node('dt', '', field?.label || '未知字段'));
-      const value = UI.valueLabel(field);
-      fields.append(node('dd', value === '未知' ? 'unknown' : '', value));
-    }
-    element.append(fields);
-    const metadata = { ...inheritedMetadata, ...card.metadata };
-    element.append(metadataTags(metadata), metadataView(metadata));
-    if (card.action || card.type === 'action-proposal') {
-      const button = node('button', 'action-disabled', '执行暂不可用'); button.disabled = true; element.append(button);
-    }
-    return element;
   }
 
   function currentReplies() { return [...messages.values()].filter(message => message.role === 'assistant' && UI.belongsToSession(message, state)); }
@@ -163,6 +131,7 @@
     pet.setAttribute('aria-label', `${character.displayName}：单击打字，长按说话，拖动移动，右键设置`);
     pet.title = `${character.displayName} / ${character.englishName} · ${character.visual?.label || '视觉待确认'}`;
     $('chat-form').setAttribute('aria-label', `给${character.displayName}发消息`);
+    $('compact-bubble').setAttribute('aria-label', `${character.displayName}的对白`);
   }
 
   $('character-image').addEventListener('load', () => {
@@ -177,62 +146,16 @@
   });
 
   function renderBubble() {
-    const replies = currentReplies();
-    if (followLatest || !replies.some(item => item.id === selectedMessageId)) selectedMessageId = replies.at(-1)?.id || null;
-    lastReply = replies.find(item => item.id === selectedMessageId) || null;
-    $('read-last').disabled = !lastReply;
-    $('compact-text').textContent = lastReply?.text || (state?.mode === 'real' ? '真实后端尚未接入。可以从设置切换为模拟演示。' : state?.connection?.state === 'disconnected' ? '模拟连接已中断，等待恢复。' : '单击桌宠输入消息，长按说话。');
-    const name = state?.character?.displayName || '桌宠';
-    $('message-origin').textContent = lastReply?.origin === 'proactive' ? `${name} · 主动消息` : name;
-    const badges = $('message-badges'); badges.replaceChildren();
-    badges.append(badge(state?.synthetic === true ? '模拟模式' : state?.mode === 'real' ? '真实 · 未接入' : '状态待确认', state?.synthetic ? 'synthetic' : 'unknown'));
-    if (state?.connection?.state === 'disconnected' || state?.connection?.state === 'unavailable') badges.append(badge('未连接', 'disconnected'));
-    const metadata = lastReply?.metadata;
-    if (metadata?.freshness === 'stale') badges.append(badge('已过期', 'stale'));
-    else if (metadata && metadata.freshness !== 'current') badges.append(badge('时效未知', 'unknown'));
-    if (metadata?.partial === true) badges.append(badge('数据不完整', 'partial'));
-    const navigation = $('message-navigation'); navigation.hidden = replies.length < 2;
-    const index = replies.findIndex(item => item.id === selectedMessageId);
-    $('message-count').textContent = `${index + 1} / ${replies.length}`;
-    $('previous-message').disabled = index <= 0;
-    $('next-message').disabled = index < 0 || index >= replies.length - 1;
-    const detail = $('message-detail-content'); detail.replaceChildren();
-    $('message-details').hidden = !lastReply;
-    if (lastReply) {
-      detail.append(metadataTags(metadata), metadataView(metadata));
-      for (const card of Array.isArray(lastReply.cards) ? lastReply.cards : []) detail.append(cardView(card, metadata));
-    }
+    lastReply = currentReplies().at(-1) || null;
+    // This frame is only the character's speech; operational facts remain in Settings.
+    $('compact-text').textContent = lastReply?.text || '';
+    $('compact-bubble').hidden = !$('compact-text').textContent;
+    if (renderedMessageKey !== lastReply?.id) $('bubble-body').scrollTop = 0;
+    renderedMessageKey = lastReply?.id || null;
     updateRects();
   }
 
-  function navigateMessage(delta) {
-    const replies = currentReplies();
-    const current = replies.findIndex(item => item.id === selectedMessageId);
-    const next = replies[current + delta];
-    if (!next) return;
-    selectedMessageId = next.id; followLatest = current + delta === replies.length - 1;
-    $('message-details').open = false;
-    renderBubble();
-  }
-
-  function renderTasks() {
-    const container = $('task-list'); container.replaceChildren();
-    const taskItems = [...tools.values()].filter(item => UI.belongsToSession(item, state));
-    const active = taskItems.filter(item => item.tool.status === 'running');
-    $('task-summary').textContent = active.length ? `${active[0].tool.label || '正在读取信息'}${active.length > 1 ? ` · ${active.length} 项进行中` : ''}` : taskItems.length ? '最近处理进度' : '暂无处理任务';
-    for (const item of taskItems.slice(-6)) {
-      const element = node('div'); const row = node('div', `task ${item.tool.status}`);
-      row.append(node('span', 'task-label', item.tool.label || item.tool.name || '读取信息'));
-      row.append(node('span', 'task-state', ({ running:'进行中', completed:'完成', cancelled:'已取消', error:'失败' })[item.tool.status] || '等待'));
-      if (item.tool.status === 'running') {
-        const cancel = node('button', 'quiet-button', '取消');
-        cancel.addEventListener('click', () => call(() => api.cancelRequest(item.requestId))); row.append(cancel);
-      }
-      element.append(row, metadataView(item.tool.metadata)); container.append(element);
-    }
-    $('tasks').hidden = !taskItems.length;
-    refreshExpression(); updateRects();
-  }
+  function renderTasks() { refreshExpression(); }
 
   function applyState(next) {
     if (!next || !Number.isSafeInteger(next.epoch) || typeof next.sessionId !== 'string') return;
@@ -242,8 +165,8 @@
     const providersChanged = next.preferences && (next.preferences.sttProvider !== oldPreferences.sttProvider || next.preferences.ttsProvider !== oldPreferences.ttsProvider);
     if (switched || providersChanged) cancelVoice(providersChanged && state ? '语音服务已切换' : '');
     if (switched) {
-      messages = new Map(); tools.clear(); requests.clear(); selectedMessageId = null; followLatest = true;
-      $('message').value = ''; resetDraftNote(); resizeComposer(); $('message-details').open = false;
+      messages = new Map(); tools.clear(); requests.clear(); renderedMessageKey = null;
+      $('message').value = ''; resetDraftNote(); resizeComposer();
     }
     state = next;
     renderCharacter();
@@ -266,6 +189,7 @@
     if (event.type === 'visibility' && event.visible === false) { cancelVoice('桌宠已隐藏，语音操作已停止', false); return; }
     if (event.type === 'stop-speech') { cancelVoice('语音操作已停止', false); return; }
     if (event.type === 'composer') { setComposer(event.open !== false, true); return; }
+    if (event.type === 'read-last-reply') { speakLast(); return; }
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') { onSpeechEvent(event.state); return; }
     if (event.type === 'message' && UI.belongsToSession(event.message, state)) {
@@ -294,7 +218,7 @@
     const text = $('message').value.trim();
     if (!text || !state || state.mode !== 'mock' || state.connection?.state === 'disconnected') return;
     const context = { sessionId:state.sessionId, epoch:state.epoch };
-    $('message').value = ''; resetDraftNote(); resizeComposer(); followLatest = true;
+    $('message').value = ''; resetDraftNote(); resizeComposer();
     showError('');
     try {
       unwrap(await api.sendMessage({ text, conversationId:context.sessionId, generation:context.epoch }));
@@ -490,11 +414,7 @@
     $('message').addEventListener('compositionend', () => { composing = false; });
     $('message').addEventListener('keydown', event => { if (UI.shouldSubmitText(event, composing)) { event.preventDefault(); send(); } });
     $('message').addEventListener('input', resizeComposer);
-    $('previous-message').addEventListener('click', () => navigateMessage(-1));
-    $('next-message').addEventListener('click', () => navigateMessage(1));
     $('cancel-voice').addEventListener('click', () => cancelVoice());
-    $('read-last').addEventListener('click', speakLast);
-    $('stop-speech').addEventListener('click', () => cancelVoice('播报已停止'));
     $('pet').addEventListener('contextmenu', event => { event.preventDefault(); clearTimeout(holdTimer); call(() => api.showContextMenu()); });
     $('pet').addEventListener('pointerdown', event => {
       if (event.button !== 0) return;
@@ -522,7 +442,11 @@
   }
 
   let unsubscribe;
-  if (!api || !UI) { $('compact-text').textContent = '桌宠桥接未就绪，请从应用打开。'; return; }
+  if (!api || !UI) {
+    $('error').textContent = '桌宠桥接未就绪，请从应用打开。';
+    $('error').hidden = false; $('interaction-feedback').hidden = false;
+    return;
+  }
   bindEvents();
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });

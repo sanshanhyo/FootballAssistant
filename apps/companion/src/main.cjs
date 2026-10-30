@@ -105,6 +105,7 @@ function contextMenu() {
   return Menu.buildFromTemplate([
     { label: win?.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => win?.isVisible() ? hidePet() : showPet() },
     { label: '设置…', click: () => openSettings().catch(() => {}) },
+    { label: '朗读上一条回复', enabled: Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
     { label: '停止语音', click: () => { speech.stop(); emit({ type: 'stop-speech' }); } },
     { type: 'separator' }, { label: '退出', click: () => app.quit() },
   ]);
