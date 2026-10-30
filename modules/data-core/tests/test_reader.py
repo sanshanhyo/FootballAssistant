@@ -243,6 +243,7 @@ def test_launcher_leaves_unrelated_listener_and_live_owner_untouched(tmp_path,mo
             with writer_guard(config):pass
         assert owner.poll() is None
     finally:
+        owner.terminate()
         owner.communicate(timeout=5)
 
 

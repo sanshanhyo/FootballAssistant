@@ -7,6 +7,7 @@ const { RealReaderClient } = require('./reader-clients.cjs');
 const { request, defaultRuntimeFile } = require('./backend.cjs');
 const { CompanionRuntime } = require('./companion-runtime.cjs');
 const { createSpeechService } = require('./speech-service.cjs');
+const { ALPHA_TTS_ENABLED, speakWhenEnabled } = require('./release-features.cjs');
 const { allowsMicrophone, allowsWindowIpc, stopSpeechForRole } = require('./companion-security.cjs');
 const { resolveRect } = require('./vendor/displays.cjs');
 
@@ -107,7 +108,7 @@ function contextMenu() {
   return Menu.buildFromTemplate([
     { label: win?.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => win?.isVisible() ? hidePet() : showPet() },
     { label: '设置…', click: () => openSettings().catch(() => {}) },
-    { label: '朗读上一条回复', enabled: Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
+    { label: '朗读上一条回复', enabled: ALPHA_TTS_ENABLED && Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
     { label: '停止语音', click: () => { speech.stop(); emit({ type: 'stop-speech' }); } },
     { type: 'separator' }, { label: '退出', click: () => app.quit() },
   ]);
@@ -158,7 +159,7 @@ function registerIpc() {
     return input;
   }
   handle('transcribe', input => speech.transcribe(speechInput(input)));
-  handle('speak', input => speech.speak(speechInput(input)));
+  handle('speak', input => speakWhenEnabled(() => speech.speak(speechInput(input))));
   handle('cancel-speech-operation', id => speech.cancel(id));
   handle('stop-speech', ({ role }) => stopSpeechForRole(role, { stop: () => speech.stop(), notifyPet: emitPet }), { withSender: true });
   handle('microphone-permission', async () => {

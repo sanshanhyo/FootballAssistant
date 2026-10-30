@@ -33,8 +33,9 @@
 
       <section id="page-voice" class="settings-page" aria-labelledby="page-title" hidden>
         <section class="card"><h2>语音转文字</h2><p class="muted">按住桌宠开始录音，松开后转为可编辑草稿，再由你发送。</p><div class="setting-row"><div><label for="stt-provider">转写服务</label><p>服务切换时会停止当前语音操作。</p></div><select id="stt-provider"><option value="openai">云端转写</option><option value="mock">模拟转写</option></select></div><p id="stt-note" class="service-note">正在读取服务状态…</p><div id="stt-capabilities" class="provider-list"></div></section>
-        <section class="card"><h2>语音播报</h2><p class="muted">右键桌宠选择“朗读上一条回复”才会播放语音。</p><div class="setting-row"><div><label for="tts-provider">播报服务</label><p>不会自动改用其他服务。</p></div><select id="tts-provider"><option value="system">系统语音</option><option value="edge">Edge TTS</option><option value="openai">云端 TTS</option><option value="azure">Azure TTS</option><option value="mock">模拟播报</option></select></div><p id="tts-note" class="service-note">正在读取服务状态…</p><div id="tts-capabilities" class="provider-list"></div><div class="card-actions"><span id="speech-state" class="muted" aria-live="polite">尚未收到语音状态</span><button id="stop-speech" class="secondary-button">停止语音</button></div></section>
-        <p class="page-note">当前设置用于选择已接入的语音适配器。模拟转写不会识别实际录音，模拟播报不会播放声音；真实服务未就绪时会明确提示。</p>
+        <p class="page-note">Alpha 0.0.1 暂不开放语音朗读。</p>
+        <section class="card" hidden><h2>语音播报</h2><p class="muted">右键桌宠选择“朗读上一条回复”才会播放语音。</p><div class="setting-row"><div><label for="tts-provider">播报服务</label><p>不会自动改用其他服务。</p></div><select id="tts-provider"><option value="system">系统语音</option><option value="edge">Edge TTS</option><option value="openai">云端 TTS</option><option value="azure">Azure TTS</option><option value="mock">模拟播报</option></select></div><p id="tts-note" class="service-note">正在读取服务状态…</p><div id="tts-capabilities" class="provider-list"></div><div class="card-actions"><span id="speech-state" class="muted" aria-live="polite">尚未收到语音状态</span><button id="stop-speech" class="secondary-button">停止语音</button></div></section>
+        <p class="page-note">模拟转写不会识别实际录音。</p>
       </section>
 
       <section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
