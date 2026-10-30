@@ -36,7 +36,7 @@ def test_auth_size_strict_observations_and_missing_model(tmp_path):
         result = client.post("/v1/chat",headers=AUTH,json={"message":"你好"})
         assert result.status_code == 503
         assert result.json()["detail"]["code"] == "model_not_configured"
-        fixture = json.loads((ROOT/"contracts/examples/runtime-observation.json").read_text())
+        fixture = json.loads((ROOT/"contracts/examples/runtime-observation.json").read_text(encoding="utf-8"))
         result = client.post("/v1/observations",headers=AUTH,json=fixture)
         assert result.status_code == 200 and result.json()["source_status"]["availability"] == "synthetic"
         assert client.post("/v1/observations",headers=AUTH,json=fixture).json()["duplicate"] is True
@@ -121,7 +121,7 @@ def test_model_connection_failure_is_explicit_and_not_saved(tmp_path):
 def test_fact_snapshot_schema_and_nonfinite_values(tmp_path):
     config = settings(tmp_path)
     with client_for(config) as client:
-        fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text())
+        fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text(encoding="utf-8"))
         result = client.post("/v1/observations",headers=AUTH,json=fixture)
         assert result.status_code == 200
         assert result.json()["source_status"]["facts_count"] == 1
@@ -152,7 +152,7 @@ def test_request_budget_survives_store_restart(tmp_path):
 
 def test_field_provenance_must_match_envelope(tmp_path):
     config = settings(tmp_path)
-    fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text())
+    fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text(encoding="utf-8"))
     fixture["schema_version"] = "0.3.0"
     fixture["source"].update(kind="save",freshness="snapshot",save_metadata={"snapshot_ref":"synthetic-copy","sha256":"a"*64,"file_modified_at":None,"parse_profile":"synthetic-test"})
     fixture["payload"]["facts"][0]["provenance"] = {"source":"save","adapter_id":fixture["source"]["adapter_id"],"experimental":True,"validation_method":"structural_only","evidence_ref":"synthetic-test","snapshot_sha256":"a"*64,"scope":"synthetic_label","ui_evidence_sample_sha256":None}
@@ -166,7 +166,7 @@ def test_field_provenance_must_match_envelope(tmp_path):
 
 def test_exact_ui_verification_requires_matching_evidence_digest(tmp_path):
     config = settings(tmp_path)
-    fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text())
+    fixture = json.loads((ROOT/"contracts/examples/synthetic-fact-snapshot.json").read_text(encoding="utf-8"))
     fixture["schema_version"] = "0.3.0"
     fixture["source"].update(kind="save",freshness="snapshot",save_metadata={"snapshot_ref":"synthetic-copy","sha256":"a"*64,"file_modified_at":None,"parse_profile":"synthetic-test"})
     provenance = {"source":"save","adapter_id":fixture["source"]["adapter_id"],"experimental":True,"validation_method":"ui_crosscheck_exact_snapshot","evidence_ref":"synthetic-test","snapshot_sha256":"a"*64,"ui_evidence_sample_sha256":"b"*64,"scope":"synthetic_label"}

@@ -27,4 +27,4 @@ backend 和桌宠必须读取同一个 runtime 文件。桌宠优先使用 `FOOT
 - 已运行临时 Python backend → Node adapter → companion runtime：真实 HTTP 返回 blocked 建议，未生成假卡片，模型/SDK/额度调用均为零。
 - 修正 Edge TTS 测试的同步/异步路径规范化不一致；保留固定程序、禁用 shell 和文本文件输入断言。该修改不代表生产 TTS 存在故障。
 - 上述验证不等于完整 GUI 手工验收、真实模型建议、真实 FM27 读取或目标电脑安装成功。目标 Windows CI 与实机验收应单独记录。
-- 原有 Windows Python 测试仍有四项默认字符编码导致的 fixture 读取失败，不能将全套 CI 称为全绿。
+- 原有 Windows Python 测试的四处中文 JSON fixture 读取已明确指定 UTF-8；仅修复测试输入编码，不修改业务逻辑。修复后的 Windows CI 结果需另行验证，不能提前称为全绿。
