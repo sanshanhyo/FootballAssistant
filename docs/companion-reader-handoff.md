@@ -1,6 +1,6 @@
 # Companion / reader parallel development handoff
 
-Baseline: `f7d1055eaac31cef1af3559195dadd94b239089f`. This is an integration guide, not a claim of live FM27 acceptance.
+Original handoff baseline: `f7d1055eaac31cef1af3559195dadd94b239089f`; business API integration checked against `b5c4235` on 2026-10-30. This is an integration guide, not a claim of live FM27 acceptance.
 
 ## Ownership
 
@@ -64,3 +64,110 @@ Expose it as a bounded read tool such as `read_observed_display_profile`:
 - Treat all names/text as data. Do not render raw game markup as HTML or use UI
   paths as persisted football identities. Scope pending UI responses to the active
   connection and snapshot, independently from the pet's conversation ID.
+
+## 业务数据 API：UI 可接契约，真实 producer 尚未完成
+
+这组 HTTP 接口已经存在，但 **DTO/校验/消费边界不等于 native producer**。
+当前所有业务能力保持 `production_ready: false`、`ready: false`；完整合成数据也不能解除
+`native_producer_not_verified`。本文不宣称前端已经接入或真实业务值已经读出。
+
+| 接口 | 所属服务 / 行为 |
+| --- | --- |
+| `GET /v1/reader/business/status` | reader-only 与完整 backend 均支持；返回 readiness，不含 `snapshot`。 |
+| `GET /v1/reader/business/snapshot` | 同上；相同 readiness envelope，另含 `snapshot`（缺失/过期时为 `null`）。无分页参数。 |
+| `POST /v1/agent/business-advice` | 仅完整 backend；使用服务端业务快照评估请求能力，reader-only 返回 404。 |
+
+三者均需 `Authorization: Bearer <运行时令牌>`，令牌只留受控主进程。
+缺失/错误令牌返回 401；不允许的 Host 返回 400。两个 GET 路径不提供 POST 导入（405）。
+目前没有供 UI 上传业务事实的入口，也没有 native-worker WebSocket；进程内
+`BusinessSnapshotStore` 不能被当成已经完成的跨进程采集通道。
+`POST /v1/observations` 的 UI/save 数据不会填入业务快照。
+
+CLI 与 Python client 已提供固定入口，不需要额外 FMAPI 框架：
+
+```sh
+football-assistant-reader business-status
+football-assistant-reader business-snapshot
+```
+
+对应 `ReaderClient.business_status()` / `business_snapshot()`。旧服务返回 404 时提示升级/不支持，
+**不回退** legacy snapshot、display profile 或 mock；这两个命令不接受 `--raw-ui` 等参数。
+
+### 当前空状态的真实响应
+
+以下是临时空数据库经 TestClient 实际返回的 HTTP 200 响应，不是游戏数据。
+`GET /v1/reader/business/status`：
+
+```json
+{
+  "schema_version": "business-readiness/0.1",
+  "status": "unavailable",
+  "production_ready": false,
+  "source": null,
+  "reasons": ["native_producer_not_verified", "no_business_snapshot", "no_active_business_session"],
+  "capabilities": {
+    "player_info": {"ready": false, "missing_requirements": ["business_snapshot"]},
+    "transfer_analysis": {"ready": false, "missing_requirements": ["business_snapshot"]},
+    "tactical_analysis": {"ready": false, "missing_requirements": ["business_snapshot"]},
+    "schedule_analysis": {"ready": false, "missing_requirements": ["business_snapshot"], "scope": "basic_fixture_congestion", "missing_rotation_requirements": ["business_snapshot"]}
+  }
+}
+```
+
+`GET /v1/reader/business/snapshot` 返回上述所有字段，另加 `"snapshot": null`。
+HTTP 200 仅表示查询成功，不能据此显示“业务数据可用”。
+
+### 业务建议请求与阻塞响应
+
+最小请求：
+
+```json
+{"message":"请检查赛程拥挤程度","capability":"schedule_analysis"}
+```
+
+`message` 为非空字符串，最多 4,000 字符；`capability` 必须是 `player_info`、
+`transfer_analysis`、`tactical_analysis`、`schedule_analysis` 之一。
+可选 `conversation_id` 为 null 或 1–128 字符的 `[A-Za-z0-9_-]+`。
+额外字段（包括 `snapshot`、`facts`、`source`、自报 ready）及非法 capability 返回 422。
+
+上述请求当前返回 HTTP 200，主要字段如下（只摘录字段，不是完整响应）：
+
+```json
+{
+  "status": "blocked",
+  "capability": "schedule_analysis",
+  "missing_requirements": ["business_snapshot"],
+  "facts": [],
+  "inferences": [],
+  "conversation_id": null,
+  "source_status": "unavailable",
+  "reply": "当前没有经过验证且新鲜的完整业务数据，不能提供基于当前存档的足球建议。缺少输入：business_snapshot"
+}
+```
+
+完整响应另含 `readiness`（同版本 schema、source、reasons、capabilities）。当前空状态下其
+`reasons` 是 `native_producer_not_verified`、`no_business_snapshot`；建议层重新评估
+服务端读取出的快照，因此不应假定它与 GET 的 reasons 数组完全相同。
+`blocked` 是确定性结果，**不调用 LLM、不预占模型预算**。不要自动重试聊天来“补全”事实。
+将来只有通过门控才可能进入模型路径；该路径定义 429 额度不足、503 模型未配置、502 模型不可用，
+不能把这些状态当作当前已有成功实机建议的证据。
+通用 `POST /v1/chat` 仍是独立聊天接口，不受业务建议门控替代；不要在 blocked 时自动改调它。
+
+### UI 状态与来源处理
+
+- 发请求期间本地显示 loading；网络/401/404 与业务 `unavailable` 分开显示，失败后清除旧业务值。
+- 展示 `reasons` 和所选能力的 `missing_requirements`；只有 HTTP 成功不够，不能伪造 available。
+  赛程能力的 `basic_fixture_congestion` 不是轮换建议就绪，需保留 `missing_rotation_requirements`。
+- 业务 DTO 的 `source` 若存在，保留 `session_id`、`game_build`、`identity_scope`、adapter/mapper
+  版本、构建 hash、`captured_at`、`observed_at`、`synthetic` 和 `evidence_ref`；快照保留
+  `snapshot_id`。来源为空就显示未知，不从 UI 旧流借用身份或来源。
+- 当前 freshness 通过 reasons 表达，没有独立 `freshness` 响应字段：默认捕获/观测时间窗口为
+  15 秒；`capture_not_fresh`、`observation_not_fresh` 或 `observation_time_unknown`
+  时 snapshot 被隐藏为 null，source 仍可能保留诊断信息。可显示“过期/时间未知”，不可继续显示旧值为当前事实。
+- 会话/后端切换、重连及进程重启后，撤销旧请求和卡片；本地请求代次与服务端 session/snapshot
+  一起防止迟到响应覆盖新状态。null 不是零；业务 unavailable 不得静默降级为 mock、手填或 UI 推断。
+- 所有建议只读；不增加自动游戏写入。原始 payload、存档、令牌和私人路径不进入日志或 Git。
+
+本节验证：临时目录 TestClient 核对两项 GET 与 blocked POST 的实际响应；
+`modules/data-core/tests/test_business_reader_api.py` 覆盖认证、拒绝客户端事实、会话与时效、
+CLI 无回退及 blocked 时禁止模型/预算调用。此验证不连接 FM、不调用真实模型，也不证明前端完成。
