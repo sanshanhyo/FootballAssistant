@@ -344,3 +344,132 @@ def test_incomplete_registry_unknown_count_is_not_fabricated_completion(tmp_path
     result = compare(tmp_path, registry_sidecar=sidecar)
     assert result["status"] == "candidate_evidence_only"
     assert result["business_semantics_complete"] is False
+
+
+def test_alignment_without_return_reports_only_ab_scope(tmp_path):
+    result = compare(tmp_path, [integer(1)], [integer(2)])
+    assert result["channel_alignment"]["a_b"] == {
+        "shared_key_count": 1, "a_only_key_count": 0, "b_only_key_count": 0,
+        "scope": "shared_numeric_keys_only",
+    }
+    assert result["channel_alignment"]["channel_lifetime_mapping_known"] is False
+    assert "a_return_a" not in result["channel_alignment"]
+    assert "return_payload_diagnostic" not in result
+    assert result["candidate_changes"][0]["comparison_scope"] == "shared_key_value_comparison"
+
+
+@pytest.mark.parametrize("return_keys,expected_same_keys,expected_shared", [((42,), True, 1), ((43,), False, 0)])
+def test_return_identical_payload_never_establishes_channel_identity(tmp_path, return_keys, expected_same_keys, expected_shared):
+    a = packet(tmp_path, "a", nodes=[integer(1)])
+    b = packet(tmp_path, "b", nodes=[integer(2)])
+    returned = packet(tmp_path, "return", keys=return_keys, nodes=[integer(1)])
+    result = evidence.compare_manifests(a, b, return_a=returned)
+    assert result["return_payload_diagnostic"] == {
+        "payload_sha256_matches_a": True, "keys_sha256_matches_a": expected_same_keys,
+        "repeated_payload_with_different_keys": not expected_same_keys,
+        "identity_join_established": False,
+    }
+    alignment = result["channel_alignment"]["a_return_a"]
+    assert alignment["shared_key_count"] == expected_shared
+    assert alignment["a_only_key_count"] == 1 - expected_shared
+    assert alignment["return_a_only_key_count"] == 1 - expected_shared
+    assert result["candidate_changes"][0]["return_matches_a"] is (True if expected_same_keys else None)
+    assert result["entity_identity_known"] is False
+    assert result["channel_lifetime_mapping_known"] is False
+    assert result["causality_established"] is False
+
+
+def test_disjoint_ab_identical_payload_is_presence_only(tmp_path):
+    a = packet(tmp_path, "a", keys=(42,), nodes=[integer(1)])
+    b = packet(tmp_path, "b", keys=(43,), nodes=[integer(1)])
+    result = evidence.compare_manifests(a, b)
+    assert result["channel_alignment"]["a_b"] == {
+        "shared_key_count": 0, "a_only_key_count": 1, "b_only_key_count": 1,
+        "scope": "unpaired_presence_only",
+    }
+    assert result["candidate_change_count"] == 2
+    assert all(row["comparison_scope"] == "unpaired_channel_presence_only" for row in result["candidate_changes"])
+    assert all(row["a"]["observation"] == "not_observed" or row["b"]["observation"] == "not_observed"
+               for row in result["candidate_changes"])
+
+
+def test_mixed_alignment_distinguishes_value_and_unpaired_presence(tmp_path):
+    a = packet(tmp_path, "a", keys=(40, 41), nodes=[integer(1), integer(2)])
+    b = packet(tmp_path, "b", keys=(40, 42), nodes=[integer(3), integer(2)])
+    result = evidence.compare_manifests(a, b)
+    assert result["channel_alignment"]["a_b"] == {
+        "shared_key_count": 1, "a_only_key_count": 1, "b_only_key_count": 1,
+        "scope": "shared_numeric_keys_only",
+    }
+    assert [row["comparison_scope"] for row in result["candidate_changes"]] == [
+        "shared_key_value_comparison", "unpaired_channel_presence_only", "unpaired_channel_presence_only",
+    ]
+
+
+def test_shared_channel_missing_nested_path_is_path_presence_only(tmp_path):
+    a = packet(tmp_path, "a", nodes=[typed(11, payload(integer(1), integer(2)))])
+    b = packet(tmp_path, "b", nodes=[typed(11, payload(integer(1)))])
+    result = evidence.compare_manifests(a, b)
+    assert result["candidate_changes"][0]["comparison_scope"] == "shared_key_value_comparison"
+    nested = next(row for row in result["candidate_changes"] if row["path"] == ["index:1"])
+    assert nested["comparison_scope"] == "shared_key_path_presence_only"
+    assert nested["b"] == {"observation": "not_observed"}
+
+
+@pytest.mark.parametrize("keys,nodes", [((42, 42), [integer(1), integer(2)]), ((42,), [typed(255)]),
+                                       ((42, 43), [integer(1)])])
+def test_ineligible_packets_do_not_get_alignment_or_return_diagnostics(tmp_path, keys, nodes):
+    a = packet(tmp_path, "a")
+    b = packet(tmp_path, "b", keys=keys, nodes=nodes)
+    returned = packet(tmp_path, "return")
+    result = evidence.compare_manifests(a, b, return_a=returned)
+    assert result["status"] == "not_comparable"
+    assert result["candidate_changes"] == []
+    assert "channel_alignment" not in result
+    assert "return_payload_diagnostic" not in result
+
+
+def test_changed_return_payload_is_not_reported_as_payload_repetition(tmp_path):
+    a, b = packet(tmp_path, "a"), packet(tmp_path, "b", nodes=[integer(2)])
+    returned = packet(tmp_path, "return", nodes=[integer(3)])
+    result = evidence.compare_manifests(a, b, return_a=returned)
+    assert result["return_payload_diagnostic"]["payload_sha256_matches_a"] is False
+    assert result["return_payload_diagnostic"]["keys_sha256_matches_a"] is True
+    assert result["return_payload_diagnostic"]["repeated_payload_with_different_keys"] is False
+    assert result["candidate_changes"][0]["return_matches_a"] is False
+
+
+def test_cli_incomplete_exit_two_and_malformed_exit_one_from_other_cwd(tmp_path):
+    import subprocess
+    import sys
+    script = Path(__file__).resolve().parents[3] / "scripts/reader_semantics.py"
+    a = packet(tmp_path, "a")
+    b = packet(tmp_path, "b", nodes=[typed(255)])
+    command = [sys.executable, str(script), "--a", str(a), "--b", str(b)]
+    incomplete = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=10)
+    assert incomplete.returncode == 2
+    assert json.loads(incomplete.stdout)["status"] == "not_comparable"
+    assert incomplete.stderr == ""
+    b.write_text('{"private":"' + SECRET + '", malformed}')
+    malformed = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True, timeout=10)
+    assert malformed.returncode == 1
+    assert malformed.stdout == ""
+    assert json.loads(malformed.stderr)["status"] == "refused"
+    assert SECRET not in malformed.stderr
+    assert str(tmp_path) not in malformed.stderr
+
+
+def test_scope_counters_include_candidates_beyond_output_truncation(tmp_path):
+    a = packet(tmp_path, "a", keys=(40, 41),
+               nodes=[typed(11, payload(integer(1), integer(2))), integer(3)])
+    b = packet(tmp_path, "b", keys=(40, 42),
+               nodes=[typed(11, payload(integer(1))), integer(4)])
+    result = evidence.compare_manifests(a, b, max_changes=1)
+    assert result["candidate_change_counts_by_scope"] == {
+        "shared_key_value_comparison": 1,
+        "shared_key_path_presence_only": 1,
+        "unpaired_channel_presence_only": 2,
+    }
+    assert result["candidate_change_count"] == 4
+    assert result["truncated"] is True
+    assert len(result["candidate_changes"]) == 1

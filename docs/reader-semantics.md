@@ -39,8 +39,9 @@ are deliberately generic and do not echo private filenames or contents.
 The command does **not** establish capture chronology, control other changing
 variables, or verify your action notes. Packets can be partial channel updates:
 a missing channel/property means **not observed**, never deletion or zero.
-Distinct packet IDs do not prove independent captures; identical bytes are
-allowed and yield no difference. Return-A agreement strengthens a question to
+Distinct packet IDs do not prove independent captures; identical payload bytes
+are allowed, but different keys can still produce unpaired presence entries.
+Return-A agreement strengthens a question to
 investigate, not a confirmed meaning or cause.
 
 ## What the report says
@@ -59,10 +60,23 @@ investigate, not a confirmed meaning or cause.
   business meaning is guessed. Duplicate channel keys stop comparison.
 - Sessions, game-build labels, assembly/metadata/plugin builds and observer/
   managed builds must match. Cross-session numeric channels are not joined.
+- `channel_alignment.a_b` counts shared numeric keys and A-only/B-only keys;
+  optional `a_return_a` does the same for the return capture. Zero shared keys
+  means `unpaired_presence_only`: there is **no paired channel value comparison**,
+  even if the report lists many candidate entries. Otherwise the comparison
+  scope is `shared_numeric_keys_only`; unpaired keys can still appear separately.
+  Shared numeric keys do not establish a stable channel lifetime or entity.
 - `candidate_changes` is ordered deterministically by numeric channel key and
   structural path. `property:80:0` means the first occurrence of property ID 80;
   duplicate property IDs retain separate occurrence positions. `index:0` means
   list position, **not** an entity ID. An empty path means the channel root.
+- Each entry's `comparison_scope` distinguishes `shared_key_value_comparison`
+  (both nodes observed), `shared_key_path_presence_only` (a path missing under
+  a shared key), and `unpaired_channel_presence_only` (the channel key occurs
+  in only one capture). Only the first compares two observed node values;
+  even that is structural evidence, not confirmed semantic change. Full
+  `candidate_change_counts_by_scope` counts are retained despite truncation;
+  their sum is `candidate_change_count`, **not a count of changed game fields**.
 - Each changed node has tag, decoder kind and structural SHA-256. Parent
   container changes and nested changes can both appear; these are not
   independent observations. Offsets and registry labels are excluded from
@@ -74,6 +88,14 @@ investigate, not a confirmed meaning or cause.
 - Optional `return_matches_a` is true/false only when the corresponding A and
   return-A nodes were both observed. Otherwise it is null. It never confirms
   stable channel lifetimes, entity identity or a football mapping.
+- Optional `return_payload_diagnostic` compares A/return-A payload and keys
+  hashes. `repeated_payload_with_different_keys: true` means a byte-identical
+  payload recurred with different key bytes. This does **not** match channels
+  by position, remap keys, prove UI state equality or join entity identities:
+  `identity_join_established` remains false. Different key hashes may reflect
+  ordering changes as well as different IDs; the alignment counts distinguish
+  numeric-key overlap. Diagnostics are omitted when decoding/count/unique-key
+  checks prevent comparison, and return diagnostics are omitted without return-A.
 
 ## Bounds and limitations
 
@@ -114,3 +136,9 @@ with `uv sync --frozen --extra agent --extra save`:
   was exercised. No paid model API was called.
 
 These are local test results, not a claim that all GitHub Actions checks pass.
+
+Alignment-diagnostic follow-up validation (same cloud environment): **54 workbench
+checks + 20 existing packet/wire checks passed**. The complete Python suite reports
+**119 passed, 1 failed**, with the same baseline model SDK fixture failure described
+above. All new regression fixtures are synthetic; no private captured bytes or
+player names were added to this repository.

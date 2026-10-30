@@ -270,19 +270,54 @@ def compare_manifests(a: Path, b: Path, return_a: Path | None = None,
             report.update(status="not_comparable", reason="duplicate_channel_keys")
             return report
         channels.append({row["key"]: row["typed_value"] for row in rows})
+    def alignment(left, right, right_label):
+        shared = left.keys() & right.keys()
+        return {"shared_key_count": len(shared),
+                "a_only_key_count": len(left.keys() - right.keys()),
+                right_label + "_only_key_count": len(right.keys() - left.keys()),
+                "scope": "shared_numeric_keys_only" if shared else "unpaired_presence_only"}
+
+    report["channel_alignment"] = {
+        "a_b": alignment(channels[0], channels[1], "b"),
+        "channel_lifetime_mapping_known": False,
+    }
+    if len(channels) == 3:
+        report["channel_alignment"]["a_return_a"] = alignment(channels[0], channels[2], "return_a")
+        first, returned = captures[0][2], captures[2][2]
+        payload_matches = first["payload_sha256"] == returned["payload_sha256"]
+        keys_match = captures[0][1]["keys_sha256"] == captures[2][1]["keys_sha256"]
+        report["return_payload_diagnostic"] = {
+            "payload_sha256_matches_a": payload_matches,
+            "keys_sha256_matches_a": keys_match,
+            "repeated_payload_with_different_keys": payload_matches and not keys_match,
+            "identity_join_established": False,
+        }
+    counts = {"shared_key_value_comparison": 0, "shared_key_path_presence_only": 0,
+              "unpaired_channel_presence_only": 0}
+    report["candidate_change_counts_by_scope"] = counts
     for key in sorted(channels[0].keys() | channels[1].keys(), key=int):
         maps = [dict(_flatten(channel[key])) if key in channel else {} for channel in channels]
         for path in sorted(maps[0].keys() | maps[1].keys()):
             before, after = _summary(maps[0].get(path)), _summary(maps[1].get(path))
             if before == after:
                 continue
+            if key not in channels[0] or key not in channels[1]:
+                scope = "unpaired_channel_presence_only"
+            elif path not in maps[0] or path not in maps[1]:
+                scope = "shared_key_path_presence_only"
+            else:
+                scope = "shared_key_value_comparison"
+            counts[scope] += 1
             report["candidate_change_count"] += 1
             if len(report["candidate_changes"]) >= max_changes:
                 report["truncated"] = True
                 continue
             change = {"classification": "candidate_not_confirmed", "channel_key": key,
                       "path": list(path), "a": before, "b": after,
-                      "comparison_basis": "same_numeric_channel_and_structural_path_only"}
+                      "comparison_scope": scope,
+                      "comparison_basis": ("observed_channel_presence_only" if scope ==
+                                           "unpaired_channel_presence_only" else
+                                           "same_numeric_channel_and_structural_path_only")}
             if len(maps) == 3:
                 returned = _summary(maps[2].get(path))
                 change["return_a"] = returned
