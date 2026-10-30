@@ -5,7 +5,9 @@
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
   "main": "src/main.cjs",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
@@ -22,9 +24,34 @@
     "productName": "FootballAssistant",
     "artifactName": "FootballAssistant-${version}-${os}-${arch}.${ext}",
     "asar": true,
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "THIRD_PARTY.md", "package.json"],
-    "mac": { "target": ["dir"], "category": "public.app-category.games", "identity": null },
-    "win": { "target": [{ "target": "zip", "arch": ["x64"] }], "signAndEditExecutable": false }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "THIRD_PARTY.md",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.games",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "按住桌宠时使用麦克风，将你的语音转换成文字。"
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    }
   }
 }

@@ -1,0 +1,166 @@
+'use strict';
+
+const { EventEmitter } = require('node:events');
+const { randomUUID } = require('node:crypto');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS } = require('./reader-clients.cjs');
+
+function text(value, max, label) {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${label}为空或过长。`);
+  return value.trim();
+}
+
+class CompanionRuntime extends EventEmitter {
+  constructor(options = {}) {
+    super();
+    this.file = options.file;
+    this.mockClient = options.mockClient || new MockReaderClient();
+    this.realClient = options.realClient || new DisconnectedReaderClient();
+    this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
+    this.proactivity = 80; this.historyEnabled = false;
+    this.messages = []; this.memories = []; this.pending = new Map();
+    this.writeQueue = Promise.resolve(); this.closed = false;
+  }
+  async init() {
+    if (!this.file) return this.state();
+    try {
+      const stat = await fs.stat(this.file);
+      if (!stat.isFile() || stat.size > 2_000_000) throw new Error('本地记录过大。');
+      const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      if (saved.version !== 1) return this.state();
+      if (Number.isInteger(saved.proactivity) && saved.proactivity >= 0 && saved.proactivity <= 100) this.proactivity = saved.proactivity;
+      this.historyEnabled = saved.historyEnabled === true;
+      this.memories = Array.isArray(saved.memories) ? saved.memories.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 2_000).slice(-200) : [];
+      if (this.historyEnabled && Array.isArray(saved.messages)) this.messages = saved.messages.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 12_000).slice(-500);
+    } catch (error) {
+      if (error.code !== 'ENOENT') this.storageWarning = '本地记录无法读取；原文件未被删除。';
+    }
+    return this.state();
+  }
+  client() { return this.mode === 'mock' ? this.mockClient : this.realClient; }
+  state() {
+    const mock = this.mode === 'mock';
+    return {
+      mode: this.mode, epoch: this.epoch, sessionId: this.sessionId, proactivity: this.proactivity,
+      connection: { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
+      historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(), synthetic: mock,
+      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实后端尚未接入；不会自动回退到模拟数据。'],
+      messages: this.messages.filter(item => item.sessionId === this.sessionId),
+      pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
+      memoryCount: this.memories.length, storageWarning: this.storageWarning || null,
+    };
+  }
+  publish(event) { if (!this.closed) this.emit('event', event); }
+  changed() { this.publish({ type: 'state', state: this.state() }); }
+  persist() {
+    if (!this.file || this.storageWarning) return Promise.resolve();
+    const value = JSON.stringify({ version: 1, proactivity: this.proactivity, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
+    this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
+      await fs.mkdir(path.dirname(this.file), { recursive: true });
+      const temporary = `${this.file}.tmp`;
+      await fs.writeFile(temporary, value, { mode: 0o600 });
+      await fs.rename(temporary, this.file);
+    }).catch(() => { this.storageWarning = '本地记录保存失败。'; this.changed(); });
+    return this.writeQueue;
+  }
+  cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
+  switchSession() {
+    this.cancelAll(); this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    return this.state();
+  }
+  setMode(input) {
+    const mode = typeof input === 'string' ? input : input?.mode;
+    if (!['mock', 'real'].includes(mode)) throw new Error('模式无效。');
+    const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'unconfigured';
+    this.cancelAll(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.changed();
+    return this.state();
+  }
+  setProactivity(value) {
+    if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error('主动性必须是 0–100 的整数。');
+    this.proactivity = value; this.persist(); this.changed(); return this.state();
+  }
+  setHistoryEnabled(value) {
+    if (typeof value !== 'boolean') throw new Error('历史记录设置无效。');
+    this.historyEnabled = value; this.persist(); this.changed(); return this.getHistory();
+  }
+  addMessage(message) {
+    this.messages.push(message); this.messages = this.messages.slice(-500); this.persist();
+    this.publish({ type: 'message', message });
+  }
+  active(request) { return !this.closed && !request.controller.signal.aborted && this.pending.get(request.id) === request && request.epoch === this.epoch && request.sessionId === this.sessionId; }
+  tool(request, status, meta) {
+    if (!this.active(request)) return;
+    this.publish({ type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id: `${request.id}:snapshot`, name: 'reader.snapshot', status, label: status === 'running' ? '读取模拟观测' : '模拟观测读取完成', metadata: meta || metadata(request.sessionId) } });
+  }
+  sendMessage(input) {
+    const message = text(input?.text ?? input?.message, 4_000, '消息');
+    if (input?.generation !== undefined && input.generation !== this.epoch) throw new Error('会话已切换，请重新发送。');
+    if (input?.conversationId !== undefined && input.conversationId !== this.sessionId) throw new Error('会话已切换，请重新发送。');
+    if (this.mode !== 'mock') throw new Error('真实后端尚未接入，消息没有发送；可显式切换到模拟模式演示。');
+    if (this.mockDisconnected) throw new Error('模拟连接已失效；请选择其他模拟场景恢复连接。');
+    if (this.pending.size >= 4) throw new Error('已有 4 个请求在处理，请稍候或取消。');
+    const request = { id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    this.pending.set(request.id, request);
+    this.addMessage({ id: randomUUID(), role: 'user', origin: 'user', text: message, createdAt: new Date().toISOString(), requestId: request.id, sessionId: this.sessionId, epoch: this.epoch, metadata: { source: 'user', sourceLabel: '用户输入', sessionId: this.sessionId, sampledAt: new Date().toISOString(), partial: false, limitations: [], synthetic: false, freshness: 'current' }, cards: [] });
+    this.changed();
+    queueMicrotask(() => this.complete(request));
+    return { requestId: request.id, sessionId: request.sessionId, epoch: request.epoch };
+  }
+  async complete(request) {
+    try {
+      this.tool(request, 'running');
+      const result = await this.client().snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
+      if (!this.active(request)) return;
+      this.tool(request, 'completed', result.metadata);
+      this.addMessage({ id: randomUUID(), role: 'assistant', origin: 'reply', text: '【模拟回复】已收到你的消息。这是前端交互演示，尚未调用 AI 或读取游戏。下面的信息卡展示来源、未知值和数据限制。', createdAt: new Date().toISOString(), requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, metadata: result.metadata, cards: result.cards });
+      this.pending.delete(request.id);
+      this.publish({ type: 'request', requestId: request.id, status: 'completed', sessionId: request.sessionId, epoch: request.epoch });
+      this.changed();
+    } catch (error) {
+      if (!this.active(request)) return;
+      this.pending.delete(request.id);
+      this.publish({ type: 'request', requestId: request.id, status: 'error', error: error.message, sessionId: request.sessionId, epoch: request.epoch });
+      this.changed();
+    }
+  }
+  cancelRequest(id) {
+    if (typeof id !== 'string' || id.length > 128) throw new Error('请求标识无效。');
+    const request = this.pending.get(id);
+    if (!request) return { cancelled: false };
+    request.controller.abort(); this.pending.delete(id);
+    this.publish({ type: 'request', requestId: id, status: 'cancelled', sessionId: request.sessionId, epoch: request.epoch });
+    this.changed(); return { cancelled: true };
+  }
+  async simulateEvent(kind = 'default') {
+    if (!['default', 'stale', 'missing', 'partial', 'disconnected'].includes(kind)) throw new Error('模拟事件类型无效。');
+    if (this.mode !== 'mock') throw new Error('只有明确选择模拟模式时才能生成模拟事件。');
+    if ((kind === 'disconnected') !== this.mockDisconnected) {
+      this.cancelAll(); this.mockDisconnected = kind === 'disconnected'; this.epoch += 1; this.changed();
+    }
+    const epoch = this.epoch; const sessionId = this.sessionId;
+    const result = await this.mockClient.snapshot({ sessionId, kind });
+    if (this.closed || epoch !== this.epoch || sessionId !== this.sessionId) return { discarded: true };
+    if (kind === 'missing') result.cards[0].fields = result.cards[0].fields.map(field => ({ ...field, value: null, status: 'unknown' }));
+    if (kind === 'partial') result.metadata.limitations.push('本示例只包含部分观测，不能据此推断未展示字段。');
+    if (kind === 'disconnected') result.metadata.limitations.push('此卡是断线前保留的模拟观测，不代表当前可用数据。');
+    const message = { id: randomUUID(), role: 'assistant', origin: 'proactive', text: kind === 'disconnected' ? '【模拟断线】连接已失效，当前请求已取消。下面保留的模拟观测不代表当前数据；请选择其他示例恢复。' : `【模拟主动消息】收到一条${kind === 'stale' ? '过期' : kind === 'missing' ? '缺失字段的' : kind === 'partial' ? '部分' : ''}观测示例。主动性当前为 ${this.proactivity}%；具体触发策略等待后端接入后确定。`, createdAt: new Date().toISOString(), sessionId, epoch, metadata: result.metadata, cards: result.cards };
+    this.addMessage(message); this.changed(); return { messageId: message.id };
+  }
+  getHistory() { return { enabled: this.historyEnabled, messages: [...this.messages] }; }
+  async clearHistory() { this.cancelAll(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); await this.persist(); this.changed(); return this.getHistory(); }
+  getMemories() { return { entries: [...this.memories] }; }
+  async saveMemory(input) {
+    const memory = { id: randomUUID(), text: text(input?.text, 2_000, '记忆内容'), createdAt: new Date().toISOString(), source: 'user-confirmed' };
+    if (this.memories.length >= 200) throw new Error('已保存 200 条记忆，请先删除不再需要的内容。');
+    this.memories.push(memory); await this.persist(); this.changed(); return memory;
+  }
+  async deleteMemory(id) {
+    if (typeof id !== 'string' || id.length > 128) throw new Error('记忆标识无效。');
+    const before = this.memories.length; this.memories = this.memories.filter(item => item.id !== id);
+    await this.persist(); this.changed(); return { deleted: before !== this.memories.length };
+  }
+  async close() { this.cancelAll(); this.closed = true; await this.writeQueue; this.removeAllListeners(); }
+}
+
+module.exports = { CompanionRuntime };

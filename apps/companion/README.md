@@ -1,27 +1,29 @@
-# Companion MVP
+# Companion 前端
 
-72 小时冲刺先采用 Electron，Flutter 延期。当前实现透明置顶足球伙伴、拖动、透明余量点击穿透、中文聊天与服务/数据来源状态、持续监听显示、系统 TTS 和会话标识恢复。窗口只访问本机 Python 服务，不读游戏、存档或模型密钥。人格、事实和 SQLite 记忆由 Python 服务负责。
+沿用 Electron 的桌宠前端阶段：默认明确标记为模拟模式，提供消息气泡、表情切换、文字输入、按住说话、语音播报接口、工具进度、信息卡，以及分开管理的聊天历史与显式记忆。角色、人设和对话框为可替换占位，等待用户素材。后端由另一开发线提供，本阶段启动不连接游戏、Reader 或聊天模型。
 
 ## 开发运行
 
-需要 Node.js ≥22.12。先在仓库根目录启动后端 `uv run football-assistant-backend`，再在本目录运行：
+需要 Node.js ≥22.12。在本目录执行：
 
 ```sh
 npm ci
 npm start
 ```
 
-开发态默认读取仓库的 `local-data/runtime.json`，令牌仅由 Electron 主进程持有。可以设置 `FOOTBALL_ASSISTANT_RUNTIME_FILE` 为服务连接文件的绝对路径，或在窗口中点击“选择连接文件”。已选择的文件路径保存在本机应用配置中，不保存令牌副本。打包应用首次运行时可能需要选择连接文件。
+若当前安装环境跳过了 Electron 安装脚本，导致运行时文件缺失，可在本目录执行 `node node_modules/electron/install.js` 补齐锁定版本，再运行 `npm start`；本轮已完成该修复并验证实际启动，无需修改全局 npm 配置。
 
-聊天按 Enter 发送、Shift+Enter 换行；点击伙伴收放聊天框，按住伙伴拖动。若模型未配置、服务失联、数据尚未接入或仅有合成数据，界面会明确显示，不能把这些状态视为真实 FM27 已接通。
+无需启动后端。单击桌宠展开文字输入；长按说话，松手后转写进入可编辑草稿，检查后手动发送；拖动移动，右键打开设置入口。应用常驻 macOS 菜单栏／Windows 系统托盘，关闭桌宠会隐藏，退出使用菜单或界面按钮。设置窗口当前仅为说明占位。
 
-监听区每 2 秒只读更新本机 `/v1/monitoring` 和带游标的 `/v1/events`，独立于聊天；默认显示连接、最近更新时间和最近显式探测的已验证数据状态，接口结构数量、探测数及目录完整性收在“开发诊断”中。原生包头接收不等于字段值已解码，业务数据仍部分待解码；结构登记和最近探测均不代表当前会话或持续采集。页面原文或原始字段变化只作低层提示，不自动认作进球、转会或伤病事件，也不会触发模型或 TTS。
+主动性默认 80%，仅作为待后端使用的偏好保存，模拟主动消息通过按钮演示。切换“真实后端”会明确显示尚未接入，不会自动返回模拟回复。新对话或切换后端会取消旧请求和语音；信息卡保留来源、采样时间、会话、未知／过期／部分／模拟标记。
 
-## 朗读
+聊天历史默认只在进程内保留，勾选后才跨启动保存。显式记忆由用户逐条保存、查看和删除；清空聊天不删除记忆。旧版 localStorage 和后端历史不会被自动导入或覆盖。
 
-macOS 调用系统 `/usr/bin/say`，默认中文 `Tingting`，可通过 `FOOTBALL_ASSISTANT_TTS_VOICE` 指定已安装声音（`say -v '?'` 可查看）。Windows 使用系统 PowerShell / System.Speech，优先选择已安装的中文声音。中文声音的实际可用性取决于系统配置。
+## 语音
 
-朗读文本只通过子进程标准输入传递，不拼接进命令或脚本。可停止本应用启动的朗读进程；不会停止其他应用的语音。朗读失败会显示错误，不影响已取得的聊天回复。
+保留原有 macOS 系统 `say`／Windows `System.Speech`，新增可选 Edge CLI、OpenAI 兼容 TTS、Azure TTS 和 OpenAI 兼容 STT。只有手动点击“读回复”才播报。云服务未配置、Edge 未安装时明确不可用，不自动切换供应商；模拟转写与模拟播报持续标明并非真实识别／音频。
+
+语音配置仅由主进程读取环境变量，密钥不进入 Renderer。当前没有设置界面的密钥编辑功能。配置项、请求边界、接口合同及完整验收记录见 [Companion 阶段记录](../../docs/companion-ui.md)。
 
 ## 验证与打包
 
@@ -31,12 +33,18 @@ npm run pack:mac
 npm run pack:win
 ```
 
-Mac 产物为 `dist/mac-arm64/FootballAssistant.app`，当前开发包未签名、未公证。Windows 产物为 x64 ZIP；`.github/workflows/desktop.yml` 提供 macOS/Windows 的安装、测试、打包和 Windows 系统 TTS 波形验证流程。尚未执行的 CI 或 Windows 运行不得算作已通过；实际验收见冲刺记录。
+Mac 开发包为 `dist/mac-arm64/FootballAssistant.app`，Windows 为 `dist/FootballAssistant-0.1.0-win-x64.zip`。当前版本 `0.1.0`，Mac 包未签名／公证；Windows 交叉构建不代表 Windows 实机验证。
 
-测试覆盖本机地址约束、令牌轮换、模型错误传递、TTS 文本不进入命令参数、停止语音、多屏空洞与恢复。Electron 运行时还需实际验证窗口、拖拽、焦点和系统朗读。
+可复用的离线 Electron smoke 不包含在普通单元测试中：
+
+```sh
+node test/electron-smoke.cjs
+```
+
+该脚本需要已有 Playwright，可通过 `FA_PLAYWRIGHT_MODULE_PATH` 指定模块路径；可用 `FA_ELECTRON_EXECUTABLE` 指定已有 Electron，否则使用本目录依赖。脚本为每次运行建立系统临时目录和隔离用户数据，清除语音服务环境配置，阻止网络与外部语音进程，只使用 Chromium 假媒体设备和模拟服务。报告、截图保留在其输出的临时目录中；它不能验证真实麦克风、系统权限框或真实语音音色。
+
+原生手动测试同样可设置 `FA_COMPANION_USER_DATA_DIR` 为独立绝对路径，避免影响真实历史与记忆。本分支验证结果见 [阶段记录](../../docs/companion-ui.md)；[早期 MVP 验收](VALIDATION.md)仅供历史追溯，不代表新增功能已完成真实后端或语音验收。
 
 ## 复用边界
 
-真正复用了 `dsh-pet` 的 MIT 多显示器几何代码，并参考其主进程指针轮询/穿透策略，详见 [THIRD_PARTY.md](THIRD_PARTY.md)。MIT 原文与原作者版权随应用保留。没有导入上游角色、动画、提示词、字体、视频或其他限制素材；当前足球伙伴由本项目 CSS 几何绘制。
-
-不包含复杂成长、长期语义检索、多宠物、语音识别或游戏自动操作。基础记忆在后端持久保存，会话标识在本机窗口恢复。
+保留 `dsh-pet` 的 MIT 多显示器几何代码和许可，详见 [THIRD_PARTY.md](THIRD_PARTY.md)。没有导入上游角色、动画、提示词、字体、视频或其他限制素材；当前足球伙伴为 CSS 占位资源。
