@@ -65,8 +65,10 @@ def project_validated_tactics(texts, *, game, source, provenance, capture_text_s
         _require(all(unicodedata.category(c).startswith('L') or c == ' ' for c in style + mentality),
                  'invalid_tactics_text')
         suffix = ' - ' + style
-        _require(title.startswith(mentality) and title.endswith(suffix), 'tactics_title_mismatch')
-        formation = title[len(mentality):-len(suffix)]
+        # Sole observed title/display alias; not a business mentality enum.
+        prefix = '偏向防守' if mentality == '防守' and title.startswith('偏向防守') else mentality
+        _require(title.startswith(prefix) and title.endswith(suffix), 'tactics_title_mismatch')
+        formation = title[len(prefix):-len(suffix)]
         _require(formation == formation.strip() and ' - ' not in formation, 'invalid_formation_display')
         match = re.fullmatch(r'([1-9](?:-[1-9]){1,4})(?: (.+))?', formation)
         _require(match is not None and sum(map(int, match.group(1).split('-'))) == 10,

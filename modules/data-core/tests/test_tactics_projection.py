@@ -279,3 +279,54 @@ def test_old_incorrect_selector_paths_cannot_supply_required_fields(current, old
     assert result['status'] == 'unavailable'
     assert result['reason'] == 'missing_tactics_field'
     assert all(result[field] is None for field in DISPLAY_FIELDS)
+
+
+@pytest.mark.parametrize('focused', [False, True])
+def test_observed_defensive_alias_two_fresh_frames_preserve_display_and_fingerprint(focused):
+    from football_assistant_agent.ui_advice import prepare_ui_change_preview
+    from test_ui_capture_control import focused_snapshot
+    from test_display_profile import STAMP
+    data = focused_snapshot() if focused else tactics_snapshot()
+    title_path = 'focus' + TITLE_PATH[len(PANEL_ROOT):] if focused else TITLE_PATH
+    mentality_path = 'focus' + MENTALITY_PATH[len(PANEL_ROOT):] if focused else MENTALITY_PATH
+    original = prepare_ui_change_preview(data, now=NOW)
+    edit(data, mentality_path, '防守')
+    edit(data, title_path, '偏向防守4-3-3 后腰 拉边 - 控制球权')
+    first = prepare_ui_change_preview(data, now=NOW)
+    second_data = json.loads(json.dumps(data).replace('TEST-event-A', 'TEST-event-B').replace(STAMP, NOW.isoformat()))
+    second = prepare_ui_change_preview(second_data, now=NOW)
+    for frame in (data, second_data):
+        result = projection(frame)
+        assert result['status'] == 'experimental_ui_tactics'
+        assert result['mentality_display'] == '防守'
+        assert result['formation_display'] == '4-3-3 后腰 拉边'
+        assert result['style_display'] == '控制球权'
+        assert result['raw_texts']['title'].startswith('偏向防守')
+    assert first['status'] == second['status'] == 'ready'
+    assert first['display_sha256'] == second['display_sha256'] != original['display_sha256']
+    assert first['event_id'] != second['event_id'] and first['captured_at'] != second['captured_at']
+    assert first['scope_sha256'] == original['scope_sha256']
+
+
+@pytest.mark.parametrize('mentality,prefix', [('防守', '防守'), ('积极进取', '积极进取')])
+def test_original_same_name_prefix_still_matches(mentality, prefix):
+    data = tactics_snapshot()
+    edit(data, MENTALITY_PATH, mentality)
+    edit(data, TITLE_PATH, prefix + '4-3-3 后腰 拉边 - 控制球权')
+    assert projection(data)['status'] == 'experimental_ui_tactics'
+    assert projection(data)['mentality_display'] == mentality
+
+
+@pytest.mark.parametrize('mentality,title', [
+    ('积极进取', '偏向防守4-3-3 后腰 拉边 - 控制球权'),
+    ('平衡', '偏向防守4-3-3 后腰 拉边 - 控制球权'),
+    ('防守', '偏向进攻4-3-3 后腰 拉边 - 控制球权'),
+    ('防守', '偏向防守额外4-3-3 后腰 拉边 - 控制球权'),
+    ('防守', '偏向防守 4-3-3 后腰 拉边 - 控制球权'),
+    ('防守', '偏向防守4-3-4 后腰 拉边 - 控制球权'),
+    ('防守', '偏向防守4-3-3 后腰 拉边 - 其他风格'),
+])
+def test_alias_does_not_relax_independent_mentality_formation_or_style_anchors(mentality, title):
+    data = tactics_snapshot()
+    edit(data, MENTALITY_PATH, mentality); edit(data, TITLE_PATH, title)
+    assert projection(data)['status'] == 'unavailable'
