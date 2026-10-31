@@ -140,9 +140,9 @@ test('Alpha defaults current-game questions to explicit partial UI advice, no na
 });
 
 test('explicit next-match decisions route to schedule advice before possessive-word gate', async () => {
-  const decisions = ['下场要不要放', '下一场要不要放？', '下一场比赛该不该放掉', '下场轮换吗', '下一场怎么打', '下场该怎么打？', '这场友谊赛要不要练新人', '这场友谊赛轮换', '下场我们要不要轮换'];
+  const decisions = ['下场放不放？', '下场放不放', '下一场放不放？', '下场要不要放', '下一场要不要放？', '下一场比赛该不该放掉', '下场轮换吗', '下一场怎么打', '下场该怎么打？', '这场友谊赛要不要练新人', '这场友谊赛轮换', '下场我们要不要轮换'];
   for (const text of decisions) assert.equal(adviceCapability(text), 'schedule_analysis', text);
-  for (const text of ['放音乐', '下场电影', '下场电影要不要放', '下一场放音乐', '下一场放电影', '下场演唱会怎么打车', '轮换是什么意思', '友谊赛适合练新人吗']) assert.equal(adviceCapability(text), null, text);
+  for (const text of ['放音乐', '下场电影', '下场电影要不要放', '下一场放音乐', '下一场放电影', '下场放不放音乐', '下场电影放不放？', '下场演唱会怎么打车', '轮换是什么意思', '友谊赛适合练新人吗']) assert.equal(adviceCapability(text), null, text);
   const calls = [];
   const client = new RealReaderClient({ request: async (url, body) => {
     calls.push({ url, body });

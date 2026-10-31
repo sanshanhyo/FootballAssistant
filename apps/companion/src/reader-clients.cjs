@@ -102,7 +102,7 @@ function adviceCapability(message, explicit) {
   }
   // Explicit match decisions need current schedule evidence even without “我的/当前”.
   // Keep the match noun adjacent to the decision; “下场电影/放音乐” is not a game-data query.
-  if (/(?:这场友谊赛|(?:下场|下一场)(?:比赛|球赛|友谊赛)?)[\s，,：:]*(?:我们|咱们)?(?:要不要|该不该|需不需要|能不能|是不是|是否|可以|应该|该|要|能)?(?:先|直接|适当|大幅)?(?:轮换|怎么打|练新人|放(?:掉|弃|一放|一下)?(?=$|[\s？?。，,！!]|吗|呢|吧|还是))/.test(message)) return 'schedule_analysis';
+  if (/(?:这场友谊赛|(?:下场|下一场)(?:比赛|球赛|友谊赛)?)[\s，,：:]*(?:我们|咱们)?(?:要不要|该不该|需不需要|能不能|是不是|是否|可以|应该|该|要|能)?(?:先|直接|适当|大幅)?(?:轮换|怎么打|练新人|放(?:不放|掉|弃|一放|一下)?(?=$|[\s？?。，,！!]|吗|呢|吧|还是))/.test(message)) return 'schedule_analysis';
   if (asksManagedTeam(message)) return 'player_info';
   if (!/我的|当前(?:存档|球队|阵容|球员|赛程|战术|页面|界面)|这(?:个球员|个页面|一页|页)|(?:看看|查看|分析)球队|给我引援建议|my (?:team|squad|save)|current save/i.test(message)) return null;
   if (/赛程|轮换|schedule|fixture|congestion/i.test(message)) return 'schedule_analysis';
