@@ -153,7 +153,9 @@ async function main() {
     const electronVersion = require(path.join(companion, 'node_modules', 'electron', 'package.json')).version;
     const common = {
       appId: 'local.footballassistant.ci-native-update', productName: 'FA Native Update Fixture',
-      electronVersion, electronDist: path.join(companion, 'node_modules', 'electron', 'dist'),
+      // The npm Electron package need not have an extracted dist directory.
+      // Let builder reuse its normal verified Electron download/cache (as the real app does).
+      electronVersion,
       asar: true, npmRebuild: false,
       files: ['*.cjs', 'fixture-config.json', 'package.json', 'node_modules/**/*'],
       win: { target: ['nsis'], signExecutable: false },
