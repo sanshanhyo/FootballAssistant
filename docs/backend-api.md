@@ -202,8 +202,12 @@ existing balanced, allowlisted TMP link/style/color markup is stripped; arbitrar
 HTML is rejected. Title matching does not independently verify visibility.
 
 When this profile matches, the model payload is narrowed to the structured
-four-field projection and its source/limitation metadata: unrelated raw UI text
-is **not** sent to the provider. Raw evidence remains local in the API result.
+four display fields per row and static caveats only. Capture timestamps, session
+IDs, paths, hashes, builds, adapter metadata, date components and unrelated raw UI
+text are **not** sent to the provider. The required provider routing header uses
+a fresh random request-local identifier, unrelated to game or stored conversation
+identity. Provenance and raw evidence remain local in the API
+result; the user question is sent separately.
 The refresh fence also checks the projection fingerprint and clears projected
 rows on a changed/expired capture. Schedule requests that do not match the profile are blocked before any provider
 call; there is no raw-text fallback. Other capabilities retain their existing

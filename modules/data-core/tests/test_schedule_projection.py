@@ -172,3 +172,83 @@ def test_read_only_schedule_preview_is_authenticated_and_model_free(tmp_path, mo
         assert len(result['schedule_projection']['rows']) == 10
         assert result['production_ready'] is False
         assert 'TEST UNRELATED' not in str(result)
+
+
+def test_schedule_outbound_recursively_whitelists_four_fields_and_static_caveats(monkeypatch):
+    import asyncio
+    from football_assistant_agent import service
+    data = schedule_snapshot()
+    prepared = prepare_ui_advice('schedule_analysis', data, now=NOW)
+    # Poison every local-only metadata value, including arbitrary future fields.
+    sentinel = 'TEST FORBIDDEN PRIVATE METADATA'
+    prepared['provenance']['session_id'] = sentinel
+    prepared['provenance']['captured_at'] = sentinel
+    prepared['limitations'] = [sentinel]
+    prepared['schedule_projection']['future_metadata'] = sentinel
+    for row in prepared['schedule_projection']['rows']:
+        for key in ('field_provenance', 'date_components', 'identity_scope', 'row_index', 'future_metadata'):
+            row[key] = sentinel
+    monkeypatch.setattr(service, 'prepare_ui_advice', lambda *args: prepared)
+    captured = {}
+    async def chat(message, conversation_id, context, **kwargs):
+        captured.update(message=message, context=context)
+        return {'reply': 'TEST'}
+    agent = service.AgentService(None, None)
+    monkeypatch.setattr(agent, '_chat', chat)
+    response = asyncio.run(agent.ui_advice('TEST question', None, 'schedule_analysis', data))
+    context = captured['context']
+    assert captured['message'] == 'TEST question'
+    assert set(context) == {'source_status', 'ui_evidence'}
+    assert set(context['ui_evidence']) == {'schedule_projection', 'limitations'}
+    projected = context['ui_evidence']['schedule_projection']
+    assert set(projected) == {'status', 'rows'}
+    assert len(projected['rows']) == 10
+    for row in projected['rows']:
+        assert set(row) == set(COLUMNS)
+        assert all(type(value) is str for value in row.values())
+    encoded = json.dumps(context)
+    for forbidden in (sentinel, 'TEST-session', 'TEST-event-A', FOCUS_ROOT, TITLE_PATH,
+                      'captured_at', 'session_id', 'ui_path', 'sha256', 'game_build',
+                      'adapter', 'date_components', 'year_two_digits', 'row_index'):
+        assert forbidden not in encoded
+    # Local response still retains provenance and full refresh-fence metadata.
+    assert response['schedule_projection']['rows'][0]['field_provenance'] == sentinel
+    assert response['provenance']['session_id'] == sentinel
+
+
+def test_schedule_provider_routing_header_is_fresh_not_game_or_conversation_identity(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from uuid import UUID
+    from football_assistant_agent import service
+    monkeypatch.setattr(service, 'prepare_ui_advice', lambda c, s: prepare_ui_advice(c, s, now=NOW))
+    calls = []
+    class Store:
+        def reserve_model_request(self, *args): return True
+    class Client:
+        def __init__(self, **kwargs): calls.append(kwargs['default_headers'])
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+    class Agent:
+        def __init__(self, *args, **kwargs): pass
+        async def run(self, message, **kwargs):
+            assert 'TEST-session' not in message
+            assert 'TEST-conversation-private' not in message
+            assert 'field_provenance' not in message
+            return SimpleNamespace(output='TEST advice')
+    monkeypatch.setattr(service, 'AsyncOpenAI', Client)
+    monkeypatch.setattr(service, 'OpenAICompatibleProvider', lambda *a, **k: object())
+    monkeypatch.setattr(service, 'OpenAIChatModel', lambda *a, **k: object())
+    monkeypatch.setattr(service, 'Agent', Agent)
+    config = SimpleNamespace(model_configured=True, model_budget_id='TEST', model_request_limit=2,
+        api_key='TEST', base_url='http://invalid.test', model_timeout=1, model='TEST',
+        max_output_tokens=10, model_extra_body={})
+    agent = service.AgentService(config, Store())
+    for _ in range(2):
+        result = asyncio.run(agent.ui_advice('TEST question', 'TEST-conversation-private',
+                                             'schedule_analysis', schedule_snapshot()))
+        assert result['status'] == 'generated'
+    identifiers = [call['x-opencode-session'] for call in calls]
+    assert identifiers[0] != identifiers[1]
+    assert all(UUID(value).version == 4 for value in identifiers)
+    assert all(value not in ('TEST-session', 'TEST-conversation-private') for value in identifiers)

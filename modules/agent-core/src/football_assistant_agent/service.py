@@ -77,10 +77,20 @@ class AgentService:
                     "reply": "当前采样不匹配已支持的中文赛程布局，未发送任何 UI 文本给模型。请打开赛程安排页后重新采样。"}
         model_evidence = prepared
         if (prepared.get("schedule_projection") or {}).get("status") == "experimental_ui_schedule":
-            # This schedule-only consent scope must not disclose unrelated UI texts.
-            model_evidence = {key: prepared[key] for key in (
-                "mode", "source", "partial", "production_ready", "capability",
-                "schedule_projection", "provenance", "limitations")}
+            # Explicit outbound whitelist: provenance stays local, even when valid.
+            model_evidence = {
+                "schedule_projection": {
+                    "status": "experimental_ui_schedule",
+                    "rows": [{key: row[key] for key in (
+                        "date_display", "opponent_display", "home_away_display", "competition_display")}
+                        for row in prepared["schedule_projection"]["rows"]],
+                },
+                "limitations": [
+                    "实验性 UI 赛程，仅包含本次读取的四列，不是完整赛程或原生事实。",
+                    "两位年份世纪未知；开球时间未知；不得推算完整赛程密度或精确休息天数。",
+                    "来源路径、采样时间和身份元数据仅保留在本地，未提供给模型；不得编造。",
+                ],
+            }
         response = await self._chat(message, conversation_id,
             {"source_status": "partial_ui_evidence", "ui_evidence": model_evidence}, ui=True)
         if refresh is not None:
@@ -133,7 +143,11 @@ class AgentService:
             if not self.store.reserve_model_request(self.settings.model_budget_id,self.settings.model_request_limit):
                 raise ModelBudgetExceeded("本轮已授权的模型请求次数已用完，需要另行确认。")
             # Explicit client prevents ambient OPENAI_* configuration from supplying credentials.
-            async with AsyncOpenAI(api_key=self.settings.api_key, base_url=self.settings.base_url, timeout=self.settings.model_timeout, max_retries=0, default_headers={"User-Agent":"FootballAssistant/0.1","x-opencode-session":conversation_id}) as client:
+            headers = {"User-Agent": "FootballAssistant/0.1"}
+            schedule_ui = ui and (context.get("ui_evidence", {}).get("schedule_projection") or {}).get("status") == "experimental_ui_schedule"
+            # Required provider routing header, never derived from game/capture identity.
+            headers["x-opencode-session"] = str(uuid4()) if schedule_ui else conversation_id
+            async with AsyncOpenAI(api_key=self.settings.api_key, base_url=self.settings.base_url, timeout=self.settings.model_timeout, max_retries=0, default_headers=headers) as client:
                 provider = OpenAICompatibleProvider("footballassistant-configured", openai_client=client)
                 model = OpenAIChatModel(self.settings.model, provider=provider)
                 agent = Agent(model, system_prompt=prompt, retries=0)
