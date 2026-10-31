@@ -13,3 +13,5 @@ The speech-bubble outline at `src/assets/ui/speech-bubble.png` is the original t
 Dialogue text uses the unmodified **851 GBai Marker** font (851 GBai 记号笔), Version 0.04, by 8:51:22 pm with Chinese extension by lamda05. The author-supplied release permits software/game embedding and redistribution; its original notice and source links are included beside `src/assets/fonts/851GBaiMarker-Regular.ttf` as `851GBaiMarker-LICENSE.txt` and `851GBaiMarker-SOURCE.md`. The font is loaded locally and is not installed into the operating system. Other UI text continues to use system fonts.
 
 Electron and electron-builder are locked in `package-lock.json`. Their distributions contain separate third-party notices that remain in built artifacts. This file does not replace those notices.
+
+The installed Windows update adapter depends on **electron-updater 6.6.2** (MIT), pinned in `package-lock.json`. Its upstream LICENSE and dependency notices remain in the packaged production modules. It is dormant until release trust is explicitly configured.

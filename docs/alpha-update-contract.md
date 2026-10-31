@@ -146,3 +146,42 @@ fallback detection, duplicate checks, successful verified caching, corrupted/ove
 cleanup, and malicious redirects. Test-generated keys are not release credentials.
 No live release download, native signature verification, automatic installation,
 OS-level rollback or user-machine update has been executed.
+
+## Windows installed NSIS gate (not a live auto-update launch)
+
+`update-installed.cjs` is an additional, dormant integration with the pinned
+`electron-updater` 6.x / builder 26 API. NSIS Setup and portable are separate channels;
+a fixed local installation marker identifies the former but is **not** a trust anchor.
+Main may construct it and display `installation.status`; with no production trust it
+reports `manual_required`, `automaticInstallEnabled: false`. Mac, portable and unknown
+install types never instantiate the native updater. Existing public-release checking
+continues independently.
+
+The future trusted integration must call `stage(signedEnvelope)` from main after
+fetching the reviewed feed. It checks the Ed25519 manifest, platform/protocol/schema,
+newer version, and `artifact.installerType: "nsis"` with `format: "exe"`. Native GitHub
+metadata must report the same version. The single full installer returned by the
+native downloader must match manifest size and SHA-256, then Windows
+`Get-AuthenticodeSignature` must report `Valid` and a signing certificate thumbprint
+pinned in build-time `productionTrust.certificateThumbprints`. Thumbprints are X.509
+certificate SHA-1 identifiers (40 hex characters), not file-integrity digests.
+No PowerShell execution-policy bypass is used. Verification errors fail closed.
+Native default automatic downloads and install-on-quit are explicitly disabled;
+`allowDowngrade` remains false even after assigning the Alpha channel.
+
+Only main's `applyOnSafeExit({normalQuit:true, sessionEnding:false})` may request an
+install. Its `isSafeToInstall()` callback must synchronously confirm there is no game,
+chat, recording or backend work; absent/unknown means unsafe. Cache hash/signature and
+expiry are rechecked, then activity is rechecked immediately before native dispatch.
+The adapter never schedules a forced quit; only a normal idle exit may call the gate.
+Do not expose stage/install methods or productionTrust to renderer IPC. Do not invoke
+installation for Windows shutdown/logoff. Main shutdown/cleanup and the gate need a
+coordinated future integration, not a blind call from every `before-quit` event.
+
+**Not yet enabled:** production key/certificate pins, reviewed signed feed,
+`alpha.yml`/NSIS release publication, production stage scheduling and safe-exit
+activity wiring. No true signed update or native installation has been run here.
+`ready_for_safe_exit`/`deferred`/`installing` paths are covered by mocked native tests,
+not evidence of a Windows two-version upgrade acceptance pass. Real Authenticode
+verification requires Windows and an actual signed installer; mocks do not prove it.
+Package/config rollback remains the separate first-launch-health contract above.

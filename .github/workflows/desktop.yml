@@ -95,7 +95,7 @@ jobs:
           $env:FOOTBALL_ASSISTANT_SMOKE_REPORT = Join-Path $env:RUNNER_TEMP 'companion-smoke.json'
           $env:FOOTBALL_ASSISTANT_SMOKE_EXIT = '1'
           $env:FA_COMPANION_USER_DATA_DIR = Join-Path $env:RUNNER_TEMP 'portable-clean-profile'
-          $portable = Get-ChildItem '.\dist\FootballAssistant-*-win-x64.exe' | Select-Object -First 1
+          $portable = Get-ChildItem '.\dist\FootballAssistant-*-Portable-x64.exe' | Select-Object -First 1
           if (-not $portable) { throw 'Single-file portable distribution is missing' }
           $appProcess = Start-Process $portable.FullName -PassThru
           if (-not $appProcess.WaitForExit(60000)) {
@@ -110,6 +110,10 @@ jobs:
           if ($report.platform -ne 'win32' -or $report.arch -ne 'x64') { throw 'Unexpected desktop target' }
           if ($report.bootstrap.backend.state -ne 'ready') { throw 'Embedded backend did not become ready' }
           if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
+      - name: Verify NSIS installation, reinstall and uninstall preserve user data
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./test/nsis-smoke.ps1
       - name: Archive macOS application preserving executable permissions
         if: runner.os == 'macOS'
         run: tar -czf dist/FootballAssistant-macos-arm64.tar.gz -C dist/mac-arm64 FootballAssistant.app
@@ -118,6 +122,8 @@ jobs:
           name: companion-${{ matrix.artifact }}
           path: |
             apps/companion/dist/*.exe
+            apps/companion/dist/*.blockmap
+            apps/companion/dist/*.yml
             apps/companion/dist/*.zip
             apps/companion/dist/*.tar.gz
             ${{ runner.temp }}/companion-smoke.*

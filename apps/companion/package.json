@@ -12,8 +12,8 @@
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
     "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/character.cjs && node --check src/renderer.js && node --check src/settings.js && npm test",
-    "pack:mac": "electron-builder --mac dir --arm64",
-    "pack:win": "electron-builder --win portable --x64"
+    "pack:mac": "electron-builder --mac dir --arm64 --publish never",
+    "pack:win": "electron-builder --win nsis portable --x64 --publish never"
   },
   "devDependencies": {
     "electron": "45.1.0",
@@ -48,11 +48,18 @@
       "category": "public.app-category.games",
       "identity": null,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "\u6309\u4f4f\u684c\u5ba0\u65f6\u4f7f\u7528\u9ea6\u514b\u98ce\uff0c\u5c06\u4f60\u7684\u8bed\u97f3\u8f6c\u6362\u6210\u6587\u5b57\u3002"
-      }
+        "NSMicrophoneUsageDescription": "按住桌宠时使用麦克风，将你的语音转换成文字。"
+      },
+      "icon": "packaging/assets/icon.png"
     },
     "win": {
       "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
         {
           "target": "portable",
           "arch": [
@@ -60,7 +67,8 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "icon": "packaging/assets/icon.png",
+      "signExecutable": false
     },
     "extraResources": [
       {
@@ -82,6 +90,29 @@
           "!**/settings.json"
         ]
       }
-    ]
+    ],
+    "nsis": {
+      "artifactName": "FootballAssistant-${version}-Setup-${arch}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false,
+      "include": "packaging/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "FootballAssistant-${version}-Portable-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sanshanhyo",
+      "repo": "FootballAssistant",
+      "releaseType": "prerelease"
+    },
+    "icon": "packaging/assets/icon.png"
+  },
+  "dependencies": {
+    "electron-updater": "6.6.2"
   }
 }

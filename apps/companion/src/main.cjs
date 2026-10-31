@@ -5,6 +5,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { createCredentialConfig } = require('./credentials.cjs');
+const { createInstalledUpdater } = require('./update-installed.cjs');
+const { distribution } = require('./distribution.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
 const { loadSettings, detectGame, BackendSupervisor } = require('./bootstrap.cjs');
 const { RealReaderClient } = require('./reader-clients.cjs');
@@ -31,6 +33,7 @@ let credentials;
 let personaAccess;
 let savingModel = false;
 let updateController;
+let installedUpdates;
 let bootstrapStatus;
 let win;
 let settingsWindow;
@@ -169,7 +172,7 @@ function registerIpc() {
     } finally { savingModel = false; }
   });
   handle('update-open-release', async () => { await shell.openExternal('https://github.com/sanshanhyo/FootballAssistant/releases'); return { opened: true }; });
-  handle('update-status', () => updateController.status);
+  handle('update-status', () => ({ ...updateController.status, installation: installedUpdates.status }));
   handle('update-check', () => updateController.check());
   handle('update-download', () => updateController.download());
   handle('get-state', () => runtime.state());
@@ -256,7 +259,7 @@ async function buildWindow() {
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
-      runtime: runtime.state(), bootstrap: bootstrapStatus, updates: updateController.status,
+      runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status },
       renderer: await win.webContents.executeJavaScript('({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet"))})'),
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
@@ -272,6 +275,10 @@ async function main() {
   credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
   backendOptions = { userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+  installedUpdates = createInstalledUpdater({ platform: process.platform,
+    distribution: distribution({ packaged: app.isPackaged, executable: app.getPath('exe') }),
+    currentVersion: app.getVersion(), arch: process.arch, configSchema: 1, backendProtocol: 1, bridgeProtocol: 1,
+    productionTrust: undefined }); // No production key/certificate is provisioned by this build.
   updateController = createUpdateController({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
     configSchema: 1, backendProtocol: 1, bridgeProtocol: 1, cacheDir: path.join(app.getPath('userData'), 'updates'),
     feedUrl: undefined, publicKey: undefined, onStatus: state => emit({ type: 'update-status', state }) }); // Signed downloads need a reviewed feed/key; public GitHub checks remain read-only.
@@ -301,6 +308,6 @@ app.on('window-all-closed', () => { /* The tray owns application lifetime. */ })
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault(); quitting = true;
-  clearInterval(pointerTimer); updateController?.stop(); speech.dispose(); tray?.destroy();
+  clearInterval(pointerTimer); updateController?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
   Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });

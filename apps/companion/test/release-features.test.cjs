@@ -22,6 +22,13 @@ test('desktop artifact excludes local runtime, credentials, captures, logs and s
   assert.equal(backend.from, '../../build/desktop-backend/football-assistant-backend');
   assert.equal(backend.to, 'backend');
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/credentials*.json', '!**/local-game/**', '!**/*.fm']) assert.ok(backend.filter.includes(excluded));
-  assert.equal(manifest.build.win.target[0].target, 'portable');
+  assert.deepEqual(manifest.build.win.target.map(target => target.target), ['nsis', 'portable']);
+  assert.equal(manifest.build.nsis.deleteAppDataOnUninstall, false);
+  assert.equal(manifest.build.nsis.perMachine, false);
+  assert.equal(manifest.build.nsis.allowElevation, false);
+  assert.notEqual(manifest.build.nsis.artifactName, manifest.build.portable.artifactName);
   assert.equal(manifest.build.extraFiles, undefined);
+  assert.match(manifest.scripts['pack:win'], /--publish never/);
+  assert.match(manifest.scripts['pack:mac'], /--publish never/);
+  assert.equal(manifest.build.publish.repo, 'FootballAssistant');
 });
