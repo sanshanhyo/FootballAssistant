@@ -31,7 +31,7 @@ async function readRuntime(file) {
 }
 
 async function request(runtimeFile, endpoint, body, options = {}) {
-  const post = ['/v1/chat', '/v1/agent/business-advice'].includes(endpoint);
+  const post = ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice'].includes(endpoint);
   const get = ['/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
   if ((!post && !get) || (post !== (body !== undefined))) throw new Error('不支持的服务接口或请求方法。');
   options.signal?.throwIfAborted();
@@ -64,7 +64,7 @@ async function request(runtimeFile, endpoint, body, options = {}) {
   const text = responseText;
   if (response.status === 401) throw Object.assign(new Error('本机服务认证失败，请重新启动服务并检查连接文件。'), { code: 'unauthorized' });
   if (response.status === 404) {
-    const message = endpoint === '/v1/agent/business-advice'
+    const message = ['/v1/agent/business-advice', '/v1/agent/ui-advice'].includes(endpoint)
       ? '当前服务不支持业务建议接口；reader-only 服务不能提供建议，请启动完整 backend。'
       : endpoint.startsWith('/v1/reader/business/')
         ? '当前服务版本不支持业务数据读取接口，请升级 backend。'

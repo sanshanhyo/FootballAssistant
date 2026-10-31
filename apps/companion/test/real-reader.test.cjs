@@ -34,7 +34,7 @@ test('authenticated live loopback transport displays deterministic blocked advic
   });
   const runtime = new CompanionRuntime({ realClient: client }); t.after(() => runtime.close());
   runtime.setMode('real'); assert.equal(runtime.state().canSend, true);
-  const done = terminal(runtime); runtime.sendMessage({ text: '看看我的赛程' }); assert.equal((await done).status, 'completed');
+  const done = terminal(runtime); runtime.sendMessage({ text: '看看我的赛程', adviceMode: 'native' }); assert.equal((await done).status, 'completed');
   const reply = runtime.state().messages.find(item => item.role === 'assistant');
   assert.match(reply.text, /验证/); assert.equal(reply.metadata.synthetic, false); assert.equal(reply.metadata.sessionId, null); assert.deepEqual(reply.cards, []);
   assert.deepEqual((await client.snapshot()).cards, []);
@@ -53,7 +53,7 @@ test('normal greetings and educational FM questions remain chat; explicit capabi
   }
   assert.equal(calls.filter(call => call.url === '/v1/chat').length, 4);
   assert.equal(adviceCapability('分析我的战术'), 'tactical_analysis');
-  for (const message of ['分析当前阵容', '查看当前球员属性', '看看球队赛程', '给我引援建议']) assert.notEqual(adviceCapability(message), null);
+  for (const message of ['分析当前阵容', '查看当前球员属性', '看看球队赛程', '给我引援建议', '看看当前页面', '分析这个球员', '看看这页']) assert.notEqual(adviceCapability(message), null);
   assert.equal(adviceCapability('请求', 'player_info'), 'player_info');
   assert.throws(() => runtime.sendMessage({ text: 'hi', capability: 'shell' }), /不支持/);
   await runtime.close();
@@ -112,5 +112,29 @@ test('successful retry restores connection state after a real transport failure'
   const runtime = new CompanionRuntime({ realClient: client }); runtime.setMode('real');
   let done = terminal(runtime); runtime.sendMessage({ text: '你好' }); assert.equal((await done).status, 'error'); assert.equal(runtime.state().connection.state, 'unavailable');
   failed = false; done = terminal(runtime); runtime.sendMessage({ text: '你好' }); assert.equal((await done).status, 'completed'); assert.equal(runtime.state().connection.state, 'connected');
+  await runtime.close();
+});
+test('Alpha defaults current-game questions to explicit partial UI advice, no native promotion or fallback', async () => {
+  const calls = [];
+  const client = new RealReaderClient({ request: async (url, body) => {
+    calls.push({ url, body });
+    if (url.endsWith('/status')) return readiness;
+    return { status: 'generated', reply: 'TEST UI only', conversation_id: body.conversation_id,
+      provenance: { session_id: 'TEST-game', event_id: 'TEST-event', captured_at: 'TEST-time' },
+      limitations: ['TEST partial UI'], page: { name: null, verified: false } };
+  } });
+  const runtime = new CompanionRuntime({ realClient: client }); runtime.setMode('real');
+  const done = terminal(runtime); runtime.sendMessage({ text: '看看我的赛程' }); await done;
+  assert.equal(calls.filter(call => call.url === '/v1/agent/ui-advice').length, 1);
+  assert.equal(calls.some(call => ['/v1/chat', '/v1/agent/business-advice'].includes(call.url)), false);
+  const reply = runtime.state().messages.find(item => item.role === 'assistant');
+  assert.equal(reply.metadata.source, 'ui'); assert.equal(reply.metadata.partial, true);
+  assert.equal(reply.metadata.readiness.production_ready, false); assert.deepEqual(reply.cards, []);
+  assert.equal(reply.metadata.sessionId, 'TEST-game');
+  assert.match(runtime.state().limitations.join(' '), /部分 UI 采样文本/);
+  assert.match(runtime.state().limitations.join(' '), /隐藏或缓存/);
+  assert.match(runtime.state().limitations.join(' '), /不会使原生能力就绪/);
+  assert.equal(runtime.state().limitations.join(' ').includes('业务建议只使用服务端验证事实'), false);
+  assert.throws(() => runtime.sendMessage({ text: 'TEST', adviceMode: 'fake' }), /不支持/);
   await runtime.close();
 });

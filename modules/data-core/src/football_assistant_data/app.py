@@ -304,6 +304,21 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelUnavailable as error:
                 raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
 
+        @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
+        async def ui_advice(body: BusinessAdviceRequest):
+            # Only the server-owned channel supplies data. Request bodies cannot
+            # override provenance, readiness or provide their own snapshot.
+            snapshot = app.state.observations.reader_snapshot(0, 80)
+            try:
+                return await app.state.agent.ui_advice(body.message,body.conversation_id,body.capability,snapshot,
+                    refresh=lambda: app.state.observations.reader_snapshot(0, 80))
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:

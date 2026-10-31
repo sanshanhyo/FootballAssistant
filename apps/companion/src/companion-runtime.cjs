@@ -69,7 +69,7 @@ class CompanionRuntime extends EventEmitter {
       character: characterPresentation(this.characterId),
       connection: !mock && this.realConnection ? { ...this.realConnection, backendId: this.backendId } : { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(this.realConnection?.readiness), synthetic: mock,
-      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据；业务建议只使用服务端验证事实。'],
+      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据。', 'Alpha 默认依据部分 UI 采样文本给出有条件建议；页面与可见性未验证，可能含隐藏或缓存文本，不代表后台全量事实。', '原生业务建议仍须通过独立的服务端业务就绪检查；UI 采样不会使原生能力就绪。'],
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
       pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
       tools: [...this.tools.values()].filter(item => item.sessionId === this.sessionId && item.epoch === this.epoch),
@@ -140,7 +140,7 @@ class CompanionRuntime extends EventEmitter {
     const id = `${request.id}:snapshot`;
     const labels = { running: '读取模拟观测', completed: '模拟观测读取完成', cancelled: '模拟读取已取消', error: '模拟读取失败' };
     if (this.mode === 'real') Object.assign(labels, { running: '请求真实服务', completed: '真实服务已回复', cancelled: '真实请求已取消', error: '真实请求失败' });
-    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.capability ? 'agent.business-advice' : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
+    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.capability ? (request.adviceMode === 'ui_evidence' ? 'agent.ui-advice' : 'agent.business-advice') : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
     this.tools.set(id, event);
     if (this.tools.size > 100) this.tools.delete(this.tools.keys().next().value);
     this.publish(event);
@@ -153,7 +153,9 @@ class CompanionRuntime extends EventEmitter {
     if (this.mockDisconnected) throw new Error('模拟连接已失效；请选择其他模拟场景恢复连接。');
     if (this.pending.size >= 4) throw new Error('已有 4 个请求在处理，请稍候或取消。');
     const capability = this.mode === 'real' ? adviceCapability(message, input?.capability) : null;
-    const request = { capability, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const adviceMode = input?.adviceMode ?? 'ui_evidence';
+    if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
+    const request = { capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {
       // Previous cards are historical, not current values after a new read or failure.
       for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];
@@ -168,7 +170,7 @@ class CompanionRuntime extends EventEmitter {
     try {
       this.tool(request, 'running');
       const result = request.mode === 'real'
-        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, signal: request.controller.signal })
+        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, adviceMode: request.adviceMode, signal: request.controller.signal })
         : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
       if (request.mode === 'real') {

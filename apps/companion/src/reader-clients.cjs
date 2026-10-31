@@ -92,11 +92,11 @@ function adviceCapability(message, explicit) {
     if (!BUSINESS_CAPABILITIES.includes(explicit)) throw new Error('不支持的业务建议能力。');
     return explicit;
   }
-  if (!/我的|当前(?:存档|球队|阵容|球员|赛程|战术)|(?:看看|查看|分析)球队|给我引援建议|my (?:team|squad|save)|current save/i.test(message)) return null;
+  if (!/我的|当前(?:存档|球队|阵容|球员|赛程|战术|页面|界面)|这(?:个球员|个页面|一页|页)|(?:看看|查看|分析)球队|给我引援建议|my (?:team|squad|save)|current save/i.test(message)) return null;
   if (/赛程|轮换|schedule|fixture|congestion/i.test(message)) return 'schedule_analysis';
   if (/转会|引援|预算|transfer|signing/i.test(message)) return 'transfer_analysis';
   if (/战术|阵型|阵容|首发|tactic|lineup|formation/i.test(message)) return 'tactical_analysis';
-  if (/球员|属性|存档|player|squad/i.test(message)) return 'player_info';
+  if (/球员|属性|存档|页面|界面|这页|这一页|player|squad/i.test(message)) return 'player_info';
   return null;
 }
 class RealReaderClient {
@@ -128,7 +128,19 @@ class RealReaderClient {
     }
     return { metadata: meta, readiness: envelope, cards: fields.length ? [{ id: snapshot.snapshot_id, title: '已读取业务事实', metadata: meta, fields }] : [] };
   }
-  async reply({ message, conversationId, capability, signal }) {
+  async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
+    if (capability && adviceMode === 'ui_evidence') {
+      const result = await this.request('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability }, { signal });
+      const provenance = result.provenance;
+      return { text: result.reply, conversationId: result.conversation_id, cards: [], metadata: {
+        source: 'ui', sourceLabel: 'Alpha · UI 采样建议（非后台全量数据）',
+        sessionId: provenance?.session_id ?? null, snapshotId: provenance?.event_id ?? null,
+        sampledAt: provenance?.captured_at ?? null, partial: true, synthetic: false,
+        freshness: result.status === 'generated' ? 'current' : 'unknown',
+        page: result.page, provenance, limitations: [...(result.limitations || []), ...(result.reasons || [])],
+        readiness: { production_ready: false, mode: 'ui_evidence' },
+      } };
+    }
     if (capability) {
       const result = await this.request('/v1/agent/business-advice', { message, conversation_id: conversationId, capability }, { signal });
       const meta = businessMetadata(result.readiness);
