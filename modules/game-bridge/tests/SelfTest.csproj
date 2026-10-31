@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="../src/BridgeCore.cs" Link="BridgeCore.cs" />
+    <Compile Include="../src/WindowsProbeScheduler.cs" Link="WindowsProbeScheduler.cs" />
     <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
     <Compile Include="../src/MacMainThreadTimer.cs" Link="MacMainThreadTimer.cs" />
     <Compile Include="../src/NativeUiReader.cs" Link="NativeUiReader.cs" />

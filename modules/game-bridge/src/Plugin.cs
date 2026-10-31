@@ -19,6 +19,11 @@ public sealed class Plugin : BasePlugin
 
     public override void Load()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            Log.LogError("Windows candidate is probe-only. Use the direct diagnostic entry; UI sampling remains disabled.");
+            return;
+        }
         var runtimeFile = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_RUNTIME_FILE");
         var gameAssembly = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_ASSEMBLY");
         if (string.IsNullOrWhiteSpace(runtimeFile) || string.IsNullOrWhiteSpace(gameAssembly) || !File.Exists(gameAssembly))

@@ -1,0 +1,36 @@
+name: Windows bridge probe (no game)
+on:
+  workflow_dispatch:
+  push:
+    paths: ['modules/game-bridge/**', '.github/workflows/windows-bridge-probe.yml']
+  pull_request:
+    paths: ['modules/game-bridge/**', '.github/workflows/windows-bridge-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet run --project modules/game-bridge/tests/WindowsProbeTests.csproj
+      - run: dotnet build modules/game-bridge/FootballAssistant.DirectBridge.csproj --configuration Release --output build/windows-probe
+      - name: Upload own probe-only bridge and corresponding source (no game/runtime)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-windows-x64-PROBE-ONLY-NO-READS
+          path: |
+            build/windows-probe/FootballAssistant.GameBridge.dll
+            build/windows-probe/FootballAssistant.GameBridge.deps.json
+            LICENSE
+            modules/game-bridge/FootballAssistant.DirectBridge.csproj
+            modules/game-bridge/src/*.cs
+            docs/bridge/windows-scheduler-probe.md
+          if-no-files-found: error
+          retention-days: 7

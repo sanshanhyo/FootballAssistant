@@ -10,7 +10,7 @@ namespace Doorstop;
 // remains available separately; this path needs no generated Unity assemblies.
 public static class Entrypoint
 {
-    private static BridgeRuntime? runtime;
+    private static IDisposable? runtime;
     private static int started;
 
     public static void Start()
@@ -18,7 +18,8 @@ public static class Entrypoint
         if (Interlocked.Exchange(ref started, 1) != 0) return;
         try
         {
-            runtime = new BridgeRuntime();
+            // Windows is permanently probe-only in this candidate. No environment switch enables reads.
+            runtime = OperatingSystem.IsWindows() ? new WindowsProbeRuntime() : new BridgeRuntime();
             AppDomain.CurrentDomain.ProcessExit += (_, _) => Stop();
         }
         catch (Exception error) { Console.Error.WriteLine($"[FootballAssistant] Startup unavailable ({error.GetType().Name}: {error.Message})"); }
@@ -52,6 +53,7 @@ internal sealed class BridgeRuntime : IDisposable
 
     public BridgeRuntime()
     {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows candidate is probe-only; UI reads are disabled.");
         privateRoot = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_PRIVATE_ROOT") ?? throw new InvalidOperationException("Explicit private root is required.");
         managedBuildSha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(Entrypoint).Assembly.Location))).ToLowerInvariant();
         var runtimeFile = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_RUNTIME_FILE") ?? throw new InvalidOperationException("Explicit runtime connection file is required.");

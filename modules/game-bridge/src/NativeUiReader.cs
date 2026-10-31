@@ -30,6 +30,8 @@ internal sealed partial class NativeUiReader : IDisposable
 
     public NativeUiReader(string gameAssembly)
     {
+        // Probe candidate: even an accidental future call site cannot bind/read Windows game APIs.
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows native UI reads are disabled in the scheduler probe candidate.");
         // At plugin load the game has already loaded this exact GameAssembly.
         // dlopen/LoadLibrary adds a reference to it; this is never used by an offline tool.
         library = NativeLibrary.Load(gameAssembly);
