@@ -1,7 +1,7 @@
 """Local fixture control only: no game, network provider or real private directory."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from threading import Lock
+from threading import Lock, Barrier
 from copy import deepcopy
 from datetime import timedelta
 import json
@@ -262,7 +262,14 @@ def test_posix_real_adapter_atomic_write_and_cross_controller_lock(posix_control
     def record(stage, error):
         # Fixture-only diagnostic: do not log file contents, paths or credentials.
         with error_lock:
-            file_errors.append(dict(stage=stage, error=type(error).__name__, errno=getattr(error, 'errno', None)))
+            trace = error.__traceback__
+            while trace and trace.tb_next:
+                trace = trace.tb_next
+            name = getattr(error, 'filename', '') or ''
+            kind = name if name in ('.ui-capture.lock', 'ui-capture.json', 'host-session.json', 'ui-capture-status.json') else 'temporary' if str(name).startswith('.ui-capture-') else 'directory_component'
+            file_errors.append(dict(stage=stage, error=type(error).__name__, errno=getattr(error, 'errno', None),
+                                    path_kind=kind, function=trace.tb_frame.f_code.co_name if trace else None,
+                                    line=trace.tb_lineno if trace else None))
 
     class TracedFiles(PosixCaptureFiles):
         @contextmanager
@@ -303,6 +310,8 @@ def test_posix_real_adapter_atomic_write_and_cross_controller_lock(posix_control
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(write, range(12)))
     # Report the originating failure before sorting can mask it as None/int TypeError.
+    if any(r['status'] != 'pending' for r in results):
+        print('CONTROL_FILE_FAILURES=' + json.dumps(file_errors))
     assert all(r['status'] == 'pending' for r in results), dict(results=results, file_errors=file_errors)
     assert sorted(r['sequence'] for r in results) == list(range(1, 13))
     assert read_request(c)['sequence'] == 12
@@ -328,3 +337,45 @@ def test_posix_oversize_duplicate_and_malformed_requests_remain_rejected(posix_c
     path.write_text(content)
     assert c.access(focused_snapshot(), 'tactics', now=NOW)['status'] == 'unavailable'
     assert path.read_text() == content
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='real POSIX first-creation contention experiment')
+def test_posix_first_lock_creation_contention(tmp_path, capsys):
+    """Both modes use only new test directories. Legacy errors are evidence, not
+    ignored errors in production: every exclusive-create attempt must succeed.
+    """
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    files = PosixCaptureFiles()
+    legacy_errors, fixed_errors = [], []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for iteration in range(30):
+            for mode in ('legacy', 'exclusive'):
+                folder = tmp_path / f'{mode}-{iteration}'
+                folder.mkdir()
+                barrier = Barrier(8)
+                with files.directory(folder) as directory:
+                    def acquire(_):
+                        barrier.wait(timeout=15)
+                        try:
+                            if mode == 'legacy':
+                                # Exact old syscall pattern, isolated diagnostic fixture.
+                                fd = os.open('.ui-capture.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+                                os.close(fd)
+                            else:
+                                # Independent proposed syscall pattern, not production.
+                                flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+                                try:
+                                    fd = os.open('.ui-capture.lock', flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+                                except FileExistsError:
+                                    fd = os.open('.ui-capture.lock', flags, dir_fd=directory)
+                                os.close(fd)
+                            return None
+                        except OSError as error:
+                            return dict(stage='lock_open_before_flock' if mode == 'legacy' else 'exclusive_lock',
+                                        error=type(error).__name__, errno=error.errno)
+                    errors = [result for result in pool.map(acquire, range(8)) if result]
+                    (legacy_errors if mode == 'legacy' else fixed_errors).extend(errors)
+    summary = dict(rounds=30, workers=8, legacy_errors=legacy_errors, exclusive_errors=fixed_errors)
+    with capsys.disabled():
+        print('POSIX_LOCK_CREATION_COMPARISON=' + json.dumps(summary, separators=(',', ':')))
+    assert not fixed_errors, summary
