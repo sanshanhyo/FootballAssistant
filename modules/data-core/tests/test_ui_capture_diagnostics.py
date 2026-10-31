@@ -8,7 +8,7 @@ from test_backend import client_for, settings, AUTH
 
 def diagnostic_fixture():
     root = Path(__file__).resolve().parents[3]
-    body = json.loads((root / 'contracts/examples/synthetic-fact-snapshot.json').read_text())
+    body = json.loads((root / 'contracts/examples/synthetic-fact-snapshot.json').read_text(encoding="utf-8"))
     body['status'] = 'partial'
     body['source']['adapter_id'] = 'footballassistant.runtime-ui-tree'
     body['source']['adapter_version'] = '0.4.0'
