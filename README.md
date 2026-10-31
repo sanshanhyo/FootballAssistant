@@ -5,7 +5,7 @@
 <h1 align="center">Football Assistant</h1>
 
 <p align="center">
-  一个面向 FM27 的非官方 AI 桌宠助教，陪你讨论球员、转会、战术与赛程。
+  一个面向 FM27 的 AI 桌宠助教插件，陪你讨论球员、转会、战术与赛程。
 </p>
 
 <p align="center">
