@@ -9,6 +9,7 @@ from football_assistant_data.schedule_projection import project_validated_schedu
 from football_assistant_data.tactics_projection import project_validated_tactics
 from football_assistant_data.current_page_attributes_projection import project_validated_current_page_attributes
 from football_assistant_data.ui_capture_scope import capture_path_scope, validate_evidence_path_scope
+from football_assistant_data.ui_change_preview import project_validated_ui_change_preview, unavailable_ui_change_preview
 
 MAX_EVIDENCE_CHARACTERS = 16_000  # Sum of literal path + text lengths, whole entries only.
 
@@ -36,7 +37,7 @@ UI_INSTRUCTIONS = """
 """
 
 
-def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_attributes=False):
+def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_attributes=False, _preview_ui_changes=False):
     if capability not in CAPABILITIES:
         raise ValueError('unsupported business capability')
     result = dict(status='blocked', mode='ui_evidence', source='ui', partial=True,
@@ -47,6 +48,8 @@ def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_a
     # Reader-only opt-in. Default advice payloads must not acquire this projection.
     if _preview_current_page_attributes:
         result['current_page_attributes'] = None
+    if _preview_ui_changes:
+        result['ui_change_preview'] = unavailable_ui_change_preview()
     try:
         def require(condition, reason):
             if not condition:
@@ -143,6 +146,10 @@ def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_a
             result['current_page_attributes'] = project_validated_current_page_attributes(
                 all_texts, game=game, source=source, provenance=result['provenance'],
                 capture_text_sha256=fingerprint)
+        if _preview_ui_changes:
+            result['ui_change_preview'] = project_validated_ui_change_preview(
+                all_texts, game=game, source=source, provenance=result['provenance'],
+                capture_text_sha256=fingerprint)
     except (ValueError, TypeError, AttributeError) as error:
         result['reasons'] = [str(error) if isinstance(error, ValueError) else 'invalid_ui_snapshot']
     return result
@@ -157,3 +164,9 @@ def prepare_current_page_attributes(snapshot, *, now=None):
                 business_identity_known=False, individual_advice_allowed=False,
                 current_page_attributes=projection, provenance=prepared['provenance'],
                 reasons=prepared['reasons'])
+
+
+def prepare_ui_change_preview(snapshot, *, now=None):
+    """One current capture, local deterministic fingerprints, no model request."""
+    prepared = prepare_ui_advice('player_info', snapshot, now=now, _preview_ui_changes=True)
+    return prepared['ui_change_preview'] if prepared['status'] == 'ready' else unavailable_ui_change_preview()

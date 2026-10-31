@@ -32,7 +32,7 @@ async function readRuntime(file) {
 
 async function request(runtimeFile, endpoint, body, options = {}) {
   const post = ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice'].includes(endpoint);
-  const get = ['/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
+  const get = ['/v1/reader/ui-change-preview', '/v1/reader/schedule', '/v1/reader/tactics', '/v1/reader/current-page-attributes', '/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
   if ((!post && !get) || (post !== (body !== undefined))) throw new Error('不支持的服务接口或请求方法。');
   options.signal?.throwIfAborted();
   let runtime;

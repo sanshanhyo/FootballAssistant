@@ -131,6 +131,7 @@ function trayImage() {
 }
 function registerIpc() {
   handle('get-state', () => runtime.state());
+  handle('refresh-reader-previews', () => runtime.refreshReaderPreviews());
   handle('set-mode', mode => { speech.stop(); return runtime.setMode(mode); });
   handle('send-message', input => runtime.sendMessage(input));
   handle('cancel-request', id => runtime.cancelRequest(id));

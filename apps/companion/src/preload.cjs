@@ -4,6 +4,7 @@ const invoke = (name, ...args) => ipcRenderer.invoke(`companion:${name}`, ...arg
 const isSettings = process.argv.includes('--companion-window=settings');
 const common = {
   getState: () => invoke('get-state'),
+  refreshReaderPreviews: () => invoke('refresh-reader-previews'),
   setMode: mode => invoke('set-mode', mode),
   cancelRequest: id => invoke('cancel-request', id),
   newConversation: () => invoke('new-conversation'),

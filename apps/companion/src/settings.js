@@ -106,6 +106,7 @@
     return element;
   }
   function renderModeAvailability() {
+    $('refresh-reader').disabled = state.mode !== 'real';
     $('simulate-event').disabled = state.mode !== 'mock';
     $('simulate-scenario').disabled = state.mode !== 'mock';
     $('scenario').disabled = state.mode !== 'mock';
@@ -122,15 +123,15 @@
   }
   function renderConnection() {
     const synthetic = state.synthetic === true;
-    const modeLabel = synthetic ? '模拟模式' : '真实模式 · 未接入';
+    const modeLabel = synthetic ? '模拟模式' : '真实模式';
     for (const id of ['sidebar-mode', 'mode-badge']) {
       $(id).textContent = modeLabel;
       $(id).classList.toggle('synthetic', synthetic);
     }
-    $('header-status').textContent = state.connection?.state === 'disconnected' ? '模拟连接已中断' : synthetic ? '模拟演示中' : '后端待接入';
+    $('header-status').textContent = state.connection?.state === 'disconnected' ? '模拟连接已中断' : synthetic ? '模拟演示中' : state.connection?.label || '连接未知';
     $('header-status').className = `status-indicator ${synthetic ? 'synthetic' : ''} ${state.connection?.state || 'unavailable'}`;
     $('connection-label').textContent = state.connection?.label || '连接状态未知';
-    $('connection-reason').textContent = state.connection?.reason || (synthetic ? '所有游戏信息和回复均为模拟，未连接游戏或模型。' : '真实后端尚未接入，未发起网络请求，也不会自动切换到模拟。');
+    $('connection-reason').textContent = state.connection?.reason || (synthetic ? '所有游戏信息和回复均为模拟，未连接游戏或模型。' : '本机服务连接状态见上方；不会自动切换到模拟。');
     $('mode').value = state.mode;
     $('session-id').textContent = state.sessionId;
     $('backend-id').textContent = state.connection?.backendId || '未知';
@@ -138,8 +139,16 @@
     $('reader-capabilities').textContent = capabilities.length ? capabilities.map(item => `${item.id || '未知能力'}${item.available === true ? item.synthetic ? '（模拟）' : '（可用）' : '（待确认）'}`).join(' · ') : '能力尚未确认';
     const limitations = $('connection-limitations'); limitations.replaceChildren();
     (Array.isArray(state.limitations) ? state.limitations : []).forEach(value => limitations.append(node('li', '', value)));
-    $('session-short').textContent = `会话 ${state.sessionId.slice(0, 8)} · ${synthetic ? '模拟' : '后端待接入'}`;
+    $('session-short').textContent = `会话 ${state.sessionId.slice(0, 8)} · ${synthetic ? '模拟' : '真实'}`;
     $('session-short').title = state.sessionId;
+    $('refresh-reader').disabled = synthetic;
+    const previews = $('reader-previews'); previews.replaceChildren();
+    if (!state.readerPreviews?.length) previews.append(node('p', 'empty', synthetic ? '模拟模式不读取真实页面。' : '未知 · 正在等待读取，或当前 Reader 不可用。'));
+    for (const card of state.readerPreviews || []) {
+      const element = cardView(card);
+      element.prepend(node('span', `badge ${card.status === 'stale' ? 'stale' : card.status === 'available' ? '' : 'unknown'}`, ({ available: '可用 · 部分 UI', stale: '过期 · 已隐藏旧值', unknown: '未知 / 当前页面不支持' })[card.status] || '未知'));
+      previews.append(element);
+    }
     renderModeAvailability();
   }
   function renderTasks() {
@@ -332,6 +341,7 @@
       const result = await perform(() => api.setMode($('mode').value));
       if (result) applyState(result); else if (state) renderConnection();
     });
+    $('refresh-reader').addEventListener('click', () => perform(() => api.refreshReaderPreviews(), { button: $('refresh-reader') }));
     $('simulate-scenario').addEventListener('click', () => perform(() => api.simulateEvent($('scenario').value), { button: $('simulate-scenario'), success: '示例已发送到桌宠气泡。' }));
     $('simulate-event').addEventListener('click', () => perform(() => api.simulateEvent(), { button: $('simulate-event'), success: '模拟主动消息已发送。' }));
     $('proactivity').addEventListener('input', () => { proactivityEditing = true; $('proactivity-value').textContent = `${$('proactivity').value}%`; });

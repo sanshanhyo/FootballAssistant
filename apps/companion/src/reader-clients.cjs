@@ -99,6 +99,42 @@ function adviceCapability(message, explicit) {
   if (/球员|属性|存档|页面|界面|这页|这一页|player|squad/i.test(message)) return 'player_info';
   return null;
 }
+const PREVIEWS = Object.freeze([
+  { id: 'schedule', title: '实验性 UI 赛程', key: 'schedule_projection', status: 'experimental_ui_schedule' },
+  { id: 'tactics', title: '实验性 UI 战术', key: 'tactics_projection', status: 'experimental_ui_tactics' },
+  { id: 'current-page-attributes', title: '当前页面属性 · 身份未知', key: 'current_page_attributes', status: 'experimental_ui_current_page_attributes' },
+]);
+function previewCard(spec, envelope = {}, now = Date.now()) {
+  const projection = envelope[spec.key];
+  const captured = Date.parse(envelope.provenance?.captured_at);
+  const age = now - captured;
+  const reasons = Array.isArray(envelope.reasons) ? envelope.reasons : [];
+  const stale = reasons.includes('stale_ui_snapshot') || (Number.isFinite(age) && age > 15_000);
+  const available = !stale && age >= 0 && age <= 15_000 && envelope.source === 'ui' && envelope.synthetic !== true && projection?.synthetic !== true &&
+    envelope.production_ready === false && envelope.status === spec.status && projection?.status === spec.status;
+  const status = stale ? 'stale' : available ? 'available' : 'unknown';
+  const fields = [];
+  const add = (label, value) => { if (fields.length < 100 && (typeof value === 'string' || typeof value === 'number')) fields.push({ label, value: String(value).slice(0, 400), status: 'observed' }); };
+  if (available) {
+    if (spec.id === 'schedule') for (const [i, row] of (Array.isArray(projection.rows) ? projection.rows : []).slice(0, 20).entries()) {
+      for (const [key, label] of [['date_display','日期'], ['opponent_display','对手'], ['home_away_display','主客'], ['competition_display','赛事']]) add(`${i + 1} · ${label}`, row[key]);
+    }
+    if (spec.id === 'tactics') for (const [key, label] of [['formation_display','阵型显示'], ['style_display','风格显示'], ['mentality_display','心态显示']]) add(label, projection[key]);
+    if (spec.id === 'current-page-attributes') {
+      fields.push({ label: '球员身份（不可归属某球员）', value: null, status: 'unknown' });
+      for (const group of (Array.isArray(projection.groups) ? projection.groups : []).slice(0, 5)) for (const row of (Array.isArray(group.rows) ? group.rows : []).slice(0, 50)) add(`${String(group.category_display).slice(0, 60)} · ${String(row.label_display).slice(0, 60)}`, row.value);
+    }
+  }
+  return { id: spec.id, title: spec.title, status, fields, identity: null, metadata: {
+    source: 'ui', sourceLabel: spec.title, sessionId: envelope.provenance?.session_id ?? null,
+    sampledAt: envelope.provenance?.captured_at ?? null, partial: true, synthetic: false,
+    freshness: status === 'available' ? 'current' : status, limitations: [
+      '仅本机 UI 预览，不代表后台全量事实；不会自动调用模型。',
+      ...(spec.id === 'current-page-attributes' ? ['身份未知，不绑定任何球员，不用于个体建议。'] : []),
+      ...(Array.isArray(projection?.limitations) ? projection.limitations : []), ...reasons,
+    ],
+  } };
+}
 class RealReaderClient {
   constructor({ request } = {}) {
     if (typeof request !== 'function') throw new Error('需要受控主进程连接。');
@@ -127,6 +163,18 @@ class RealReaderClient {
       for (const [key, value] of Object.entries(snapshot)) if (!['source', 'schema_version'].includes(key)) visit(value, '/' + key);
     }
     return { metadata: meta, readiness: envelope, cards: fields.length ? [{ id: snapshot.snapshot_id, title: '已读取业务事实', metadata: meta, fields }] : [] };
+  }
+  async uiChangePreview({ signal } = {}) {
+    return this.request('/v1/reader/ui-change-preview', undefined, { signal });
+  }
+  async previews({ signal } = {}) {
+    return Promise.all(PREVIEWS.map(async spec => {
+      try { return previewCard(spec, await this.request(`/v1/reader/${spec.id}`, undefined, { signal })); }
+      catch (error) {
+        if (signal?.aborted) throw error;
+        const card = previewCard(spec); card.metadata.limitations.push(error.message); return card;
+      }
+    }));
   }
   async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
     if (capability && adviceMode === 'ui_evidence') {
@@ -158,3 +206,6 @@ class RealReaderClient {
 module.exports.RealReaderClient = RealReaderClient;
 module.exports.businessMetadata = businessMetadata;
 module.exports.adviceCapability = adviceCapability;
+
+module.exports.previewCard = previewCard;
+module.exports.PREVIEWS = PREVIEWS;

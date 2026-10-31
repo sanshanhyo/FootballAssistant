@@ -1,7 +1,7 @@
 'use strict';
 
 const SHARED_IPC = [
-  'get-state', 'set-mode', 'cancel-request', 'new-conversation', 'set-proactivity', 'set-preferences',
+  'get-state', 'refresh-reader-previews', 'set-mode', 'cancel-request', 'new-conversation', 'set-proactivity', 'set-preferences',
   'simulate-event', 'get-history', 'clear-history', 'set-history-enabled', 'get-memories',
   'save-memory', 'delete-memory', 'open-settings', 'speech-capabilities', 'stop-speech', 'quit',
 ];

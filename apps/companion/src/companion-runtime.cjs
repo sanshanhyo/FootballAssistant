@@ -1,5 +1,6 @@
 'use strict';
 
+const { UiChangeTracker } = require('./ui-changes.cjs');
 const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -23,6 +24,8 @@ class CompanionRuntime extends EventEmitter {
     this.file = options.file;
     this.mockClient = options.mockClient || new MockReaderClient();
     this.realClient = options.realClient || new DisconnectedReaderClient();
+    this.uiChanges = new UiChangeTracker();
+    this.readerPreviews = []; this.previewController = null; this.previewTimer = null; this.previewExpiryTimer = null;
     this.realConnection = null; this.connectionController = null;
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
     this.proactivity = 80; this.historyEnabled = false;
@@ -68,6 +71,8 @@ class CompanionRuntime extends EventEmitter {
       preferences: { ...this.preferences },
       character: characterPresentation(this.characterId),
       connection: !mock && this.realConnection ? { ...this.realConnection, backendId: this.backendId } : { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
+      readerPreviews: mock ? [] : this.readerPreviews.map(card => card.status === 'available' && Date.now() - Date.parse(card.metadata?.sampledAt) > 15_000
+        ? { ...card, status: 'stale', fields: [], metadata: { ...card.metadata, freshness: 'stale' } } : card),
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(this.realConnection?.readiness), synthetic: mock,
       limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据。', 'Alpha 默认依据部分 UI 采样文本给出有条件建议；页面与可见性未验证，可能含隐藏或缓存文本，不代表后台全量事实。', '原生业务建议仍须通过独立的服务端业务就绪检查；UI 采样不会使原生能力就绪。'],
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
@@ -90,7 +95,45 @@ class CompanionRuntime extends EventEmitter {
     return this.writeQueue;
   }
   cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
+  async refreshReaderPreviews() {
+    if (this.mode !== 'real' || typeof this.realClient.previews !== 'function' || this.closed) return this.state();
+    if (this.previewController) return this.state();
+    clearTimeout(this.previewTimer);
+    const controller = this.previewController = new AbortController();
+    const epoch = this.epoch;
+    try {
+      const [cards, change] = await Promise.all([
+        this.realClient.previews({ signal: controller.signal }),
+        typeof this.realClient.uiChangePreview === 'function' && this.proactivity > 0
+          ? this.realClient.uiChangePreview({ signal: controller.signal }).catch(() => null) : null,
+      ]);
+      if (!controller.signal.aborted && !this.closed && epoch === this.epoch) {
+        this.readerPreviews = cards;
+        clearTimeout(this.previewExpiryTimer);
+        const expiry = Math.min(...cards.filter(card => card.status === 'available').map(card => Date.parse(card.metadata?.sampledAt) + 15_001));
+        if (Number.isFinite(expiry)) {
+          this.previewExpiryTimer = setTimeout(() => this.changed(), Math.max(0, expiry - Date.now()));
+          this.previewExpiryTimer.unref?.();
+        }
+        const notice = this.uiChanges.observe(change, { enabled: this.proactivity > 0 });
+        if (notice) this.addMessage({ ...notice, id: randomUUID(), role: 'assistant', origin: 'proactive',
+          createdAt: new Date().toISOString(), sessionId: this.sessionId, epoch: this.epoch });
+        this.changed();
+      }
+    } catch {
+      if (!controller.signal.aborted && epoch === this.epoch) { this.readerPreviews = []; this.uiChanges.reset(); this.changed(); }
+    } finally {
+      if (this.previewController === controller) {
+        this.previewController = null;
+        if (!this.closed && this.mode === 'real') { this.previewTimer = setTimeout(() => this.refreshReaderPreviews(), 5_000); this.previewTimer.unref?.(); }
+      }
+    }
+    return this.state();
+  }
   refreshConnection() {
+    this.previewController?.abort(); this.previewController = null;
+    clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.readerPreviews = []; this.uiChanges.reset();
+    this.refreshReaderPreviews();
     this.connectionController?.abort();
     if (this.mode !== 'real' || typeof this.realClient.reply !== 'function') return;
     const controller = this.connectionController = new AbortController();
@@ -117,7 +160,13 @@ class CompanionRuntime extends EventEmitter {
   }
   setProactivity(value) {
     if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error('主动性必须是 0–100 的整数。');
-    this.proactivity = value; this.persist(); this.changed(); return this.state();
+    if (value !== this.proactivity) {
+      this.uiChanges.reset();
+      // A response begun before mute/unmute must not become a new comparison.
+      this.previewController?.abort(); this.previewController = null;
+      clearTimeout(this.previewTimer);
+    }
+    this.proactivity = value; this.refreshReaderPreviews(); this.persist(); this.changed(); return this.state();
   }
   setPreferences(patch) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).length === 0) throw new Error('偏好设置无效。');
@@ -228,7 +277,7 @@ class CompanionRuntime extends EventEmitter {
     const before = this.memories.length; this.memories = this.memories.filter(item => item.id !== id);
     await this.persist(); this.changed(); return { deleted: before !== this.memories.length };
   }
-  async close() { this.connectionController?.abort(); this.cancelAll(); this.closed = true; await this.writeQueue; this.removeAllListeners(); }
+  async close() { clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.previewController?.abort(); this.closed = true; this.connectionController?.abort(); this.cancelAll(); await this.writeQueue; this.removeAllListeners(); }
 }
 
 module.exports = { CompanionRuntime };

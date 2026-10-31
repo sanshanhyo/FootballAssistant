@@ -220,6 +220,12 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         from football_assistant_agent.ui_advice import prepare_current_page_attributes
         return prepare_current_page_attributes(app.state.observations.reader_snapshot(0, MAX_FACTS))
 
+    @app.get("/v1/reader/ui-change-preview",dependencies=[Depends(authorized)])
+    async def reader_ui_change_preview():
+        # Stateless UI fingerprints only; not persisted as football/game events.
+        from football_assistant_agent.ui_advice import prepare_ui_change_preview
+        return prepare_ui_change_preview(app.state.observations.reader_snapshot(0, MAX_FACTS))
+
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
         try:
