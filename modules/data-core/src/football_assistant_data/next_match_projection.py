@@ -21,8 +21,13 @@ LIMITATIONS = [
 ]
 
 
-def _text(value):
+def _text(value, *, display_markup=False):
     _require(isinstance(value, str) and 0 < len(value) <= 256, 'invalid_next_match_text')
+    if display_markup and ('<' in value or '>' in value):
+        # Sole observed card wrapper. link="0" is formatting, never an entity ID.
+        wrapped = re.fullmatch(r'<color="#FFFFFF"><link="0"><style="Norml">([^<>]+)</style></link></color>', value)
+        _require(wrapped is not None, 'unsupported_next_match_markup')
+        value = wrapped[1]
     value = value.replace('\u200b', '')
     _require(value == value.strip() and bool(value) and all(
         unicodedata.category(c)[0] in ('L', 'N', 'P') or c == ' ' for c in value), 'invalid_next_match_text')
@@ -48,7 +53,7 @@ def project_validated_next_match(texts, *, game, source, provenance, capture_tex
             paths[item['path']] = item['text']
         refs = dict(date_display=TITLE_PATH, opponent_display=OPPONENT_PATH, competition_display=COMPETITION_PATH)
         _require(all(path in paths for path in refs.values()), 'missing_next_match_field')
-        values = {key: _text(paths[path]) for key, path in refs.items()}
+        values = {key: _text(paths[path], display_markup=key != 'date_display') for key, path in refs.items()}
         _require(all(any(unicodedata.category(c).startswith('L') for c in values[key])
                      for key in ('opponent_display', 'competition_display')), 'invalid_next_match_text')
         match = re.fullmatch(r'下一场比赛（([0-9]{4})-([1-9]|1[0-2])-([1-9]|[12][0-9]|3[01])）', values['date_display'])

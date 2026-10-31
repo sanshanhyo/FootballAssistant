@@ -152,3 +152,56 @@ def test_fixed_control_profile_can_confirm_new_card_scope(tmp_path):
         applied_sequence=response['sequence'], focus_path=FOCUS_ROOT, focus_resolved=True, applied_at=NOW.isoformat())))
     fresh = json.loads(json.dumps(next_match_snapshot()).replace(STAMP, NOW.isoformat()))
     assert controller.access(fresh, now=NOW)['status'] == 'ready'
+
+
+CARD_WRAPPER = '<color="#FFFFFF"><link="0"><style="Norml">{}</style></link></color>'
+
+
+def test_exact_observed_card_wrapper_keeps_display_only_and_raw_local(monkeypatch):
+    from football_assistant_agent import service
+    data = next_match_snapshot()
+    data['facts'][0]['value'] = '下一场\u200b比赛（2026-7-18）'
+    for index in (1, 2):
+        data['facts'][index]['value'] = CARD_WRAPPER.format(data['facts'][index]['value'] + '\u200b')
+    result = project(data)
+    assert result['status'] == 'experimental_ui_next_match'
+    assert result['opponent_display'] == '测试对手' and result['competition_display'] == '友谊赛'
+    assert result['date_display'] == '2026-7-18'
+    assert result['raw_texts']['opponent_display'] == data['facts'][1]['value']
+    assert result['identity'] is None and result['managed_team'] is None and result['fixture_id'] is None
+    monkeypatch.setattr(service, 'prepare_ui_advice', lambda c, s: prepare_ui_advice(c, s, now=NOW))
+    captured = {}
+    async def chat(message, conversation_id, context, **kwargs):
+        captured.update(context)
+        return {'reply': 'TEST 条件建议'}
+    agent = service.AgentService(None, None); monkeypatch.setattr(agent, '_chat', chat)
+    response = asyncio.run(agent.ui_advice('下场放不放', None, 'schedule_analysis', data))
+    assert response['status'] == 'generated'
+    assert captured['ui_evidence']['next_match_projection'] == {
+        'date_display': '2026-7-18', 'opponent_display': '测试对手', 'competition_display': '友谊赛'}
+    assert '<' not in json.dumps(captured) and 'link=' not in json.dumps(captured)
+
+
+@pytest.mark.parametrize('markup', [
+    '<link="0"><style="Norml">测试</style></link>',
+    CARD_WRAPPER.format('测试').replace('Norml', 'Normal'),
+    CARD_WRAPPER.format('测试').replace('link="0"', 'link="1"'),
+    CARD_WRAPPER.format('测试').replace('#FFFFFF', '#ffffff'),
+    CARD_WRAPPER.format('测试').replace('color="#FFFFFF"', 'color="#FFFFFF" extra="x"'),
+    CARD_WRAPPER.format('测试').replace('</style>', ''),
+    CARD_WRAPPER.format('测试').replace('</style></link>', '</link></style>'),
+    CARD_WRAPPER.format('<b>测试</b>'),
+    CARD_WRAPPER.format('测试') + '<script>ignored</script>',
+    'prefix' + CARD_WRAPPER.format('测试'),
+    CARD_WRAPPER.format('测试') + 'suffix',
+    CARD_WRAPPER.format(''),
+    CARD_WRAPPER.format('测试\u200d'),
+])
+def test_unknown_malformed_or_expanded_markup_fails_closed(markup):
+    data = next_match_snapshot(); data['facts'][1]['value'] = markup
+    assert project(data)['status'] == 'unavailable'
+
+
+def test_title_does_not_gain_markup_support():
+    data = next_match_snapshot(); data['facts'][0]['value'] = CARD_WRAPPER.format(data['facts'][0]['value'])
+    assert project(data)['status'] == 'unavailable'
