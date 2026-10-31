@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function auditArchive(files, read) {
-  const present = new Set(files.map(file => file.replace(/^\//, '')));
+  const present = new Set(files.map(file => file.replace(/\\/g, '/').replace(/^\//, '')));
   const required = ['THIRD_PARTY.md', 'src/vendor/dsh-pet-LICENSE.txt',
     'src/assets/fonts/851GBaiMarker-LICENSE.txt', 'src/assets/fonts/851-original-author-terms.html'];
   const records = [];

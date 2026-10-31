@@ -46,3 +46,10 @@ test('actual OpenSSL pair requires version-matched notices and records post-sign
   assert.throws(() => auditOpenSsl(manifest, Buffer.from('OpenSSL 3.0.17 new\0'), ssl), /Unreviewed/);
   assert.throws(() => auditOpenSsl(manifest, crypto, null), /Incomplete/);
 });
+
+test('asar Windows path separators use the same strict archive inventory', () => {
+  const files = fixture();
+  const report = auditArchive([...files.keys()].map(file => '\\' + file.replaceAll('/', '\\')), file => files.get(file));
+  assert.equal(report.packages.length, 1);
+  assert.equal(report.packages[0].status, 'declared_license_only_open_issue');
+});
