@@ -3,8 +3,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 
-function defaultRuntimeFile(env = process.env) {
-  const file = env.FOOTBALL_ASSISTANT_RUNTIME_FILE || path.join(env.FOOTBALL_ASSISTANT_DATA_DIR || path.resolve(__dirname, '../../..', 'local-data'), 'runtime.json');
+function defaultRuntimeFile(env = process.env, argv = []) {
+  const index = argv.indexOf('--runtime-file');
+  if (index !== -1 && (!argv[index + 1] || argv[index + 1].startsWith('--') || argv.indexOf('--runtime-file', index + 1) !== -1)) {
+    throw new Error('--runtime-file 需要一个明确的连接文件路径。');
+  }
+  const file = env.FOOTBALL_ASSISTANT_RUNTIME_FILE || (index !== -1 ? argv[index + 1] : '') || path.join(env.FOOTBALL_ASSISTANT_DATA_DIR || path.resolve(__dirname, '../../..', 'local-data'), 'runtime.json');
   return path.resolve(file.startsWith('~/') ? path.join(os.homedir(), file.slice(2)) : file);
 }
 
@@ -34,7 +38,7 @@ async function request(runtimeFile, endpoint, body, options = {}) {
   let runtime;
   try { runtime = await readRuntime(runtimeFile); }
   catch (error) {
-    if (error.code === 'ENOENT') throw new Error('服务尚未启动，或尚未选择连接文件。');
+    if (error.code === 'ENOENT') throw new Error('找不到本机连接文件；桌宠启动不代表 backend 已启动。请使用 scripts/run_mvp.py 启动，或设置 FOOTBALL_ASSISTANT_RUNTIME_FILE / --runtime-file 指向 backend 的 runtime.json；不会回退到模拟。');
     throw error;
   }
   let response; let responseText;

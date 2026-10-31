@@ -14,7 +14,25 @@
 
 ## 本机配置
 
-backend 和桌宠必须读取同一个 runtime 文件。桌宠优先使用 `FOOTBALL_ASSISTANT_RUNTIME_FILE`，其次 `FOOTBALL_ASSISTANT_DATA_DIR/runtime.json`，开发环境默认仓库 `local-data/runtime.json`。打包运行建议设置显式路径。
+backend 和桌宠必须读取同一个 runtime 文件。桌宠优先使用 `FOOTBALL_ASSISTANT_RUNTIME_FILE`，其次 `--runtime-file` 参数，再其次 `FOOTBALL_ASSISTANT_DATA_DIR/runtime.json`，开发环境默认仓库 `local-data/runtime.json`。打包运行必须使用已配置的启动入口，不会向上搜索仓库或复制令牌。
+
+### Windows 打包启动（含 dist-alpha）
+
+从仓库执行（路径有空格时保留引号）：
+
+```powershell
+uv run --frozen --extra save --extra agent python scripts/run_mvp.py --companion-path "apps/companion/dist-alpha/win-unpacked/FootballAssistant.exe"
+```
+
+运行器沿用 backend 的 `.env` / 环境变量规则，把解析后的绝对 runtime 路径同时传给完整 backend 和桌宠；可加 `--runtime-file "C:\path\to\runtime.json"` 明确覆盖本次启动。环境变量和 `.env` 的相对路径按 backend 工作目录（仓库根目录）解析；命令行显式路径按当前终端目录解析。已有健康服务会保留，指定文件必须对应配置端口上的这个服务；运行器会先验证本机地址及认证只读状态，缺失、错误或认证失败时拒绝打开桌宠，并给出配置指引。`--check` 也验证该连接。运行器不会搬运令牌或修复别的进程。原有默认 `dist/win-unpacked` 仍支持。
+
+仅连接已经运行的 backend 时，可直接启动：
+
+```powershell
+& ".\apps\companion\dist-alpha\win-unpacked\FootballAssistant.exe" --runtime-file "C:\path\to\repo\local-data\runtime.json"
+```
+
+桌宠的 `FOOTBALL_ASSISTANT_RUNTIME_FILE` 优先于 `--runtime-file`，后者优先于 `FOOTBALL_ASSISTANT_DATA_DIR/runtime.json`。无参数双击 exe 不会猜测源码仓库位置，也不会自动启动 Python；若未设置环境变量，它仍使用包旁默认位置，找不到文件会明确显示启动/配置指引。首次使用仍需在设置中主动切换真实模式。此修复不配置模型、不提高额度、不生成 FM 数据，`model_unconfigured` / 业务数据 unavailable 仍是独立且真实的阻塞；TTS 仍关闭。
 
 需要聊天或建议时启动完整 `football-assistant-backend`；`football-assistant-reader-server` 是不加载模型的只读服务，建议路由返回 404。模型地址、模型名、密钥和调用额度只配置在 backend，不能放入 renderer 或提交 Git。runtime 令牌仅由主进程读取。
 

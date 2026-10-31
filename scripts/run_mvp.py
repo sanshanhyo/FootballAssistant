@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -20,9 +21,10 @@ MAC_APP = ROOT / "apps" / "companion" / "dist" / "mac-arm64" / "FootballAssistan
 WINDOWS_APP = ROOT / "apps" / "companion" / "dist" / "win-unpacked" / "FootballAssistant.exe"
 
 
-def backend_url() -> str:
+def backend_url(environment: dict[str, str] | None = None) -> str:
+    environment = os.environ if environment is None else environment
     try:
-        port = int(os.environ.get("FOOTBALL_ASSISTANT_PORT", "17827"))
+        port = int(environment.get("FOOTBALL_ASSISTANT_PORT", "17827"))
     except ValueError:
         raise RuntimeError("FOOTBALL_ASSISTANT_PORT must be a valid port number.") from None
     if not 1 <= port <= 65535:
@@ -115,9 +117,32 @@ def open_backend_log() -> int:
         raise
 
 
-def launch_backend(url: str) -> None:
+def verify_runtime(url: str, environment: dict[str, str]) -> None:
+    """Verify only the selected file and authenticated read-only status; never guess paths."""
+    from football_assistant_data.reader_client import ReaderClient, ReaderError, runtime_address
+
+    runtime_file = Path(environment["FOOTBALL_ASSISTANT_RUNTIME_FILE"])
+    try:
+        if not runtime_file.is_file() or runtime_file.stat().st_size > 16_384:
+            raise ValueError("Invalid runtime file")
+        value = json.loads(runtime_file.read_text(encoding="utf-8"))
+        if runtime_address(value) + "/health" != url:
+            raise ValueError("Runtime address does not match configured backend")
+        if not isinstance(value.get("token"), str) or len(value["token"]) < 16:
+            raise ValueError("Invalid runtime token")
+        ReaderClient(runtime_file, timeout=1.5).get("/v1/status")
+    except (OSError, ValueError, TypeError, AttributeError, ReaderError):
+        raise RuntimeError(
+            "The selected runtime file is missing, invalid, or cannot authenticate to the configured backend. "
+            "Use --runtime-file for that backend's runtime.json (and matching FOOTBALL_ASSISTANT_PORT). "
+            "No companion was opened; the existing service was left untouched."
+        ) from None
+
+
+def launch_backend(url: str, environment: dict[str, str]) -> None:
     state = health_state(url)
     if state is True:
+        verify_runtime(url, environment)
         print("Reusing the healthy local FootballAssistant backend.")
         return
     if state is None:
@@ -128,6 +153,7 @@ def launch_backend(url: str) -> None:
     try:
         options: dict[str, object] = {
             "cwd": str(ROOT),
+            "env": environment,
             "stdin": subprocess.DEVNULL,
             "stdout": log_descriptor,
             "stderr": subprocess.STDOUT,
@@ -145,6 +171,7 @@ def launch_backend(url: str) -> None:
     while time.monotonic() < deadline:
         state = health_state(url)
         if state is True:
+            verify_runtime(url, environment)
             print("Started the local FootballAssistant backend.")
             return
         if state is None:
@@ -153,14 +180,15 @@ def launch_backend(url: str) -> None:
     raise RuntimeError("The local backend did not become healthy within 30 seconds; it was not stopped.")
 
 
-def launch_companion(path: Path) -> None:
+def launch_companion(path: Path, environment: dict[str, str]) -> None:
     if sys.platform == "darwin":
-        command = ["open", "-a", str(path)]
+        command = ["open", "-a", str(path), "--args", "--runtime-file", environment["FOOTBALL_ASSISTANT_RUNTIME_FILE"]]
     else:
         command = [str(path)]
     subprocess.Popen(
         command,
         cwd=str(ROOT),
+        env=environment,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -169,20 +197,49 @@ def launch_companion(path: Path) -> None:
     print("Opened the FootballAssistant desktop companion.")
 
 
+def launch_environment(runtime_file: str | None = None) -> dict[str, str]:
+    # Match backend path precedence without importing model secrets from .env into Electron.
+    from dotenv import dotenv_values
+
+    values = dotenv_values(ROOT / ".env")
+    environment = dict(os.environ)
+    for key in ("FOOTBALL_ASSISTANT_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE", "FOOTBALL_ASSISTANT_PORT"):
+        if key not in environment and values.get(key) is not None:
+            environment[key] = values[key]
+    def backend_path(value: str | Path) -> Path:
+        expanded = Path(value).expanduser()
+        return (ROOT / expanded).resolve()  # Child backend always runs with cwd=ROOT.
+
+    data_dir = backend_path(environment.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data"))
+    # CLI paths belong to the invoking shell; environment/.env paths belong to backend cwd.
+    selected = Path(runtime_file).expanduser().resolve() if runtime_file else backend_path(
+        environment.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json"))
+    return {**environment, "FOOTBALL_ASSISTANT_DATA_DIR": str(data_dir),
+            "FOOTBALL_ASSISTANT_RUNTIME_FILE": str(selected)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the local FootballAssistant MVP.")
     parser.add_argument("--check", action="store_true", help="Check the package, uv, and backend without starting anything.")
+    parser.add_argument("--companion-path", type=Path, help="Explicit built .exe or .app (for example, dist-alpha/win-unpacked/FootballAssistant.exe).")
+    parser.add_argument("--runtime-file", help="Explicit backend runtime file; otherwise use backend environment/.env configuration.")
     args = parser.parse_args()
 
     try:
-        app_path = companion_path()
-        url = backend_url()
-    except RuntimeError as error:
+        app_path = args.companion_path.expanduser().resolve() if args.companion_path else companion_path()
+        environment = launch_environment(args.runtime_file)
+        url = backend_url(environment)
+    except (RuntimeError, ValueError) as error:
         print(f"MVP check failed: {error}", file=sys.stderr)
         return 1
 
     if args.check:
         issues = required_items(app_path, url)
+        if not issues:
+            try:
+                verify_runtime(url, environment)
+            except RuntimeError as error:
+                issues.append(str(error))
         if issues:
             for issue in issues:
                 print(f"- {issue}", file=sys.stderr)
@@ -201,8 +258,8 @@ def main() -> int:
         return 1
 
     try:
-        launch_backend(url)
-        launch_companion(app_path)
+        launch_backend(url, environment)
+        launch_companion(app_path, environment)
     except (OSError, RuntimeError) as error:
         print(f"Could not launch FootballAssistant MVP: {error}", file=sys.stderr)
         return 1

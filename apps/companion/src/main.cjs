@@ -222,7 +222,8 @@ async function buildWindow() {
   }
 }
 async function main() {
-  runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(defaultRuntimeFile(), endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
+  const runtimeFile = defaultRuntimeFile(process.env, process.argv);
+  runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await runtime.init(); runtime.on('event', emit);
   registerIpc();
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
