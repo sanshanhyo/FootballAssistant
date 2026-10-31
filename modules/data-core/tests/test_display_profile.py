@@ -345,7 +345,7 @@ def test_TEST_client_404_fallback_new_and_legacy_metadata(tmp_path,monkeypatch,m
     result=client.profile()
     if changed: unavailable(result)
     else: assert result['fields']['name_display']=='TEST Player A'
-    assert any(path.startswith('/v1/reader/snapshot?') and 'limit=114' in path for path in seen)
+    assert any(path.startswith('/v1/reader/snapshot?') and 'limit=274' in path for path in seen)
     assert TOKEN not in json.dumps(result)
 
 
@@ -422,7 +422,7 @@ def test_TEST_unvalidated_or_absent_platform_fails_closed(modern,platform):
 
 def test_TEST_diagnostic_facts_do_not_change_projection_or_ui_limit():
     snapshot = sample()
-    for index in range(80 - len(snapshot['facts'])):
+    for index in range(240 - len(snapshot['facts'])):
         snapshot['facts'].append(dict(entity_kind='ui_element', entity_id=f'TEST-extra/{index}',
                                       field='ui_tree_text', value='TEST filler'))
     for index in range(34):
@@ -433,8 +433,8 @@ def test_TEST_diagnostic_facts_do_not_change_projection_or_ui_limit():
     result = project(snapshot)
     assert result['status'] == 'experimental_observed_display_profile'
     assert result['fields']['name_display'] == 'TEST Player A'
-    assert len(snapshot['facts']) == 114
-    # Diagnostics do not raise the 80 UI text bound.
+    assert len(snapshot['facts']) == 274
+    # Diagnostics do not raise the 240 UI text bound.
     snapshot['facts'][-1] = dict(entity_kind='ui_element', entity_id='TEST-extra/overflow',
                                   field='ui_tree_text', value='TEST overflow')
     assert project(snapshot)['reason'] == 'incomplete_snapshot'

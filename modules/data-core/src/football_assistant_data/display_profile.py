@@ -12,7 +12,7 @@ import unicodedata
 ADAPTER_ID = "footballassistant.runtime-ui-tree"
 ADAPTER_VERSION = "0.4.0"
 GAME_BUILD = "27.0.0+2486695"
-MAX_UI_FACTS = 80
+MAX_UI_FACTS = 240
 MAX_DIAGNOSTIC_FACTS = 34  # capture + transport + at most 32 panels
 MAX_FACTS = MAX_UI_FACTS + MAX_DIAGNOSTIC_FACTS
 MAX_AGE_SECONDS = 15
@@ -36,7 +36,7 @@ ANCHORS = {"overview_tab":"概览", "contract_tab":"合同", "transfer_tab":"转
 LIMITATIONS = [
     "Experimental display text only; UI paths are not native player IDs and business identity is unknown.",
     "Pinned to one FM27 build, adapter version and Chinese overview layout; other layouts fail closed.",
-    "The runtime traversal is bounded (80 text values, 15 ms plus node/depth limits); a complete response is not a complete UI tree.",
+    "The runtime traversal is bounded (240 text values, 15 ms plus node/depth limits); a complete response is not a complete UI tree.",
     "Hidden or cached elements may exist. Visibility, occlusion and active page are not independently verified at runtime; no screenshot verification is performed.",
     "No current-club inference, technical attributes, native records or cross-player identity mapping are provided.",
 ]

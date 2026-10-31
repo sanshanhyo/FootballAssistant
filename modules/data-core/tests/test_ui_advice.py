@@ -135,9 +135,26 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
         assert 'TEST conditional advice' not in result['reply']
 
 
+    dense = dense_snapshot()
+    changed_tail = deepcopy(dense)
+    changed_tail['facts'][-1]['value'] = 'TEST changed omitted tail'
+    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', dense, refresh=lambda: changed_tail))
+    assert result['status'] == 'blocked' and result['evidence'] == []
+    assert 'TEST OMITTED TAIL' not in captured['message']
+    assert '"evidence_truncated": true' in captured['message']
+    # Diagnostic timing changes do not invalidate unchanged UI text.
+    stable = deepcopy(dense)
+    for data, elapsed in ((dense, 1), (stable, 2)):
+        data['facts'].append(dict(entity_kind='ui_capture_diagnostic', entity_id='diagnostic/capture',
+                                  field='capture_metrics', value=f'{{"elapsed_ms":{elapsed}}}'))
+        data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
+    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', dense, refresh=lambda: stable))
+    assert result['status'] == 'generated' and result['evidence_truncated'] is True
+
+
 def test_capture_diagnostics_are_excluded_from_evidence_and_keep_text_bound():
     data = snapshot()
-    for index in range(80 - len(data['facts'])):
+    for index in range(240 - len(data['facts'])):
         data['facts'].append(dict(entity_kind='ui_element', entity_id=f'TEST-extra/{index}',
                                   field='ui_tree_text', value='TEST filler'))
     for index in range(34):
@@ -146,7 +163,7 @@ def test_capture_diagnostics_are_excluded_from_evidence_and_keep_text_bound():
                                   value='TEST DIAGNOSTIC MUST NOT REACH MODEL'))
     data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
     result = prepare_ui_advice('player_info', data, now=NOW)
-    assert result['status'] == 'ready' and len(result['evidence']) == 80
+    assert result['status'] == 'ready' and len(result['evidence']) == 240
     assert 'DIAGNOSTIC MUST NOT' not in str(result)
     data['facts'][-1] = dict(entity_kind='ui_element', entity_id='TEST-overflow',
                               field='ui_tree_text', value='TEST overflow')
@@ -160,3 +177,48 @@ def test_diagnostics_without_ui_text_cannot_enable_advice():
     data['facts_total'] = data['source_status']['facts_count'] = 1
     result = prepare_ui_advice('player_info', data, now=NOW)
     assert result['status'] == 'blocked' and result['evidence'] == []
+
+
+def dense_snapshot():
+    data = snapshot()
+    template = data['facts'][0]
+    data['facts'] = [{**deepcopy(template), 'entity_id': f'panel0/{i}', 'value': '测' * 1000}
+                     for i in range(40)]
+    data['facts'][-1]['value'] = 'TEST OMITTED TAIL'
+    data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
+    return data
+
+
+def test_model_evidence_budget_is_explicit_whole_prefix_and_validates_omitted_tail():
+    data = dense_snapshot()
+    result = prepare_ui_advice('schedule_analysis', data, now=NOW)
+    assert result['status'] == 'ready' and result['evidence_truncated'] is True
+    assert len(result['evidence']) == 15
+    assert all(len(item['text']) == 1000 for item in result['evidence'])
+    budget = result['evidence_budget']
+    assert budget['captured_texts'] == 40 and budget['included_texts'] == 15 and budget['omitted_texts'] == 25
+    assert budget['included_characters'] == sum(len(item['path']) + len(item['text']) for item in result['evidence'])
+    assert budget['included_characters'] <= budget['max_characters'] == 16_000
+    assert 'TEST OMITTED TAIL' not in str(result['evidence'])
+    changed = deepcopy(data)
+    changed['facts'][-1]['value'] = 'TEST other omitted text'
+    other = prepare_ui_advice('schedule_analysis', changed, now=NOW)
+    assert other['evidence'] == result['evidence']
+    assert other['capture_text_sha256'] != result['capture_text_sha256']
+    data['facts'][-1]['source_event_id'] = 'TEST invalid omitted provenance'
+    rejected = prepare_ui_advice('schedule_analysis', data, now=NOW)
+    assert rejected['status'] == 'blocked' and rejected['evidence'] == []
+
+
+def test_exact_character_budget_and_uncut_240_text_capture():
+    data = dense_snapshot()
+    data['facts'] = data['facts'][:16]
+    for item in data['facts']:
+        item['value'] = '测' * (1000 - len(item['entity_id']))
+    data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
+    result = prepare_ui_advice('player_info', data, now=NOW)
+    assert result['status'] == 'ready' and result['evidence_truncated'] is False
+    assert result['evidence_budget']['included_characters'] == 16_000
+    data['facts'][-1]['value'] += '测'
+    result = prepare_ui_advice('player_info', data, now=NOW)
+    assert result['evidence_truncated'] is True and len(result['evidence']) == 15

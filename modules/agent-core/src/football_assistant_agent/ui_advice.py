@@ -1,8 +1,12 @@
 """Alpha current-capture text evidence, deliberately not native business facts."""
 from datetime import datetime, timezone
+import hashlib
+import json
 
 from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, MAX_FACTS, MAX_UI_FACTS, MAX_DIAGNOSTIC_FACTS, _time
 from .business_advice import CAPABILITIES
+
+MAX_EVIDENCE_CHARACTERS = 16_000  # Sum of literal path + text lengths, whole entries only.
 
 LIMITATIONS = [
     '仅依据本次 UI 文本采样，不是后台全量业务数据；production_ready 仍为 false。',
@@ -13,6 +17,7 @@ UI_INSTRUCTIONS = """
 本次为明确的 Alpha UI 证据建议模式，不是原生业务建议模式。
 新事件/新采样不证明每条文本当前可见；旧页面缓存的预算、日期等不得当作当前页面事实。
 没有明确实体与字段关联证据时，不给具体金额、日期、首发或轮换结论，只给条件式分析并请用户确认。
+若 evidence_truncated=true，模型只收到采样前缀，遗漏部分未知，不得声称覆盖完整采样。
 只能引用 ui_evidence 中的原始文本，称为“UI 采样文本”，不能称为已验证球员/球队事实。
 页面名称未知；不能仅凭路径、相邻文本或标签数值顺序建立实体身份或属性关联。
 分别给出“UI 采样文本”“有条件的建议/推断”“缺少的信息”；引用来源、采样时间和 partial 限制。
@@ -27,7 +32,8 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
     if capability not in CAPABILITIES:
         raise ValueError('unsupported business capability')
     result = dict(status='blocked', mode='ui_evidence', source='ui', partial=True,
-                  production_ready=False, capability=capability, evidence=[],
+                  production_ready=False, capability=capability, evidence=[], evidence_truncated=False,
+                  evidence_budget=None, capture_text_sha256=None,
                   page={'name': None, 'scope': 'current_ui_capture', 'verified': False, 'visibility': 'unknown', 'cached_elements_possible': True},
                   limitations=list(LIMITATIONS), reasons=[], provenance=None)
     try:
@@ -69,6 +75,9 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
         require(0 < len(facts) <= MAX_UI_FACTS, 'ui_page_missing_or_incomplete')
         # Diagnostic strings are deliberately never parsed into or sent as evidence.
         evidence = []
+        all_texts = []
+        evidence_characters = 0
+        budget_exhausted = False
         for fact in facts:
             require(isinstance(fact, dict) and fact.get('entity_kind') == 'ui_element' and
                     fact.get('field') == 'ui_tree_text', 'not_ui_text')
@@ -78,7 +87,24 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
             for key, expected in (('game', game), ('source', source), ('source_event_id', event),
                                   ('captured_at', envelope['captured_at'])):
                 require(key not in fact or fact[key] == expected, 'fact_provenance_mismatch')
-            evidence.append({'path': path, 'text': value})
+            item = {'path': path, 'text': value}
+            all_texts.append(item)
+            item_characters = len(path) + len(value)
+            if not budget_exhausted and evidence_characters + item_characters <= MAX_EVIDENCE_CHARACTERS:
+                evidence.append(item)
+                evidence_characters += item_characters
+            else:
+                budget_exhausted = True
+        # Content-change fence only; never an entity ID or an association between texts.
+        fingerprint = hashlib.sha256(json.dumps(all_texts, ensure_ascii=True,
+                                                separators=(',', ':')).encode('utf-8')).hexdigest()
+        result.update(evidence_truncated=budget_exhausted, capture_text_sha256=fingerprint,
+                      evidence_budget=dict(max_characters=MAX_EVIDENCE_CHARACTERS,
+                          included_characters=evidence_characters, captured_texts=len(all_texts),
+                          included_texts=len(evidence), omitted_texts=len(all_texts) - len(evidence),
+                          counting='literal_path_plus_text', selection='whole_entries_capture_prefix'))
+        if budget_exhausted:
+            result['limitations'].append('模型证据因字符预算仅包含采样前缀；遗漏文本未知，不代表完整采样。')
         result.update(status='ready', evidence=evidence, provenance={
             'source': 'ui', 'session_id': game['session_id'], 'event_id': event,
             'captured_at': envelope['captured_at'], 'observed_at': envelope['observed_at'],

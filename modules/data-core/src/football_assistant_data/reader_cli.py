@@ -9,6 +9,7 @@ import sys
 import time
 
 from .reader_client import ReaderClient, ReaderError
+from .display_profile import MAX_FACTS
 
 COMMANDS = {
     "help":"List these commands.",
@@ -59,8 +60,8 @@ def arguments(command,args):
     elif command=="event":
         parser.add_argument("cursor",type=number)
     result = parser.parse_args(args)
-    if hasattr(result,"limit") and not 1<=result.limit<=(100 if command=="native" else 200):
-        raise ReaderError("invalid_arguments","Page limit must be 1..100 for native or 1..200 for facts.")
+    if hasattr(result,"limit") and not 1<=result.limit<=(100 if command=="native" else MAX_FACTS):
+        raise ReaderError("invalid_arguments",f"Page limit must be 1..100 for native or 1..{MAX_FACTS} for facts.")
     if command=="watch" and (not 0.5<=result.interval<=60 or result.polls is not None and result.polls<1):
         raise ReaderError("invalid_arguments","Watch interval must be 0.5..60 seconds and polls must be positive.")
     return result

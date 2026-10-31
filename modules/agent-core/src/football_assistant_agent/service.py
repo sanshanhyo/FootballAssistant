@@ -77,6 +77,7 @@ class AgentService:
         if refresh is not None:
             current = prepare_ui_advice(capability, refresh())
             if (current["status"] != "ready" or current["evidence"] != prepared["evidence"] or
+                    current["capture_text_sha256"] != prepared["capture_text_sha256"] or
                     current["provenance"]["session_id"] != prepared["provenance"]["session_id"]):
                 return blocked({**prepared, "reasons": ["ui_changed_or_expired_during_generation"]})
             prepared = current

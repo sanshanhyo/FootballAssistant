@@ -95,10 +95,10 @@ using (var probe = JsonDocument.Parse(JsonSerializer.Serialize(countOnly)))
     Assert(!probe.RootElement.GetProperty("enumeration").GetProperty("complete").GetBoolean(), "count-only diagnostics never claim enumeration complete");
     Assert(probe.RootElement.GetProperty("entries").GetArrayLength() == 0, "no fabricated business entries");
 }
-var chinese = ObservationFactory.Create(Enumerable.Range(0, 80).Select(i => new UiText($"panel0/{i}", new string('球', 1000))).ToArray(), "27.0.0.2486716", "byte-budget-test");
+var chinese = ObservationFactory.Create(Enumerable.Range(0, 240).Select(i => new UiText($"panel0/{i}", new string('球', 1000))).ToArray(), "27.0.0.2486716", "byte-budget-test");
 Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadBytes, "maximum Chinese page fits backend body cap");
 using (var page = JsonDocument.Parse(chinese))
-    Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 80, "page reduced to byte budget");
+    Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 240, "page reduced to byte budget");
 
 // Synthetic deep single-child trees exercise the exact admission helper used by
 // native traversal, without loading game objects or invoking native getters.
@@ -130,15 +130,23 @@ using (var deepPage = JsonDocument.Parse(ObservationFactory.Create(deepCapture, 
     using var bounds = JsonDocument.Parse(deepFacts[0].GetProperty("value").GetString()!);
     Assert(bounds.RootElement.GetProperty("max_depth").GetInt32() == 48, "diagnostics expose measured depth setting");
     Assert(bounds.RootElement.GetProperty("max_path_length").GetInt32() == 128, "diagnostics expose contract path bound");
-    Assert(bounds.RootElement.GetProperty("max_nodes").GetInt32() == 2500 && bounds.RootElement.GetProperty("max_texts").GetInt32() == 80 && bounds.RootElement.GetProperty("budget_ms").GetInt32() == 15, "other traversal budgets unchanged");
+    Assert(bounds.RootElement.GetProperty("max_nodes").GetInt32() == 2500 && bounds.RootElement.GetProperty("max_texts").GetInt32() == 240 && bounds.RootElement.GetProperty("budget_ms").GetInt32() == 15, "documented traversal budgets");
 }
+
+var textCapCapture = new UiCapture();
+for (var i = 0; i < 240; i++) textCapCapture.Add(new UiText($"panel0/{i}", "TEST short text"));
+using (var textCapPage = JsonDocument.Parse(ObservationFactory.Create(textCapCapture, null, "offline-text-cap-test")))
+    Assert(textCapPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().Count(f => f.GetProperty("entity_kind").GetString() == "ui_element") == 240, "240 short texts fit unchanged payload budget");
+textCapCapture.Add(new UiText("panel0/240", "TEST overflow"));
+try { ObservationFactory.Create(textCapCapture, null, "offline-over-cap-test"); throw new Exception("Text hard cap was not enforced"); }
+catch (ArgumentOutOfRangeException) { }
 
 var diagnosticCapture = new UiCapture { PanelsAvailable = 33, StopReason = "panel_limit", ElapsedMs = 15.1 };
 for (var i = 0; i < 32; i++)
     diagnosticCapture.Panels.Add(new UiPanelDiagnostics { panel_index = i, visited_nodes = 70,
         visible_nodes = 60, text_element_nodes = 3, other_widget_nodes = 57,
         emitted_texts = 2, stop_reason = "time_budget", pending_nodes = 10, elapsed_ms = 0.4 });
-diagnosticCapture.AddRange(Enumerable.Range(0, 80).Select(i => new UiText($"panel0/{i}", new string('球', 1000))));
+diagnosticCapture.AddRange(Enumerable.Range(0, 240).Select(i => new UiText($"panel0/{i}", new string('球', 1000))));
 var diagnosticJson = ObservationFactory.Create(diagnosticCapture, null, "offline-diagnostic-test");
 Assert(Encoding.UTF8.GetByteCount(diagnosticJson) <= ObservationFactory.MaximumPayloadBytes, "diagnostics plus Chinese text respect byte cap");
 using (var diagnosticPage = JsonDocument.Parse(diagnosticJson))

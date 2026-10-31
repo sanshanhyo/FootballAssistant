@@ -133,7 +133,7 @@ internal sealed partial class NativeUiReader : IDisposable
         var budget = Stopwatch.StartNew();
         var visited = 0;
         string? Limit() => budget.Elapsed.TotalMilliseconds > 15 ? "time_budget" :
-            visited >= 2500 ? "node_limit" : output.Count >= 80 ? "text_limit" : null;
+            visited >= 2500 ? "node_limit" : output.Count >= UiTraversalBounds.MaximumTexts ? "text_limit" : null;
         for (var panelIndex = 0; panelIndex < count; panelIndex++)
         {
             var limit = Limit();

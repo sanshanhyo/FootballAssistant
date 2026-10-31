@@ -12,7 +12,7 @@ public sealed record UiText(string ElementId, string Text);
 // Diagnostics describe traversal only, never screen identity or football semantics.
 public sealed class UiCapture : List<UiText>
 {
-    public UiCapture() : base(80) { }
+    public UiCapture() : base(UiTraversalBounds.MaximumTexts) { }
     public List<UiPanelDiagnostics> Panels { get; } = new();
     public int PanelsAvailable { get; set; }
     public double ElapsedMs { get; set; }
@@ -43,6 +43,7 @@ public sealed class UiPanelDiagnostics
 // Literal UI hierarchy paths only: never hash/shorten them into apparent stable IDs.
 internal static class UiTraversalBounds
 {
+    public const int MaximumTexts = 240;
     public const int MaximumDepth = 48;
     public const int MaximumPathLength = 128;
 
@@ -72,7 +73,7 @@ public static class ObservationFactory
 
     public static string Create(IReadOnlyList<UiText> texts, string? gameBuild, string sessionId)
     {
-        if (texts.Count > 120 || (texts.Count == 0 && texts is not UiCapture))
+        if (texts.Count > UiTraversalBounds.MaximumTexts || (texts.Count == 0 && texts is not UiCapture))
             throw new ArgumentOutOfRangeException(nameof(texts));
         if (texts.Any(t => string.IsNullOrWhiteSpace(t.Text) || t.Text.Length > 4000 || t.ElementId.Length > UiTraversalBounds.MaximumPathLength))
             throw new ArgumentException("UI text must fit the observation contract.", nameof(texts));
@@ -99,7 +100,7 @@ public static class ObservationFactory
                 panels_available = capture.PanelsAvailable, panels_visited = capture.Panels.Count,
                 visited_nodes = capture.Panels.Sum(p => p.visited_nodes),
                 elapsed_ms = capture.ElapsedMs, stop_reason = capture.StopReason, truncated = capture.Truncated,
-                captured_texts = texts.Count, max_texts = 80, max_nodes = 2500, budget_ms = 15,
+                captured_texts = texts.Count, max_texts = UiTraversalBounds.MaximumTexts, max_nodes = 2500, budget_ms = 15,
                 max_depth = UiTraversalBounds.MaximumDepth, max_path_length = UiTraversalBounds.MaximumPathLength,
                 supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
                 visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"

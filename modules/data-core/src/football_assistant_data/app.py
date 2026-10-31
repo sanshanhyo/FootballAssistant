@@ -173,7 +173,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/snapshot",dependencies=[Depends(authorized)])
     async def reader_snapshot(after: int = Query(default=0,ge=0,le=2000),
-                              limit: int = Query(default=100,ge=1,le=200),
+                              limit: int = Query(default=100,ge=1,le=MAX_FACTS),
                               event_id: str | None = Query(default=None,max_length=128)):
         try:
             return app.state.observations.reader_snapshot(after,limit,event_id=event_id)
