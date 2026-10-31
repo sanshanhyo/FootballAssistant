@@ -113,6 +113,7 @@ async function main() {
   const initialVersion = '0.0.1-alpha.1', targetVersion = '0.0.2-alpha.1';
   const originalSettings = JSON.stringify({ version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '' }, null, 2);
   const reportPath = path.join(process.env.RUNNER_TEMP, 'companion-smoke-update-fixture.json');
+  await fs.rm(reportPath, { force: true });
   await fs.mkdir(project); await fs.mkdir(profile);
   await fs.writeFile(path.join(profile, 'settings.json'), originalSettings);
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519'); // ephemeral fixture only; never persisted
@@ -166,7 +167,7 @@ async function main() {
     for (const version of [initialVersion, targetVersion]) {
       await fs.writeFile(packageFile, JSON.stringify({ ...packageJson, version }));
       const output = path.join(root, `build-${version}`);
-      await build({ projectDir: project, targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64), publish: 'never', config: { ...common, directories: { output } } });
+      await build({ projectDir: project, targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64), publish: 'never', config: { ...structuredClone(common), directories: { output } } });
       outputs[version] = output;
     }
     targetDirectory = outputs[targetVersion];
@@ -209,5 +210,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-if (require.main === module) main().catch(error => { console.error(error.stack); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error.stack); process.exit(1); });
 module.exports = { requireDisposableWindows, fixtureAppSource: appSource, verifyFixtureEvidenceEncoding };

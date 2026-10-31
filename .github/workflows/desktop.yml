@@ -116,7 +116,9 @@ jobs:
         run: ./test/nsis-smoke.ps1
       - name: Verify real two-version NSIS automatic upgrade (disposable fixture)
         if: runner.os == 'Windows'
-        run: node test/update-native-fixture.cjs
+        run: |
+          node test/update-native-fixture.cjs
+          node test/assert-update-fixture.cjs
       - name: Prepare signed Alpha manifest without publishing
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/alpha-reader-ui'
         run: node packaging/sign-alpha-update.cjs
