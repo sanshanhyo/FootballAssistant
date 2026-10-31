@@ -5,8 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Program.cs" />
     <Compile Include="../src/BridgeCore.cs" Link="BridgeCore.cs" />
     <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
     <Compile Include="../src/MacMainThreadTimer.cs" Link="MacMainThreadTimer.cs" />
