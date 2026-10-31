@@ -2,9 +2,9 @@ name: Windows bridge probe (no game)
 on:
   workflow_dispatch:
   push:
-    paths: ['modules/game-bridge/**', '.github/workflows/windows-bridge-probe.yml']
+    paths: ['modules/game-bridge/**', 'modules/data-core/src/football_assistant_data/windows_capture_files.py', 'scripts/diagnostics/windows_capture_transport_smoke.py', '.github/workflows/windows-bridge-probe.yml']
   pull_request:
-    paths: ['modules/game-bridge/**', '.github/workflows/windows-bridge-probe.yml']
+    paths: ['modules/game-bridge/**', 'modules/data-core/src/football_assistant_data/windows_capture_files.py', 'scripts/diagnostics/windows_capture_transport_smoke.py', '.github/workflows/windows-bridge-probe.yml']
 permissions:
   contents: read
 jobs:

@@ -169,15 +169,28 @@ class WindowsCaptureFiles:
         options = 0x00200000 | 0x20 | (1 if directory else 0x40)
         # FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT |
         # FILE_DIRECTORY_FILE / FILE_NON_DIRECTORY_FILE. No unbounded path lookup.
-        status = self.nt.NtCreateFile(ctypes.byref(handle), access | 0x100000, ctypes.byref(attributes),
+        # Every opened object is inspected: NT GENERIC_WRITE does not grant
+        # FILE_READ_ATTRIBUTES. Request that right explicitly alongside SYNCHRONIZE.
+        status = self.nt.NtCreateFile(ctypes.byref(handle), access | 0x100080, ctypes.byref(attributes),
             ctypes.byref(io), None, 0x80, sharing, {3: 1, 1: 2, 4: 3}[disposition], options, None, 0)
         self._check_nt(status)
         try:
-            self._check_nt(io.value.status)
-            self._info(handle, directory=directory)
+            try:
+                self._check_nt(io.value.status)
+                self._info(handle, directory=directory)
+            except Exception:
+                if disposition == 1:
+                    # CREATE_NEW owns this exact object. Validation can fail
+                    # before write_request enters its cleanup context.
+                    self._delete_owned(handle)
+                raise
             yield handle.value
         finally:
             self.api.CloseHandle(handle)
+
+    def _delete_owned(self, handle):
+        delete = ctypes.c_ubyte(1)
+        self._check(self.api.SetFileInformationByHandle(handle, 4, ctypes.byref(delete), 1))
 
     def _info(self, handle, *, directory=False, bounded=True):
         if self.api.GetFileType(handle) != 1:  # FILE_TYPE_DISK only
@@ -281,5 +294,4 @@ class WindowsCaptureFiles:
             finally:
                 if not renamed:
                     # Delete the owned file by handle, never unlink a raced name.
-                    delete = ctypes.c_ubyte(1)
-                    self._check(self.api.SetFileInformationByHandle(handle, 4, ctypes.byref(delete), 1))
+                    self._delete_owned(handle)

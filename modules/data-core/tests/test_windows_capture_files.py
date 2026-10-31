@@ -209,3 +209,28 @@ def test_native_object_attributes_layout():
         assert [_ObjectAttributes.root.offset, _ObjectAttributes.name.offset, _ObjectAttributes.attributes.offset] == [8, 16, 24]
         assert ctypes.sizeof(_UnicodeString) == 16
         assert _UnicodeString.buffer.offset == 8
+
+
+@pytest.mark.parametrize('disposition', [1, 3, 4])
+def test_nt_relative_open_requests_read_attributes_and_closes_on_validation_failure(monkeypatch, disposition):
+    """Injected ABI contract test, not a claim of executing Windows APIs."""
+    from types import SimpleNamespace
+    from football_assistant_data.windows_capture_files import HANDLE
+    calls = []
+    files = WindowsCaptureFiles.__new__(WindowsCaptureFiles)
+    files.api = SimpleNamespace(CloseHandle=lambda handle: calls.append(('close', handle.value)))
+    def create(output, access, *args):
+        assert access & 0x80, 'metadata inspection needs FILE_READ_ATTRIBUTES even on write-only temp'
+        assert access & 0x100000, 'synchronous NT handle needs SYNCHRONIZE'
+        ctypes.cast(output, ctypes.POINTER(HANDLE))[0] = HANDLE(123)
+        return 0
+    files.nt = SimpleNamespace(NtCreateFile=create)
+    def inspect(handle, **kwargs):
+        if getattr(handle, 'value', handle) == 123:
+            raise ValueError('injected_metadata_failure')
+    monkeypatch.setattr(files, '_info', inspect)
+    monkeypatch.setattr(files, '_delete_owned', lambda handle: calls.append(('delete', handle.value)))
+    with pytest.raises(ValueError, match='injected_metadata_failure'):
+        with files._open_relative(99, '.ui-capture-test', 0x40010000, 0, disposition=disposition):
+            pytest.fail('invalid handle must never escape')
+    assert calls == ([('delete', 123)] if disposition == 1 else []) + [('close', 123)]
