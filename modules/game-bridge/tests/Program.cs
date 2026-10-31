@@ -100,6 +100,39 @@ Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadB
 using (var page = JsonDocument.Parse(chinese))
     Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 80, "page reduced to byte budget");
 
+// Synthetic deep single-child trees exercise the exact admission helper used by
+// native traversal, without loading game objects or invoking native getters.
+var deepDiagnostics = new UiPanelDiagnostics();
+var deepPath = "panel0";
+for (var depth = 0; depth < 48; depth++)
+{
+    Assert(UiTraversalBounds.TryChildPath(deepPath, depth, 0, deepDiagnostics, out var nextPath), "depth through 48 is admitted");
+    Assert(nextPath == deepPath + "/0", "literal identity path remains unchanged");
+    deepPath = nextPath;
+}
+Assert(!UiTraversalBounds.TryChildPath(deepPath, 48, 0, deepDiagnostics, out var rejectedDepthPath), "depth 49 is skipped");
+Assert(rejectedDepthPath == "" && deepDiagnostics.depth_skipped == 1 && deepDiagnostics.truncated, "depth clipping is explicit");
+var pathDiagnostics = new UiPanelDiagnostics();
+var longPath = "panel0" + string.Concat(Enumerable.Repeat("/511", 30));
+Assert(longPath.Length == 126, "synthetic long path fixture");
+Assert(UiTraversalBounds.TryChildPath(longPath, 30, 0, pathDiagnostics, out var boundaryPath), "exact 128-character path is admitted");
+Assert(boundaryPath.Length == 128, "path boundary retained without hashing");
+Assert(!UiTraversalBounds.TryChildPath(boundaryPath, 31, 0, pathDiagnostics, out var rejectedLongPath), "overlong child is skipped before capture serialization");
+Assert(rejectedLongPath == "" && pathDiagnostics.path_limit_skipped == 1 && pathDiagnostics.truncated, "path clipping is explicit");
+var deepCapture = new UiCapture();
+deepCapture.Panels.Add(pathDiagnostics);
+deepCapture.Add(new UiText(deepPath, "TEST deep text"));
+deepCapture.Add(new UiText(boundaryPath, "TEST boundary text"));
+using (var deepPage = JsonDocument.Parse(ObservationFactory.Create(deepCapture, null, "offline-deep-path-test")))
+{
+    var deepFacts = deepPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    Assert(deepFacts.Count(f => f.GetProperty("entity_kind").GetString() == "ui_element") == 2, "path clipping does not discard valid capture texts");
+    using var bounds = JsonDocument.Parse(deepFacts[0].GetProperty("value").GetString()!);
+    Assert(bounds.RootElement.GetProperty("max_depth").GetInt32() == 48, "diagnostics expose measured depth setting");
+    Assert(bounds.RootElement.GetProperty("max_path_length").GetInt32() == 128, "diagnostics expose contract path bound");
+    Assert(bounds.RootElement.GetProperty("max_nodes").GetInt32() == 2500 && bounds.RootElement.GetProperty("max_texts").GetInt32() == 80 && bounds.RootElement.GetProperty("budget_ms").GetInt32() == 15, "other traversal budgets unchanged");
+}
+
 var diagnosticCapture = new UiCapture { PanelsAvailable = 33, StopReason = "panel_limit", ElapsedMs = 15.1 };
 for (var i = 0; i < 32; i++)
     diagnosticCapture.Panels.Add(new UiPanelDiagnostics { panel_index = i, visited_nodes = 70,

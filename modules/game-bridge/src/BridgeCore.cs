@@ -32,11 +32,36 @@ public sealed class UiPanelDiagnostics
     public int empty_text_nodes { get; set; }
     public int emitted_texts { get; set; }
     public int depth_skipped { get; set; }
+    public int path_limit_skipped { get; set; }
     public int child_limit_skipped { get; set; }
     public int pending_nodes { get; set; }
     public double elapsed_ms { get; set; }
     public string stop_reason { get; set; } = "complete";
-    public bool truncated => stop_reason != "complete" || depth_skipped > 0 || child_limit_skipped > 0;
+    public bool truncated => stop_reason != "complete" || depth_skipped > 0 || path_limit_skipped > 0 || child_limit_skipped > 0;
+}
+
+// Literal UI hierarchy paths only: never hash/shorten them into apparent stable IDs.
+internal static class UiTraversalBounds
+{
+    public const int MaximumDepth = 48;
+    public const int MaximumPathLength = 128;
+
+    // Reject before fetching the child object. A skipped root may have descendants;
+    // counters count skipped roots, not an estimated number of missing text values.
+    public static bool TryChildPath(string parentPath, int parentDepth, int childIndex,
+        UiPanelDiagnostics diagnostics, out string childPath)
+    {
+        childPath = "";
+        if (parentDepth >= MaximumDepth) { diagnostics.depth_skipped++; return false; }
+        var suffix = "/" + childIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (parentPath.Length + suffix.Length > MaximumPathLength)
+        {
+            diagnostics.path_limit_skipped++;
+            return false;
+        }
+        childPath = parentPath + suffix;
+        return true;
+    }
 }
 
 public static class ObservationFactory
@@ -49,7 +74,7 @@ public static class ObservationFactory
     {
         if (texts.Count > 120 || (texts.Count == 0 && texts is not UiCapture))
             throw new ArgumentOutOfRangeException(nameof(texts));
-        if (texts.Any(t => string.IsNullOrWhiteSpace(t.Text) || t.Text.Length > 4000 || t.ElementId.Length > 128))
+        if (texts.Any(t => string.IsNullOrWhiteSpace(t.Text) || t.Text.Length > 4000 || t.ElementId.Length > UiTraversalBounds.MaximumPathLength))
             throw new ArgumentException("UI text must fit the observation contract.", nameof(texts));
         if (gameBuild?.Length > 128 || sessionId.Length > 128)
             throw new ArgumentException("Provenance values must be bounded.");
@@ -75,6 +100,7 @@ public static class ObservationFactory
                 visited_nodes = capture.Panels.Sum(p => p.visited_nodes),
                 elapsed_ms = capture.ElapsedMs, stop_reason = capture.StopReason, truncated = capture.Truncated,
                 captured_texts = texts.Count, max_texts = 80, max_nodes = 2500, budget_ms = 15,
+                max_depth = UiTraversalBounds.MaximumDepth, max_path_length = UiTraversalBounds.MaximumPathLength,
                 supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
                 visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"
             });

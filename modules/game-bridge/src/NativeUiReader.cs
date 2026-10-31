@@ -154,7 +154,6 @@ internal sealed partial class NativeUiReader : IDisposable
                 visited++;
                 diagnostics.visited_nodes++;
                 if (element == 0) continue;
-                if (depth > 28) { diagnostics.depth_skipped++; continue; }
                 if (!Visible(element, diagnostics)) continue;
                 diagnostics.visible_nodes++;
                 var type = objectClass(element);
@@ -183,7 +182,8 @@ internal sealed partial class NativeUiReader : IDisposable
                         diagnostics.pending_nodes += childIndex + 1;
                         break;
                     }
-                    stack.Push((At(element, childIndex), $"{path}/{childIndex}", depth + 1));
+                    if (!UiTraversalBounds.TryChildPath(path, depth, childIndex, diagnostics, out var childPath)) continue;
+                    stack.Push((At(element, childIndex), childPath, depth + 1));
                 }
                 if (diagnostics.stop_reason != "complete") break;
             }
