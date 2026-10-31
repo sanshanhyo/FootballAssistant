@@ -30,7 +30,7 @@ from .native_observers import NativeObserverReport, NativeObserverStore
 
 class CaptureProfileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    profile: Literal["schedule", "tactics", "current_page_attributes"]
+    profile: Literal["schedule", "tactics", "current_page_attributes", "next_match"]
 
 
 class ChatRequest(BaseModel):
@@ -225,7 +225,8 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         projection = prepared['schedule_projection']
         return dict(status=projection['status'] if projection else 'unavailable',
                     source='ui', partial=True, production_ready=False,
-                    schedule_projection=projection, provenance=prepared['provenance'],
+                    kind=('next_match' if projection and projection.get('kind') == 'next_match' else 'schedule'),
+                    schedule_complete=False, schedule_projection=projection, provenance=prepared['provenance'],
                     reasons=prepared['reasons'])
 
     @app.get("/v1/reader/tactics",dependencies=[Depends(authorized)])

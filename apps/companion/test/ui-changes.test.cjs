@@ -143,3 +143,13 @@ test('pet notices use short assistant-coach language without hiding uncertainty 
     if (kind === 'current_page_attributes') assert.match(notice.text, /不能当成同一个球员的变化/);
   }
 });
+
+test('next-match card uses its own baseline, never treats schedule switch as match event', () => {
+  const f = trackerFixture('next_match'); f.baseline();
+  assert.equal(f.observe('b'), null);
+  const notice = f.observe('b');
+  assert.match(notice.text, /这页的下一场/);
+  assert.match(notice.text, /还没确认这是你执教的球队/);
+  assert.equal(f.observe('c', { kind: 'schedule' }), null);
+  assert.equal(f.observe('c', { kind: 'schedule' }), null);
+});

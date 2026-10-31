@@ -6,6 +6,7 @@ import json
 from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, MAX_FACTS, MAX_UI_FACTS, MAX_DIAGNOSTIC_FACTS, _time
 from .business_advice import CAPABILITIES
 from football_assistant_data.schedule_projection import project_validated_schedule
+from football_assistant_data.next_match_projection import project_validated_next_match
 from football_assistant_data.tactics_projection import project_validated_tactics
 from football_assistant_data.current_page_attributes_projection import project_validated_current_page_attributes
 from football_assistant_data.ui_capture_scope import capture_path_scope, validate_evidence_path_scope
@@ -27,6 +28,7 @@ UI_INSTRUCTIONS = """
 只能引用 ui_evidence 中的原始文本，称为“UI 采样文本”，不能称为已验证球员/球队事实。
 仅当 schedule_projection.status=experimental_ui_schedule 时，可引用其明确映射的日期显示、对手、主客、赛事四列，称为“实验性 UI 赛程”。不得把其他相邻文本补成字段。
 此映射只覆盖输出行，不代表完整赛程；row_index 不是比赛或球队 ID。两位年份世纪与开球时间未知，不能补成 ISO 日期或声称完整拥挤程度/精确休息天数。
+当提供 next_match_projection 时，只能引用date_display、opponent_display、competition_display三个字段，称为“你这页的下一场”，并以“如果说的是它”给建议。它是当前查看俱乐部的卡片，不确认用户执教球队，不是完整赛程；不得补主客场、开球时间、体能或伤情。
 当提供 tactics_projection 时，只可引用 formation_display、style_display、mentality_display 三个显示字段，称为“实验性 UI 战术显示”。阵型描述不证明球员、位置职责、首发或指令；这些均未知而非为空。只给基于这三项的条件式建议，不补造未读取字段。
 页面名称未知；不能仅凭路径、相邻文本或标签数值顺序建立实体身份或属性关联。
 自然区分“UI 采样文本”“有条件的建议/推断”和缺少的信息，不必固定三段标题；简短引用已提供的来源、采样时间和 partial 限制。赛程模式未提供来源路径、采样时间及身份元数据时不得补造，只标注实验性 UI 与部分信息。
@@ -138,6 +140,11 @@ def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_a
             result['schedule_projection'] = project_validated_schedule(
                 all_texts, game=game, source=source, provenance=result['provenance'],
                 capture_text_sha256=fingerprint)
+            if result['schedule_projection']['status'] != 'experimental_ui_schedule':
+                next_match = project_validated_next_match(all_texts, game=game, source=source,
+                    provenance=result['provenance'], capture_text_sha256=fingerprint)
+                if next_match['status'] == 'experimental_ui_next_match':
+                    result['schedule_projection'] = next_match
         if capability == 'tactical_analysis':
             result['tactics_projection'] = project_validated_tactics(
                 all_texts, game=game, source=source, provenance=result['provenance'],

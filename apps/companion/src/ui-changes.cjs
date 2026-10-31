@@ -3,6 +3,7 @@
 // Pure, local-only display-change detector. No timers, requests, provider or game actions.
 // Scope hashes identify a capture layout, never a verified page/player/team identity.
 const TEXT = Object.freeze({
+  next_match: '这页的下一场比赛信息变了。如果你说的是这场，要一起想想怎么安排吗？我还没确认这是你执教的球队。',
   schedule: '赛程这页和刚才不一样了。我还拿不准是换了页面，还是赛程真有调整。要一起看看接下来的安排吗？',
   tactics: '战术这页和刚才不一样了。先核对一下阵型、风格和心态？光凭这页，我还拿不准场上会怎么踢。',
   current_page_attributes: '这页显示的属性变了。不过我还没弄清是谁的，不能当成同一个球员的变化。',

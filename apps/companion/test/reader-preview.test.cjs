@@ -144,3 +144,23 @@ test('unsupported endpoint is reachable service, not a network failure or unsupp
   const unsupportedPage = new RealReaderClient({ request: async () => envelope(spec, { status: 'unavailable' }) });
   assert.ok((await unsupportedPage.previews()).every(card => card.transport === 'connected' && card.statusReason === 'projection_unavailable'));
 });
+
+test('next-match preview keeps the strict three-display shape and leaves team and missing match facts unknown', () => {
+  const spec = PREVIEWS[0];
+  const response = { source: 'ui', partial: true, production_ready: false, status: 'experimental_ui_next_match', kind: 'next_match', schedule_complete: false,
+    provenance: { session_id: 'TEST-game', captured_at: new Date().toISOString() },
+    schedule_projection: { status: 'experimental_ui_next_match', kind: 'next_match', identity: null, managed_team: null, schedule_complete: false,
+      date_display: 'TEST-date', opponent_display: 'TEST-opponent', competition_display: 'TEST-competition', home_away_display: 'DO NOT DISPLAY', kickoff_time: 'DO NOT DISPLAY', raw_texts: { team: 'DO NOT DISPLAY' } } };
+  const card = previewCard(spec, response);
+  assert.equal(card.status, 'available'); assert.equal(card.kind, 'next_match'); assert.equal(card.scheduleComplete, false); assert.equal(card.identity, null);
+  assert.deepEqual(card.fields.filter(field => field.status === 'observed').map(field => field.value), ['TEST-date', 'TEST-opponent', 'TEST-competition']);
+  assert.equal(card.fields.filter(field => field.status === 'unknown' && field.value === null).length, 4);
+  assert.equal(JSON.stringify(card).includes('DO NOT DISPLAY'), false);
+  assert.match(card.metadata.limitations.join(), /不绑定你的球队/);
+  assert.match(card.metadata.limitations.join(), /完整赛程未知/);
+  for (const patch of [{ schedule_complete: true }, { kind: 'schedule' }, { provenance: null }]) {
+    assert.equal(previewCard(spec, { ...response, ...patch }).status, 'unknown');
+    assert.deepEqual(previewCard(spec, { ...response, ...patch }).fields, []);
+  }
+  assert.equal(previewCard(spec, { ...response, schedule_projection: { ...response.schedule_projection, managed_team: 'invented' } }).status, 'unknown');
+});

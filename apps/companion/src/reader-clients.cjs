@@ -100,6 +100,9 @@ function adviceCapability(message, explicit) {
     if (!BUSINESS_CAPABILITIES.includes(explicit)) throw new Error('不支持的业务建议能力。');
     return explicit;
   }
+  // Explicit match decisions need current schedule evidence even without “我的/当前”.
+  // Keep the match noun adjacent to the decision; “下场电影/放音乐” is not a game-data query.
+  if (/(?:这场友谊赛|(?:下场|下一场)(?:比赛|球赛|友谊赛)?)[\s，,：:]*(?:我们|咱们)?(?:要不要|该不该|需不需要|能不能|是不是|是否|可以|应该|该|要|能)?(?:先|直接|适当|大幅)?(?:轮换|怎么打|练新人|放(?:掉|弃|一放|一下)?(?=$|[\s？?。，,！!]|吗|呢|吧|还是))/.test(message)) return 'schedule_analysis';
   if (asksManagedTeam(message)) return 'player_info';
   if (!/我的|当前(?:存档|球队|阵容|球员|赛程|战术|页面|界面)|这(?:个球员|个页面|一页|页)|(?:看看|查看|分析)球队|给我引援建议|my (?:team|squad|save)|current save/i.test(message)) return null;
   if (/赛程|轮换|schedule|fixture|congestion/i.test(message)) return 'schedule_analysis';
@@ -115,17 +118,24 @@ const PREVIEWS = Object.freeze([
 ]);
 function previewCard(spec, envelope = {}, now = Date.now()) {
   const projection = envelope[spec.key];
+  const nextMatch = spec.id === 'schedule' && envelope.kind === 'next_match' && projection?.kind === 'next_match';
+  const expectedStatus = nextMatch ? 'experimental_ui_next_match' : spec.status;
+  const title = nextMatch ? '下一场卡片 · 仅当前页面' : spec.title;
   const captured = Date.parse(envelope.provenance?.captured_at);
   const age = now - captured;
   const reasons = Array.isArray(envelope.reasons) ? envelope.reasons : [];
   const stale = reasons.includes('stale_ui_snapshot') || (Number.isFinite(age) && age > 15_000);
   const available = !stale && age >= 0 && age <= 15_000 && envelope.source === 'ui' && envelope.synthetic !== true && projection?.synthetic !== true &&
-    envelope.production_ready === false && envelope.status === spec.status && projection?.status === spec.status;
+    envelope.production_ready === false && envelope.status === expectedStatus && projection?.status === expectedStatus && (!nextMatch || (envelope.schedule_complete === false && projection.identity === null && projection.managed_team === null));
   const status = stale ? 'stale' : available ? 'available' : 'unknown';
   const fields = [];
   const add = (label, value) => { if (fields.length < 100 && (typeof value === 'string' || typeof value === 'number')) fields.push({ label, value: String(value).slice(0, 400), status: 'observed' }); };
   if (available) {
-    if (spec.id === 'schedule') for (const [i, row] of (Array.isArray(projection.rows) ? projection.rows : []).slice(0, 20).entries()) {
+    if (nextMatch) {
+      for (const [key, label] of [['date_display', '日期显示'], ['opponent_display', '对手显示'], ['competition_display', '赛事显示']]) add(label, projection[key]);
+      for (const label of ['所属球队身份', '主客场', '开球时间', '完整赛程']) fields.push({ label, value: null, status: 'unknown' });
+    }
+    if (spec.id === 'schedule' && !nextMatch) for (const [i, row] of (Array.isArray(projection.rows) ? projection.rows : []).slice(0, 20).entries()) {
       for (const [key, label] of [['date_display','日期'], ['opponent_display','对手'], ['home_away_display','主客'], ['competition_display','赛事']]) add(`${i + 1} · ${label}`, row[key]);
     }
     if (spec.id === 'tactics') for (const [key, label] of [['formation_display','阵型显示'], ['style_display','风格显示'], ['mentality_display','心态显示']]) add(label, projection[key]);
@@ -134,11 +144,12 @@ function previewCard(spec, envelope = {}, now = Date.now()) {
       for (const group of (Array.isArray(projection.groups) ? projection.groups : []).slice(0, 5)) for (const row of (Array.isArray(group.rows) ? group.rows : []).slice(0, 50)) add(`${String(group.category_display).slice(0, 60)} · ${String(row.label_display).slice(0, 60)}`, row.value);
     }
   }
-  return { id: spec.id, title: spec.title, status, fields, identity: null, metadata: {
-    source: 'ui', sourceLabel: spec.title, sessionId: envelope.provenance?.session_id ?? null,
+  return { id: spec.id, title, status, fields, identity: null, ...(nextMatch ? { kind: 'next_match', scheduleComplete: false } : {}), metadata: {
+    source: 'ui', sourceLabel: title, sessionId: envelope.provenance?.session_id ?? null,
     sampledAt: envelope.provenance?.captured_at ?? null, partial: true, synthetic: false,
     freshness: status === 'available' ? 'current' : status, limitations: [
       '仅本机 UI 预览，不代表后台全量事实；不会自动调用模型。',
+      ...(nextMatch ? ['仅俱乐部概况中下一场卡片的三项显示；所属球队身份未知，不绑定你的球队。', '主客场、开球时间与完整赛程未知，不能据此计算赛程密度。'] : []),
       ...(spec.id === 'current-page-attributes' ? ['身份未知，不绑定任何球员，不用于个体建议。'] : []),
       ...(Array.isArray(projection?.limitations) ? projection.limitations : []), ...reasons,
     ],
@@ -174,7 +185,7 @@ class RealReaderClient {
     return { metadata: meta, readiness: envelope, cards: fields.length ? [{ id: snapshot.snapshot_id, title: '已读取业务事实', metadata: meta, fields }] : [] };
   }
   async setCaptureProfile(profile, { signal } = {}) {
-    if (!['schedule', 'current_page_attributes', 'tactics'].includes(profile)) throw new Error('不支持的页面读取类型。');
+    if (!['schedule', 'current_page_attributes', 'tactics', 'next_match'].includes(profile)) throw new Error('不支持的页面读取类型。');
     return this.request('/v1/reader/capture-profile', { profile }, { signal, timeoutMs: 5_000 });
   }
   async captureProfileStatus({ signal } = {}) {

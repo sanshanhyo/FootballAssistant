@@ -17,13 +17,13 @@ function fixture() {
 test('fixed profile client validates names and only sends profile to the authenticated control route', async () => {
   const calls = [];
   const client = new RealReaderClient({ request: async (...args) => { calls.push(args); return {}; } });
-  for (const profile of ['schedule', 'current_page_attributes', 'tactics']) await client.setCaptureProfile(profile);
+  for (const profile of ['schedule', 'current_page_attributes', 'tactics', 'next_match']) await client.setCaptureProfile(profile);
   for (const value of ['../root', 'focus=/secret', {}, '']) await assert.rejects(client.setCaptureProfile(value), /不支持/);
   await client.captureProfileStatus();
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.ok(calls.every(call => call[0] === '/v1/reader/capture-profile'));
-  assert.deepEqual(calls.slice(0, 3).map(call => call[1]), [{ profile: 'schedule' }, { profile: 'current_page_attributes' }, { profile: 'tactics' }]);
-  assert.equal(calls[3][1], undefined);
+  assert.deepEqual(calls.slice(0, 4).map(call => call[1]), [{ profile: 'schedule' }, { profile: 'current_page_attributes' }, { profile: 'tactics' }, { profile: 'next_match' }]);
+  assert.equal(calls[4][1], undefined);
 });
 test('applied alone is not success: fresh ready scope confirmation precedes preview fetch', async () => {
   const f = fixture(); await tick(); const before = f.reads();
@@ -87,4 +87,16 @@ test('unconfigured control response stays explicit rather than waiting forever o
   await f.runtime.setCaptureProfile('tactics'); await tick();
   assert.equal(f.runtime.state().captureRequest.status, 'unavailable');
   await f.runtime.close();
+});
+
+test('next_match control reuses readiness confirmation without claiming a full schedule', async () => {
+  const f = fixture(); await tick();
+  await f.runtime.setCaptureProfile('next_match'); await tick();
+  assert.equal(f.runtime.state().captureRequest.profile, 'next_match');
+  assert.equal(f.runtime.state().captureRequest.status, 'pending');
+  f.status({ status: 'applied' }); await f.runtime.refreshReaderPreviews();
+  assert.equal(f.runtime.state().captureRequest.status, 'applied');
+  f.status({ status: 'ready' }); await f.runtime.refreshReaderPreviews();
+  assert.equal(f.runtime.state().captureRequest.status, 'ready');
+  assert.deepEqual(f.writes, ['next_match']); await f.runtime.close();
 });

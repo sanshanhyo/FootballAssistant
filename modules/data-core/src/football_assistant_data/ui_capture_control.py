@@ -11,8 +11,9 @@ from .display_profile import GAME_BUILD
 from .schedule_projection import FOCUS_ROOT as SCHEDULE_ROOT
 from .current_page_attributes_projection import FOCUS_ROOT as ATTRIBUTES_ROOT
 from .tactics_projection import PANEL_ROOT
+from .next_match_projection import FOCUS_ROOT as NEXT_MATCH_ROOT
 
-PROFILES = {'schedule': SCHEDULE_ROOT, 'current_page_attributes': ATTRIBUTES_ROOT, 'tactics': PANEL_ROOT}
+PROFILES = {'schedule': SCHEDULE_ROOT, 'current_page_attributes': ATTRIBUTES_ROOT, 'tactics': PANEL_ROOT, 'next_match': NEXT_MATCH_ROOT}
 
 
 def _time(value):

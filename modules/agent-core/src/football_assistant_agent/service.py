@@ -85,9 +85,9 @@ class AgentService:
                     "source_status": "ui_unavailable", "reply": "当前没有可用的新鲜 UI 文本。请打开相关游戏页面后重新提问。"}
         if prepared["status"] != "ready":
             return blocked(prepared)
-        if capability == "schedule_analysis" and (prepared.get("schedule_projection") or {}).get("status") != "experimental_ui_schedule":
+        if capability == "schedule_analysis" and (prepared.get("schedule_projection") or {}).get("status") not in ("experimental_ui_schedule", "experimental_ui_next_match"):
             return {**blocked(prepared), "reasons": ["schedule_profile_unavailable"],
-                    "reply": "当前采样不匹配已支持的中文赛程布局，未发送任何 UI 文本给模型。请打开赛程安排页后重新采样。"}
+                    "reply": "这场我还没确认准。请打开赛程安排页或俱乐部的下一场比赛卡，再点对应的读取按钮。这次没有向模型发送 UI 文本。"}
         if capability == "tactical_analysis" and (prepared.get("tactics_projection") or {}).get("status") != "experimental_ui_tactics":
             return {**blocked(prepared), "reasons": ["tactics_profile_unavailable"],
                     "reply": "当前采样不匹配已支持的中文战术布局，未发送任何 UI 文本给模型。请打开战术页后重新采样。"}
@@ -107,6 +107,11 @@ class AgentService:
                     "来源路径、采样时间和身份元数据仅保留在本地，未提供给模型；不得编造。",
                 ],
             }
+        if (prepared.get("schedule_projection") or {}).get("status") == "experimental_ui_next_match":
+            from football_assistant_data.next_match_projection import DISPLAY_FIELDS as NEXT_FIELDS, LIMITATIONS as NEXT_LIMITATIONS
+            model_evidence = {"next_match_projection": {
+                key: prepared["schedule_projection"][key] for key in NEXT_FIELDS},
+                "limitations": list(NEXT_LIMITATIONS)}
         if capability == "tactical_analysis":
             model_evidence = {
                 "tactics_projection": {key: prepared["tactics_projection"][key] for key in DISPLAY_FIELDS},

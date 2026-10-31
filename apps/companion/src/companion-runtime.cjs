@@ -98,7 +98,7 @@ class CompanionRuntime extends EventEmitter {
   }
   cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
   async setCaptureProfile(profile) {
-    if (!['schedule', 'current_page_attributes', 'tactics'].includes(profile)) throw new Error('不支持的页面读取类型。');
+    if (!['schedule', 'current_page_attributes', 'tactics', 'next_match'].includes(profile)) throw new Error('不支持的页面读取类型。');
     if (this.mode !== 'real' || typeof this.realClient.setCaptureProfile !== 'function') throw new Error('请先连接真实本机服务。');
     if (this.captureController) return this.state(); // One write at a time; repeated clicks do not queue.
     this.previewController?.abort(); this.previewController = null;

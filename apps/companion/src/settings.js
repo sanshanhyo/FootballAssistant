@@ -156,15 +156,23 @@
         element.firstChild.textContent = '未知 · 服务版本不支持此预览接口';
         element.append(node('p', 'muted', card.error || '请更新本机服务。'));
       }
-      const read = node('button', 'secondary-button', '读取当前页');
-      read.dataset.captureProfile = spec.profile;
       const request = state.captureRequest;
-      read.disabled = synthetic || request?.status === 'requesting' || (request?.profile === spec.profile && ['pending', 'applied'].includes(request.status));
-      read.addEventListener('click', () => perform(() => api.setCaptureProfile(spec.profile)));
-      element.append(read);
-      if (request?.profile === spec.profile) {
+      const controls = [{ profile: spec.profile, label: '读取当前页' }];
+      if (spec.id === 'schedule') {
+        controls.push({ profile: 'next_match', label: '读取下一场卡片' });
+        element.append(node('p', 'muted', '读取当前页：先打开赛程安排。读取下一场卡片：先打开俱乐部概况；仅日期、对手、赛事三项，不是完整赛程，也不确认你执教的球队。'));
+      }
+      for (const control of controls) {
+        const read = node('button', 'secondary-button', control.label);
+        read.dataset.captureProfile = control.profile;
+        read.disabled = synthetic || request?.status === 'requesting' || (request?.profile === control.profile && ['pending', 'applied'].includes(request.status));
+        read.addEventListener('click', () => perform(() => api.setCaptureProfile(control.profile)));
+        element.append(read);
+      }
+      if (controls.some(control => request?.profile === control.profile)) {
         const label = { requesting: '正在提交读取请求…', pending: '请求已提交，等待采样范围应用…', applied: '采样范围已应用，等待当前页的新鲜内容…', ready: '已确认：采样范围已应用，当前页内容新鲜。', failed: '读取请求失败；未确认生效。', unavailable: '读取暂不可用；未确认生效。', not_configured: '本机 Reader 控制未配置；未确认生效。' }[request.status] || '读取状态未知';
-        const feedback = node('p', 'muted', request.reason ? `${label} ${request.reason}` : label);
+        const target = request.profile === 'next_match' ? '下一场卡片 · ' : '';
+        const feedback = node('p', 'muted', target + (request.reason ? `${label} ${request.reason}` : label));
         feedback.setAttribute('role', 'status'); element.append(feedback);
       }
       previews.append(element);

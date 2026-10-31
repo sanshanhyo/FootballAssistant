@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from .schedule_projection import project_validated_schedule
+from .next_match_projection import project_validated_next_match, DISPLAY_FIELDS as NEXT_FIELDS
 from .tactics_projection import project_validated_tactics
 from .current_page_attributes_projection import project_validated_current_page_attributes
 
@@ -31,6 +32,9 @@ def project_validated_ui_change_preview(texts, *, game, source, provenance, capt
         # A row's capture coordinate and a display-only row reorder are not changes.
         rows = sorted(tuple(row[key] for key in keys) for row in schedule['rows'])
         matches.append(('schedule', schedule['profile_id'], rows))
+    next_match = project_validated_next_match(texts, **arguments)
+    if next_match['status'] == 'experimental_ui_next_match':
+        matches.append(('next_match', next_match['profile_id'], {key: next_match[key] for key in NEXT_FIELDS}))
     tactics = project_validated_tactics(texts, **arguments)
     if tactics['status'] == 'experimental_ui_tactics':
         display = {key: tactics[key] for key in ('formation_display', 'style_display', 'mentality_display')}
