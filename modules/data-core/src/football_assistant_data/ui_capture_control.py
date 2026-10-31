@@ -107,6 +107,9 @@ class UiCaptureController:
     def __init__(self, root=None, *, files=None):
         # root is server-owned, never accepted by an HTTP request.
         self.root = root
+        if files is None and os.name == 'nt':
+            from .windows_capture_files import WindowsCaptureFiles
+            files = WindowsCaptureFiles()
         self.files = files if files is not None else PosixCaptureFiles()
         self.lock = threading.Lock()
         self.request = None

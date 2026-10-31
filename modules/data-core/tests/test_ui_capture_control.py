@@ -224,10 +224,13 @@ def test_server_configuration_never_discovers_private_root(monkeypatch):
 
 def test_unsupported_platform_rejects_before_filesystem_access(tmp_path, monkeypatch):
     from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    from football_assistant_data.windows_capture_files import WindowsCaptureFiles
     monkeypatch.setattr(PosixCaptureFiles, 'supported', False)
+    monkeypatch.setattr(WindowsCaptureFiles, 'supported', False)
     def forbidden(*args, **kwargs):
         pytest.fail('unsupported platform must not open even a reparse/link path')
     monkeypatch.setattr(PosixCaptureFiles, 'directory', forbidden)
+    monkeypatch.setattr(WindowsCaptureFiles, 'directory', forbidden)
     result = UiCaptureController(tmp_path).access(focused_snapshot(), 'tactics', now=NOW)
     assert result == dict(status='unavailable', reason='unsupported_platform', profile=None, sequence=None)
     assert UiCaptureController(None).access({}, 'schedule')['status'] == 'not_configured'
@@ -235,7 +238,9 @@ def test_unsupported_platform_rejects_before_filesystem_access(tmp_path, monkeyp
 
 def test_authenticated_api_exposes_unsupported_platform(tmp_path, monkeypatch):
     from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    from football_assistant_data.windows_capture_files import WindowsCaptureFiles
     monkeypatch.setattr(PosixCaptureFiles, 'supported', False)
+    monkeypatch.setattr(WindowsCaptureFiles, 'supported', False)
     settings = Settings(data_dir=tmp_path, runtime_file=tmp_path / 'runtime.json', token='test', bridge_private_root=tmp_path)
     with TestClient(create_app(settings, enable_agent=False), base_url='http://127.0.0.1') as client:
         headers = {'Authorization': 'Bearer test'}
