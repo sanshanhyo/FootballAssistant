@@ -162,3 +162,47 @@ def test_bridge_root_is_explicit_and_can_be_persisted_in_env_config(clean_env, m
     link = tmp_path / 'linked'
     link.symlink_to(configured)
     assert launcher.launch_environment(bridge_private_root=str(link))['FOOTBALL_ASSISTANT_PRIVATE_ROOT'] == str(link)
+
+
+def test_double_click_mvp_entry_reuses_frozen_launcher_without_game_or_secrets():
+    entry = ROOT / 'scripts' / 'MVP.command'
+    text = entry.read_text(encoding='utf-8')
+    assert 'uv run --frozen --extra save --extra agent python scripts/run_mvp.py "$@"' in text
+    assert 'launch_isolated.py' not in text and '--launch' not in text
+    assert 'API_KEY' not in text and 'runtime.json' not in text
+    assert '此入口不启动或修改游戏' in text
+
+
+def test_missing_model_configuration_warns_without_printing_status_secrets(clean_env, monkeypatch, tmp_path, capsys):
+    import json
+    from football_assistant_data.reader_client import ReaderClient
+    selected = tmp_path / 'runtime.json'
+    selected.write_text(json.dumps({'base_url': 'http://127.0.0.1:17827', 'token': 'TEST-private-token'}))
+    monkeypatch.setattr(ReaderClient, 'get', lambda *args: {'modelConfigured': False, 'unexpected_secret': 'TEST-DO-NOT-PRINT'})
+    launcher.verify_runtime('http://127.0.0.1:17827/health', launcher.launch_environment(str(selected)))
+    output = capsys.readouterr()
+    assert '模型尚未配置' in output.err
+    assert 'TEST-DO-NOT-PRINT' not in output.err and 'TEST-private-token' not in output.err
+
+
+def test_double_click_wrapper_uses_project_cwd_and_arguments_without_launching_real_services(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    zsh = shutil.which('zsh')
+    if not zsh:
+        pytest.skip('zsh is needed only for the macOS wrapper test')
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    uv = bin_dir / 'uv'
+    uv.write_text('#!/bin/sh\nprintf "TEST_CWD=%s\\n" "$PWD"\nprintf "TEST_ARG=%s\\n" "$@"\n')
+    uv.chmod(0o700)
+    result = subprocess.run([zsh, str(ROOT / 'scripts/MVP.command'), '--check'], cwd=tmp_path,
+        env={**os.environ, 'PATH': str(bin_dir), 'HOME': str(tmp_path)}, text=True, capture_output=True, check=True)
+    assert f'TEST_CWD={ROOT}' in result.stdout
+    assert 'TEST_ARG=scripts/run_mvp.py' in result.stdout
+    assert 'TEST_ARG=--check' in result.stdout
+    assert 'TEST_ARG=--launch' not in result.stdout
+    uv.unlink()
+    result = subprocess.run([zsh, str(ROOT / 'scripts/MVP.command')], cwd=tmp_path,
+        env={**os.environ, 'PATH': str(bin_dir), 'HOME': str(tmp_path)}, text=True, capture_output=True)
+    assert result.returncode == 1 and '需要先安装 uv' in result.stderr

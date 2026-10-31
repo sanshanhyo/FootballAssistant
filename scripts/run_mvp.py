@@ -130,7 +130,9 @@ def verify_runtime(url: str, environment: dict[str, str]) -> None:
             raise ValueError("Runtime address does not match configured backend")
         if not isinstance(value.get("token"), str) or len(value["token"]) < 16:
             raise ValueError("Invalid runtime token")
-        ReaderClient(runtime_file, timeout=1.5).get("/v1/status")
+        status = ReaderClient(runtime_file, timeout=1.5).get("/v1/status")
+        if isinstance(status, dict) and status.get("modelConfigured") is False:
+            print("本机服务已连接，但模型尚未配置；请在本机 .env 配置服务地址、模型名和密钥后重启后端。此时不能生成建议。", file=sys.stderr)
     except (OSError, ValueError, TypeError, AttributeError, ReaderError):
         raise RuntimeError(
             "The selected runtime file is missing, invalid, or cannot authenticate to the configured backend. "
@@ -265,6 +267,10 @@ def main() -> int:
         print(required_items(app_path, url)[0] if shutil.which("uv") is not None else "Desktop package is missing.", file=sys.stderr)
         return 1
 
+    if not environment.get("FOOTBALL_ASSISTANT_PRIVATE_ROOT"):
+        print("此启动环境未配置 FOOTBALL_ASSISTANT_PRIVATE_ROOT；新启动的后端无法控制页面读取。请填写已准备好的本机桥接目录；不会自动安装或启动游戏。", file=sys.stderr)
+    if sys.platform == "win32":
+        print("Windows 桌宠仅有 UI 验证；当前游戏页面采集控制不受支持，不代表端到端游戏读取可用。", file=sys.stderr)
     try:
         launch_backend(url, environment)
         launch_companion(app_path, environment)
