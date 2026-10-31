@@ -7,6 +7,7 @@ from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION,
 from .business_advice import CAPABILITIES
 from football_assistant_data.schedule_projection import project_validated_schedule
 from football_assistant_data.tactics_projection import project_validated_tactics
+from football_assistant_data.current_page_attributes_projection import project_validated_current_page_attributes
 from football_assistant_data.ui_capture_scope import capture_path_scope, validate_evidence_path_scope
 
 MAX_EVIDENCE_CHARACTERS = 16_000  # Sum of literal path + text lengths, whole entries only.
@@ -35,7 +36,7 @@ UI_INSTRUCTIONS = """
 """
 
 
-def prepare_ui_advice(capability, snapshot, *, now=None):
+def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_attributes=False):
     if capability not in CAPABILITIES:
         raise ValueError('unsupported business capability')
     result = dict(status='blocked', mode='ui_evidence', source='ui', partial=True,
@@ -43,6 +44,9 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
                   evidence_budget=None, capture_text_sha256=None, schedule_projection=None, tactics_projection=None,
                   page={'name': None, 'scope': 'current_ui_capture', 'verified': False, 'visibility': 'unknown', 'cached_elements_possible': True},
                   limitations=list(LIMITATIONS), reasons=[], provenance=None)
+    # Reader-only opt-in. Default advice payloads must not acquire this projection.
+    if _preview_current_page_attributes:
+        result['current_page_attributes'] = None
     try:
         def require(condition, reason):
             if not condition:
@@ -135,6 +139,21 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
             result['tactics_projection'] = project_validated_tactics(
                 all_texts, game=game, source=source, provenance=result['provenance'],
                 capture_text_sha256=fingerprint)
+        if _preview_current_page_attributes:
+            result['current_page_attributes'] = project_validated_current_page_attributes(
+                all_texts, game=game, source=source, provenance=result['provenance'],
+                capture_text_sha256=fingerprint)
     except (ValueError, TypeError, AttributeError) as error:
         result['reasons'] = [str(error) if isinstance(error, ValueError) else 'invalid_ui_snapshot']
     return result
+
+
+def prepare_current_page_attributes(snapshot, *, now=None):
+    """Authenticated reader route's local preview; never an Agent/model input."""
+    prepared = prepare_ui_advice('player_info', snapshot, now=now, _preview_current_page_attributes=True)
+    projection = prepared['current_page_attributes']
+    return dict(status=projection['status'] if projection else 'unavailable',
+                identity=None, source='ui', partial=True, production_ready=False,
+                business_identity_known=False, individual_advice_allowed=False,
+                current_page_attributes=projection, provenance=prepared['provenance'],
+                reasons=prepared['reasons'])

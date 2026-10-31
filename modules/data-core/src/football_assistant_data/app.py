@@ -214,6 +214,12 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                     tactics_projection=projection, provenance=prepared['provenance'],
                     reasons=prepared['reasons'])
 
+    @app.get("/v1/reader/current-page-attributes",dependencies=[Depends(authorized)])
+    async def reader_current_page_attributes():
+        # No player binding, model configuration, budget or provider access.
+        from football_assistant_agent.ui_advice import prepare_current_page_attributes
+        return prepare_current_page_attributes(app.state.observations.reader_snapshot(0, MAX_FACTS))
+
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
         try:

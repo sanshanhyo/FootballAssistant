@@ -239,3 +239,28 @@ identities or capture provenance. Routing uses a fresh random identifier. Advice
 is conditional and partial; visibility, team identity and native tactical
 entities are not established. Fixtures test the profile without provider traffic;
 this implementation is not a new live-game acceptance claim.
+
+### Identity-free current-page attribute preview
+
+Authenticated `GET /v1/reader/current-page-attributes` is a model-free local preview,
+including in reader-only mode. It reuses the fresh, non-synthetic, matching
+session/event/full-capture UI gate and pins the FM27 build/platform and explicit
+`panel0/0/6` focus layout. It does not modify `/v1/reader/profile`, business player
+records, native readiness or the default `player_info` model payload.
+
+The result retains `identity=null`, `business_identity_known=false`,
+`individual_advice_allowed=false`, `partial=true`, `production_ready=false`.
+`current_page_attributes.groups` contains only exact same-capture category/row
+label-value associations. Labels must match the observed per-category display whitelist (including the
+exact Chinese parentheses in goalkeeper tendency labels), not canonical
+business attribute keys; ratings must display canonical integers 1–20. Only
+U+200B is removed, with raw matched strings and field paths retained locally.
+Three fixed category anchors are required; malformed values, duplicate paths or
+labels and unsupported layouts fail closed. Incomplete row pairs are not filled;
+`missing_rows_unknown=true` and `rows_complete=false` never claim complete lists.
+Row indices 0–31 are a safety bound, not an expected number of attributes.
+
+Neither a category such as goalkeeper nor a name seen in another capture binds
+these rows to a player. No historical joining, navigation-name caching, player ID,
+individual advice or provider call is added. Unrelated raw UI text is not included
+in this endpoint. Capture digests detect content changes only, never identity.
