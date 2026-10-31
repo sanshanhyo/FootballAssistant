@@ -252,7 +252,7 @@ The result retains `identity=null`, `business_identity_known=false`,
 `individual_advice_allowed=false`, `partial=true`, `production_ready=false`.
 `current_page_attributes.groups` contains only exact same-capture category/row
 label-value associations. Labels must match the observed per-category display whitelist (including the
-exact Chinese parentheses in goalkeeper tendency labels), not canonical
+exact ASCII parentheses in goalkeeper tendency labels), not canonical
 business attribute keys; ratings must display canonical integers 1–20. Only
 U+200B is removed, with raw matched strings and field paths retained locally.
 Three fixed category anchors are required; malformed values, duplicate paths or

@@ -15,7 +15,7 @@ COMMON_PREFIX = 'focus/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0'
 LABEL_SUFFIX = '/0/0/0/0/0/0/0/0/0'
 VALUE_SUFFIX = '/0/0/0/0/0/0/1/1/0/0/0/0/0/0'
 CATEGORIES = {
-    'goalkeeper': dict(labels=('出击（倾向）', '传球', '大脚开球', '反应', '拦截传中', '拳击球（倾向）', '手控球', '手抛球', '停球', '一对一', '意外性', '指挥防守', '制空范围'), title='守门', title_path=COMMON_PREFIX + '/0/0/0', row_prefix=COMMON_PREFIX + '/0/0/2/0/0/0/'),
+    'goalkeeper': dict(labels=('出击(倾向)', '传球', '大脚开球', '反应', '拦截传中', '拳击球(倾向)', '手控球', '手抛球', '停球', '一对一', '意外性', '指挥防守', '制空范围'), title='守门', title_path=COMMON_PREFIX + '/0/0/0', row_prefix=COMMON_PREFIX + '/0/0/2/0/0/0/'),
     'mental': dict(labels=('才华', '防守站位', '工作投入', '集中', '决断', '领导力', '侵略性', '视野', '团队合作', '无球跑动', '意志力', '勇敢', '预判', '镇定'), title='精神', title_path=COMMON_PREFIX + '/1/0/0', row_prefix=COMMON_PREFIX + '/1/0/2/0/0/0/'),
     'physical': dict(labels=('爆发力', '弹跳', '灵活', '耐力', '平衡', '强壮', '速度', '体质'), title='身体', title_path=COMMON_PREFIX + '/2/0/0/0', row_prefix=COMMON_PREFIX + '/2/0/0/2/0/0/0/'),
 }

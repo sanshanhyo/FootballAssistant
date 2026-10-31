@@ -245,7 +245,7 @@ def test_projection_digest_changes_with_current_values_without_identity_binding(
     assert result['identity'] is None
 
 
-@pytest.mark.parametrize('label', ['出击（倾向）', '拳击球（倾向）'])
+@pytest.mark.parametrize('label', ['出击(倾向)', '拳击球(倾向)'])
 def test_confirmed_goalkeeper_parentheses_labels_preserve_exact_display(label):
     data = attributes_snapshot()
     raw = label[0] + '\u200b' + label[1:]
@@ -257,7 +257,7 @@ def test_confirmed_goalkeeper_parentheses_labels_preserve_exact_display(label):
     assert result['identity'] is None
 
 
-@pytest.mark.parametrize('label', ['出击(倾向)', '拳击球(倾向)', '出击', '未知属性', '决断'])
+@pytest.mark.parametrize('label', ['出击（倾向）', '拳击球（倾向）', '出击', '未知属性', '决断'])
 def test_unconfirmed_or_wrong_category_labels_fail_closed(label):
     data = attributes_snapshot(); edit(data, row_path(suffix=LABEL), label)
     assert_unavailable(preview(data))
@@ -274,7 +274,7 @@ def test_confirmed_zero_width_category_titles_match_without_other_normalization(
 
 def test_all_confirmed_labels_are_display_only_and_never_assert_complete_coverage():
     confirmed = {
-        'goalkeeper': ('出击（倾向）', '传球', '大脚开球', '反应', '拦截传中', '拳击球（倾向）', '手控球', '手抛球', '停球', '一对一', '意外性', '指挥防守', '制空范围'),
+        'goalkeeper': ('出击(倾向)', '传球', '大脚开球', '反应', '拦截传中', '拳击球(倾向)', '手控球', '手抛球', '停球', '一对一', '意外性', '指挥防守', '制空范围'),
         'mental': ('才华', '防守站位', '工作投入', '集中', '决断', '领导力', '侵略性', '视野', '团队合作', '无球跑动', '意志力', '勇敢', '预判', '镇定'),
         'physical': ('爆发力', '弹跳', '灵活', '耐力', '平衡', '强壮', '速度', '体质'),
     }
