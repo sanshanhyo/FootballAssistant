@@ -51,7 +51,7 @@ def test_rechecks_game_running_expired_and_changed_payload(tmp_path, monkeypatch
     monkeypatch.setattr(bridge,'running_game',lambda:False)
     monkeypatch.setattr(bridge,'validate_payload',lambda path:'different')
     with pytest.raises(bridge.SetupError,match='payload_changed'):manager.deploy(plan['planId'],True)
-    file=manager.root/'plans'/f"{plan['planId']}.json";value=json.loads(file.read_text());value['createdAt']=0;file.write_text(json.dumps(value))
+    file=manager.root/'plans'/f"{plan['planId']}.json";value=json.loads(file.read_text(encoding="utf-8"));value['createdAt']=0;file.write_text(json.dumps(value))
     with pytest.raises(bridge.SetupError,match='expired_plan'):manager.deploy(plan['planId'],True)
 
 def test_failure_cleans_only_fresh_instance(tmp_path,monkeypatch):

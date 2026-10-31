@@ -7,7 +7,7 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import plistlib
 import re
@@ -84,8 +84,8 @@ def validate_payload(payload):
     files = manifest.get('files')
     if not isinstance(files, dict) or not 1 <= len(files) <= 2000: raise SetupError('payload_invalid')
     for relative, expected in files.items():
-        rel = Path(relative)
-        if rel.is_absolute() or '..' in rel.parts or not isinstance(expected, str) or not re.fullmatch(r'[a-f0-9]{64}', expected): raise SetupError('payload_invalid')
+        rel = PurePosixPath(relative)
+        if rel.is_absolute() or '..' in rel.parts or '\\' in relative or ':' in relative or not isinstance(expected, str) or not re.fullmatch(r'[a-f0-9]{64}', expected): raise SetupError('payload_invalid')
         file = ordinary(payload / rel)
         if file.resolve() != file or not file.is_relative_to(payload) or digest(file) != expected: raise SetupError('payload_hash_mismatch')
     # The existing preparer copies every file in these directories; extras cannot sneak in.
@@ -95,7 +95,7 @@ def validate_payload(payload):
         if not root.is_dir(): raise SetupError('payload_incomplete')
         for file in root.iterdir():
             ordinary(file)
-            if str(file.relative_to(payload)) not in files: raise SetupError('payload_unlisted_file')
+            if file.relative_to(payload).as_posix() not in files: raise SetupError('payload_unlisted_file')
     for required in ['libdoorstop.dylib', 'FootballAssistant.GameBridge.dll', 'runtime/libcoreclr.dylib']:
         if required not in files: raise SetupError('payload_incomplete')
     return digest(payload / 'payload.json')

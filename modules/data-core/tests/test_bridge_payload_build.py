@@ -13,7 +13,7 @@ builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 def test_payload_urls_and_archive_paths_fail_closed(tmp_path):
     for url in ['http://github.com/test','https://evil.example/file','https://user:pass@github.com/file']:
         with pytest.raises(ValueError):builder.trusted_url(url)
-    for path in ['../escape','/absolute']:
+    for path in ['../escape','/absolute',r'C:\absolute',r'..\escape','C:relative']:
         with pytest.raises(ValueError):builder.put_bytes(tmp_path,path,b'fixture')
 
 def test_candidate_collects_notices_source_and_stays_unreviewed(tmp_path,monkeypatch):

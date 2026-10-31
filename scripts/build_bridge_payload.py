@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import tarfile
 import urllib.parse
@@ -43,8 +43,8 @@ def download(url, destination, expected, algorithm):
     finally:temporary.unlink(missing_ok=True)
 
 def put_bytes(root, relative, data, mode=0o644):
-    path=Path(relative)
-    if path.is_absolute() or '..' in path.parts: raise ValueError('Archive path traversal')
+    path=PurePosixPath(relative)
+    if path.is_absolute() or '..' in path.parts or '\\' in relative or ':' in relative: raise ValueError('Archive path traversal')
     destination=root/path;destination.parent.mkdir(parents=True,exist_ok=True)
     with destination.open('xb') as out:out.write(data)
     destination.chmod(mode & 0o777)
@@ -86,10 +86,10 @@ def build(plugin, output, cache):
         source_files = sorted((ROOT/'modules/game-bridge/src').glob('*.cs')) + [ROOT/'modules/game-bridge/FootballAssistant.DirectBridge.csproj', ROOT/'LICENSE']
         for file in source_files:
             if file.is_symlink() or not file.is_file(): raise ValueError('Unsafe bridge source file')
-            own_source.add(file, arcname=str(file.relative_to(ROOT)), recursive=False)
+            own_source.add(file, arcname=file.relative_to(ROOT).as_posix(), recursive=False)
     put_bytes(output,'sources/FootballAssistant-GameBridge-source.tar.gz',source_bytes.getvalue())
     put_bytes(output,'source-provenance.json',(json.dumps(lock,indent=2)+'\n').encode())
-    files={str(file.relative_to(output)):sha(file) for file in sorted(output.rglob('*')) if file.is_file()}
+    files={file.relative_to(output).as_posix():sha(file) for file in sorted(output.rglob('*')) if file.is_file()}
     manifest={'schema':1,'target':'darwin-arm64','entryMode':'direct','reviewed':False,'validation':'pending_isolated_game_acceptance','files':files,'sources':lock,'runtimeFiles':runtime_count}
     put_bytes(output,'payload.json',(json.dumps(manifest,indent=2)+'\n').encode())
     size=sum(file.stat().st_size for file in output.rglob('*') if file.is_file())
