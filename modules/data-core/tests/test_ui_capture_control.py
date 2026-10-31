@@ -1,5 +1,7 @@
 """Local fixture control only: no game, network provider or real private directory."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from threading import Lock
 from copy import deepcopy
 from datetime import timedelta
 import json
@@ -253,13 +255,56 @@ def test_authenticated_api_exposes_unsupported_platform(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.name != 'posix', reason='POSIX atomic write/flock integration test')
 def test_posix_real_adapter_atomic_write_and_cross_controller_lock(posix_control):
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
     c, _ = posix_control
+    file_errors, error_lock = [], Lock()
+
+    def record(stage, error):
+        # Fixture-only diagnostic: do not log file contents, paths or credentials.
+        with error_lock:
+            file_errors.append(dict(stage=stage, error=type(error).__name__, errno=getattr(error, 'errno', None)))
+
+    class TracedFiles(PosixCaptureFiles):
+        @contextmanager
+        def directory(self, path):
+            try:
+                with super().directory(path) as directory:
+                    yield directory
+            except Exception as error:
+                record('directory_enter_body_or_exit', error)
+                raise
+
+        @contextmanager
+        def locked(self, directory):
+            try:
+                with super().locked(directory):
+                    yield
+            except Exception as error:
+                record('lock_enter_body_or_exit', error)
+                raise
+
+        def read(self, directory, name, *, optional=False):
+            try:
+                return super().read(directory, name, optional=optional)
+            except Exception as error:
+                record('read:' + name, error)
+                raise
+
+        def write_request(self, directory, payload):
+            try:
+                return super().write_request(directory, payload)
+            except Exception as error:
+                record('write_request', error)
+                raise
+
+    files = TracedFiles()
     def write(_):
-        return UiCaptureController(c.root).access(focused_snapshot(), 'tactics', now=NOW)
+        return UiCaptureController(c.root, files=files).access(focused_snapshot(), 'tactics', now=NOW)
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(write, range(12)))
+    # Report the originating failure before sorting can mask it as None/int TypeError.
+    assert all(r['status'] == 'pending' for r in results), dict(results=results, file_errors=file_errors)
     assert sorted(r['sequence'] for r in results) == list(range(1, 13))
-    assert all(r['status'] == 'pending' for r in results)
     assert read_request(c)['sequence'] == 12
     assert (c.root / 'control/ui-capture.json').stat().st_mode & 0o777 == 0o600
     assert not list((c.root / 'control').glob('.ui-capture-*'))
