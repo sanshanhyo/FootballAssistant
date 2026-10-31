@@ -140,15 +140,14 @@ def test_fixed_control_profile_can_confirm_new_card_scope(tmp_path):
     from football_assistant_data.ui_capture_control import UiCaptureController
     from test_display_profile import STAMP
     from datetime import timedelta
-    (tmp_path / 'diagnostics').mkdir(); (tmp_path / 'control').mkdir()
-    host = dict(pid=321, session_id='TEST-session', managed_build_sha256='a' * 64)
-    (tmp_path / 'diagnostics/host-session.json').write_text(json.dumps(host))
-    controller = UiCaptureController(tmp_path)
+    from capture_control_fixture import memory_control
+    controller, host = memory_control()
+    root = controller.root
     response = controller.access(next_match_snapshot(), 'next_match', now=NOW - timedelta(seconds=1))
     assert response['status'] == 'pending'
-    request = json.loads((tmp_path / 'control/ui-capture.json').read_text())
+    request = json.loads((root / 'control/ui-capture.json').read_text())
     assert request['focus_path'] == FOCUS_ROOT
-    (tmp_path / 'diagnostics/ui-capture-status.json').write_text(json.dumps(dict(**host,
+    (root / 'diagnostics/ui-capture-status.json').write_text(json.dumps(dict(**host,
         applied_sequence=response['sequence'], focus_path=FOCUS_ROOT, focus_resolved=True, applied_at=NOW.isoformat())))
     fresh = json.loads(json.dumps(next_match_snapshot()).replace(STAMP, NOW.isoformat()))
     assert controller.access(fresh, now=NOW)['status'] == 'ready'

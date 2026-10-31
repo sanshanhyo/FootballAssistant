@@ -66,15 +66,53 @@ def _read(directory, name, *, optional=False):
         return value
 
 
+class PosixCaptureFiles:
+    """Production transport: no-follow directory descriptors and process-wide file lock.
+
+    No Windows fallback: portable exists()/resolve() checks cannot safely replace
+    descriptor-relative operations or reject all reparse-point races.
+    """
+    supported = os.name == 'posix'
+    directory = staticmethod(_directory)
+    read = staticmethod(_read)
+
+    @contextmanager
+    def locked(self, control):
+        import fcntl
+        lockfd = os.open('.ui-capture.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=control)
+        with os.fdopen(lockfd, 'rb') as lockfile:
+            info = os.fstat(lockfile.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError('unsafe_lock')
+            fcntl.flock(lockfile, fcntl.LOCK_EX)
+            yield
+
+    def write_request(self, control, payload):
+        temporary = '.ui-capture-' + uuid.uuid4().hex
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=control)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, 'ui-capture.json', src_dir_fd=control, dst_dir_fd=control)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=control)
+            except FileNotFoundError:
+                pass
+
+
 class UiCaptureController:
-    def __init__(self, root=None):
+    def __init__(self, root=None, *, files=None):
         # root is server-owned, never accepted by an HTTP request.
         self.root = root
+        self.files = files if files is not None else PosixCaptureFiles()
         self.lock = threading.Lock()
         self.request = None
 
     def _host(self, diagnostics, snapshot, now):
-        host = _read(diagnostics, 'host-session.json')
+        host = self.files.read(diagnostics, 'host-session.json')
         source = snapshot.get('source_status') or {}
         game = source.get('game') or {}
         if not (source.get('source') == 'runtime' and source.get('synthetic') is False
@@ -106,20 +144,16 @@ class UiCaptureController:
         now = now or datetime.now(timezone.utc)
         if self.root is None:
             return self._result('not_configured', reason='bridge_control_not_configured')
+        if not self.files.supported:
+            return self._result('unavailable', reason='unsupported_platform')
         if profile is not None and profile not in PROFILES:
             return self._result('unavailable', reason='invalid_profile')
         try:
-            with self.lock, _directory(self.root / 'diagnostics') as diagnostics, _directory(self.root / 'control') as control:
-                import fcntl
-                lockfd = os.open('.ui-capture.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=control)
-                with os.fdopen(lockfd, 'rb') as lockfile:
-                    info = os.fstat(lockfile.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise ValueError('unsafe_lock')
-                    fcntl.flock(lockfile, fcntl.LOCK_EX)
+            with self.lock, self.files.directory(self.root / 'diagnostics') as diagnostics, self.files.directory(self.root / 'control') as control:
+                with self.files.locked(control):
                     host = self._host(diagnostics, snapshot, now)
-                    status = _read(diagnostics, 'ui-capture-status.json', optional=True)
-                    previous = _read(control, 'ui-capture.json', optional=True)
+                    status = self.files.read(diagnostics, 'ui-capture-status.json', optional=True)
+                    previous = self.files.read(control, 'ui-capture.json', optional=True)
                     if profile is not None:
                         sequence = 0
                         for item in (status, previous):
@@ -138,19 +172,7 @@ class UiCaptureController:
                         # Recheck host immediately before publishing the bound request.
                         if self._host(diagnostics, snapshot, now) != host:
                             raise ValueError('host_session_changed')
-                        temporary = '.ui-capture-' + uuid.uuid4().hex
-                        try:
-                            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=control)
-                            with os.fdopen(fd, 'wb') as stream:
-                                stream.write(payload)
-                                stream.flush()
-                                os.fsync(stream.fileno())
-                            os.replace(temporary, 'ui-capture.json', src_dir_fd=control, dst_dir_fd=control)
-                        finally:
-                            try:
-                                os.unlink(temporary, dir_fd=control)
-                            except FileNotFoundError:
-                                pass
+                        self.files.write_request(control, payload)
                         self.request = dict(request, profile=profile)
                         return self._result('pending', self.request)
                     request = self.request

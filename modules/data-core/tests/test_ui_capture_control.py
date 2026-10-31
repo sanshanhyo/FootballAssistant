@@ -4,6 +4,8 @@ from copy import deepcopy
 from datetime import timedelta
 import json
 import os
+from pathlib import Path
+from capture_control_fixture import memory_control, MemoryCaptureFiles, MemoryPath
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,7 +42,12 @@ def test_focused_tactics_keeps_real_relative_provenance_and_rejects_other_root()
 
 
 @pytest.fixture
-def control(tmp_path):
+def control():
+    return memory_control()
+
+
+@pytest.fixture
+def posix_control(tmp_path):
     (tmp_path / 'control').mkdir()
     (tmp_path / 'diagnostics').mkdir()
     host = dict(pid=123, session_id='TEST-session', managed_build_sha256='a' * 64)
@@ -92,8 +99,9 @@ def test_invalid_session_never_writes(control, change):
 
 
 @pytest.mark.parametrize('name', ['control/ui-capture.json', 'control/.ui-capture.lock', 'diagnostics/host-session.json', 'diagnostics/ui-capture-status.json'])
-def test_linked_files_rejected(control, tmp_path, name):
-    c, _ = control
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX descriptor/no-follow filesystem security test')
+def test_linked_files_rejected(posix_control, tmp_path, name):
+    c, _ = posix_control
     target = tmp_path / 'outside'
     target.write_text('{}')
     path = c.root / name
@@ -103,8 +111,9 @@ def test_linked_files_rejected(control, tmp_path, name):
     assert target.read_text() == '{}'
 
 
-def test_linked_directory_rejected(control):
-    c, _ = control
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX descriptor/no-follow filesystem security test')
+def test_linked_directory_rejected(posix_control):
+    c, _ = posix_control
     real = c.root / 'real-control'
     (c.root / 'control').rename(real)
     (c.root / 'control').symlink_to(real, target_is_directory=True)
@@ -114,7 +123,7 @@ def test_linked_directory_rejected(control):
 def test_concurrent_controllers_use_monotonic_sequences(control):
     c, _ = control
     def write(_):
-        return UiCaptureController(c.root).access(focused_snapshot(), 'schedule', now=NOW)
+        return UiCaptureController(c.root, files=c.files).access(focused_snapshot(), 'schedule', now=NOW)
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(write, range(12)))
     assert sorted(r['sequence'] for r in results) == list(range(1, 13))
@@ -131,7 +140,8 @@ def test_old_session_and_expiry_invalidate_pending(control):
 
 def test_absent_bridge_is_not_configured(tmp_path):
     assert UiCaptureController(None).access({}, 'schedule')['status'] == 'not_configured'
-    assert UiCaptureController(tmp_path).access({}, 'schedule')['status'] == 'not_configured'
+    files = MemoryCaptureFiles()
+    assert UiCaptureController(MemoryPath(files), files=files).access({}, 'schedule')['status'] == 'not_configured'
 
 
 def test_endpoint_auth_and_strict_body(tmp_path):
@@ -209,4 +219,62 @@ def test_server_configuration_never_discovers_private_root(monkeypatch):
     monkeypatch.delenv('FOOTBALL_ASSISTANT_PRIVATE_ROOT', raising=False)
     assert Settings.from_env(reader_only=True).bridge_private_root is None
     monkeypatch.setenv('FOOTBALL_ASSISTANT_PRIVATE_ROOT', '/explicit/private/bridge')
-    assert str(Settings.from_env(reader_only=True).bridge_private_root) == '/explicit/private/bridge'
+    assert Settings.from_env(reader_only=True).bridge_private_root == Path('/explicit/private/bridge').absolute()
+
+
+def test_unsupported_platform_rejects_before_filesystem_access(tmp_path, monkeypatch):
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    monkeypatch.setattr(PosixCaptureFiles, 'supported', False)
+    def forbidden(*args, **kwargs):
+        pytest.fail('unsupported platform must not open even a reparse/link path')
+    monkeypatch.setattr(PosixCaptureFiles, 'directory', forbidden)
+    result = UiCaptureController(tmp_path).access(focused_snapshot(), 'tactics', now=NOW)
+    assert result == dict(status='unavailable', reason='unsupported_platform', profile=None, sequence=None)
+    assert UiCaptureController(None).access({}, 'schedule')['status'] == 'not_configured'
+
+
+def test_authenticated_api_exposes_unsupported_platform(tmp_path, monkeypatch):
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    monkeypatch.setattr(PosixCaptureFiles, 'supported', False)
+    settings = Settings(data_dir=tmp_path, runtime_file=tmp_path / 'runtime.json', token='test', bridge_private_root=tmp_path)
+    with TestClient(create_app(settings, enable_agent=False), base_url='http://127.0.0.1') as client:
+        headers = {'Authorization': 'Bearer test'}
+        for response in (client.get('/v1/reader/capture-profile', headers=headers),
+                         client.post('/v1/reader/capture-profile', headers=headers, json={'profile': 'tactics'})):
+            assert response.status_code == 200
+            assert response.json()['reason'] == 'unsupported_platform'
+            assert response.json()['status'] == 'unavailable'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX atomic write/flock integration test')
+def test_posix_real_adapter_atomic_write_and_cross_controller_lock(posix_control):
+    c, _ = posix_control
+    def write(_):
+        return UiCaptureController(c.root).access(focused_snapshot(), 'tactics', now=NOW)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(write, range(12)))
+    assert sorted(r['sequence'] for r in results) == list(range(1, 13))
+    assert all(r['status'] == 'pending' for r in results)
+    assert read_request(c)['sequence'] == 12
+    assert (c.root / 'control/ui-capture.json').stat().st_mode & 0o777 == 0o600
+    assert not list((c.root / 'control').glob('.ui-capture-*'))
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX regular-file/hard-link security test')
+def test_posix_hard_link_is_rejected(posix_control):
+    c, _ = posix_control
+    target = c.root / 'unrelated'
+    target.write_text('{}')
+    os.link(target, c.root / 'control/ui-capture.json')
+    assert c.access(focused_snapshot(), 'tactics', now=NOW)['status'] == 'unavailable'
+    assert target.read_text() == '{}'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX bounded file parser integration test')
+@pytest.mark.parametrize('content', ['x' * 2049, '{"sequence":1,"sequence":2}', '[]'])
+def test_posix_oversize_duplicate_and_malformed_requests_remain_rejected(posix_control, content):
+    c, _ = posix_control
+    path = c.root / 'control/ui-capture.json'
+    path.write_text(content)
+    assert c.access(focused_snapshot(), 'tactics', now=NOW)['status'] == 'unavailable'
+    assert path.read_text() == content
