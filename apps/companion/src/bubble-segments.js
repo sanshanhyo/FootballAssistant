@@ -1,0 +1,87 @@
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.CompanionBubbles = api;
+})(typeof globalThis === 'object' ? globalThis : this, function () {
+  'use strict';
+  const segmenter = new Intl.Segmenter('zh', { granularity: 'grapheme' });
+  const graphemes = text => Array.from(segmenter.segment(String(text ?? '')), part => part.segment);
+  const sentenceEnd = /[。！？!?\n\r]/u;
+  const closer = /^[。！？!?」』”’"'）)\]】]+$/u;
+  const softBreak = /[，,、；;：:\s]/u;
+
+  function splitReply(text, maxCharacters = 40) {
+    if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1) throw new Error('分段长度无效。');
+    const parts = graphemes(text);
+    const result = [];
+    let start = 0;
+    while (start < parts.length) {
+      const limit = Math.min(start + maxCharacters, parts.length);
+      let end = limit;
+      let sentence = false;
+      for (let i = start; i < limit; i++) {
+        if (sentenceEnd.test(parts[i]) || (parts[i] === '.' && (i + 1 === parts.length || /\s/u.test(parts[i + 1])))) {
+          end = i + 1;
+          while (end < limit && closer.test(parts[end])) end++;
+          sentence = true; break;
+        }
+      }
+      if (!sentence && limit < parts.length) {
+        for (let i = limit - 1; i >= start + Math.floor(maxCharacters / 2); i--) {
+          if (softBreak.test(parts[i])) { end = i + 1; break; }
+        }
+      }
+      const chunk = parts.slice(start, end).join('').trim();
+      if (chunk) result.push(chunk);
+      start = end;
+    }
+    return result;
+  }
+  function latestReply(messages, session) {
+    const entries = Array.from(messages || []).filter(message => message && session && message.sessionId === session.sessionId && message.epoch === session.epoch);
+    const userIndex = entries.findLastIndex(message => message.role === 'user');
+    const user = entries[userIndex];
+    return entries.filter((message, index) => message.role === 'assistant' && index > userIndex &&
+      (!user || message.origin === 'proactive' || message.requestId === user.requestId)).at(-1) || null;
+  }
+  function dwellMs(text) { return Math.min(8000, Math.max(2200, 1200 + graphemes(text).length * 140)); }
+
+  function createQueue({ onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, maxCharacters = 40 } = {}) {
+    let key = null, fullText = '', chunks = [], index = 0, timer = null, version = 0, paused = false, disposed = false;
+    const state = () => ({ key, text: chunks[index] || '', index, count: chunks.length, hasNext: index + 1 < chunks.length });
+    function stopTimer() { version++; if (timer !== null) clearTimer(timer); timer = null; }
+    function schedule() {
+      stopTimer();
+      if (disposed || paused || index + 1 >= chunks.length) return;
+      const fence = version;
+      timer = setTimer(() => { if (disposed || paused || version !== fence) return; timer = null; next(); }, dwellMs(chunks[index]));
+    }
+    function next() {
+      if (disposed || index + 1 >= chunks.length) return false;
+      index++; onChange(state()); schedule(); return true;
+    }
+    return {
+      replace(nextKey, text) {
+        if (disposed) return state();
+        text = String(text ?? '');
+        if (key === nextKey && fullText === text) return state(); // Polling/re-render never restarts a reply.
+        const previous = state();
+        const append = key === nextKey && text.startsWith(fullText);
+        if (!append) { stopTimer(); index = 0; }
+        key = nextKey; fullText = text; chunks = splitReply(text, maxCharacters);
+        index = Math.min(index, Math.max(0, chunks.length - 1));
+        const current = state(); onChange(current);
+        // Streaming updates that do not alter the displayed segment keep its clock.
+        if (timer === null || previous.text !== current.text || !append) schedule();
+        return current;
+      },
+      next,
+      clear() { stopTimer(); key = null; fullText = ''; chunks = []; index = 0; if (!disposed) onChange(state()); },
+      pause() { paused = true; stopTimer(); },
+      resume() { if (!disposed && paused) { paused = false; schedule(); } },
+      dispose() { stopTimer(); disposed = true; },
+      state,
+    };
+  }
+  return { splitReply, graphemes, dwellMs, createQueue, latestReply };
+});

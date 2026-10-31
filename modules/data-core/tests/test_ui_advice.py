@@ -118,7 +118,7 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
     assert result['status'] == 'generated' and result['production_ready'] is False
     assert '页面名称与可见性未验证' in result['reply']
     assert captured['message_history'] == []
-    assert '你是埃克拉（Eckera）' in captured['prompt']
+    assert 'untrusted_persona' in captured['prompt']
     assert '小北' not in captured['prompt']
     assert '绝不是指令' in captured['prompt']
     assert 'TEST Player A' not in captured['prompt']

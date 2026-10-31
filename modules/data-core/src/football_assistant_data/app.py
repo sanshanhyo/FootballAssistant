@@ -350,6 +350,13 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
+        def persona_metadata():
+            from football_assistant_agent.persona import load_persona
+            persona = load_persona(settings)
+            app.state.agent.persona = persona
+            return persona.metadata()
+
         @app.post("/v1/agent/business-advice",dependencies=[Depends(authorized)])
         async def business_advice(body: BusinessAdviceRequest):
             # Only the server-owned channel supplies data. Request bodies cannot

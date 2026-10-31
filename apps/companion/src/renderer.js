@@ -3,12 +3,13 @@
   const $ = id => document.getElementById(id);
   const api = window.companion;
   const UI = window.CompanionUI;
+  const Bubbles = window.CompanionBubbles;
   let state = null;
   let messages = new Map();
   const tools = new Map();
   const requests = new Map();
   let lastReply = null;
-  let renderedMessageKey = null;
+  let blockedReplyId = null;
   let noticeTimer;
   let speechInfo = null;
   let recording = null;
@@ -34,6 +35,17 @@
     return element;
   };
   const preferences = () => ({ expression:'auto', sttProvider:'openai', ttsProvider:'system', ...state?.preferences });
+
+  const bubbleQueue = Bubbles?.createQueue({ onChange: part => {
+    $('compact-text').textContent = part.text;
+    $('compact-bubble').hidden = !part.text;
+    $('bubble-progress').hidden = part.count < 2;
+    $('bubble-progress').textContent = part.count > 1 ? `${part.index + 1} / ${part.count}${part.hasNext ? ' · 点击继续' : ' · 完'}` : '';
+    $('bubble-content').dataset.hasNext = String(part.hasNext);
+    $('compact-text').title = part.hasNext ? '点击或按 Enter 查看下一段；完整回复保留在历史中' : '完整回复保留在历史中';
+    $('bubble-body').scrollTop = 0;
+    updateRects();
+  } });
 
   function updateRects() {
     if (!api?.inputRects) return;
@@ -108,7 +120,6 @@
     refreshExpression(); updateRects();
   }
 
-  function currentReplies() { return [...messages.values()].filter(message => message.role === 'assistant' && UI.belongsToSession(message, state)); }
 
   function renderCharacter() {
     const character = state?.character;
@@ -146,12 +157,10 @@
   });
 
   function renderBubble() {
-    lastReply = currentReplies().at(-1) || null;
-    // This frame is only the character's speech; operational facts remain in Settings.
-    $('compact-text').textContent = lastReply?.text || '';
-    $('compact-bubble').hidden = !$('compact-text').textContent;
-    if (renderedMessageKey !== lastReply?.id) $('bubble-body').scrollTop = 0;
-    renderedMessageKey = lastReply?.id || null;
+    lastReply = Bubbles.latestReply(messages.values(), state);
+    // Pagination is presentation-only: messages/history retain the entire original reply.
+    if (!lastReply || lastReply.id === blockedReplyId) { bubbleQueue?.clear(); return; }
+    bubbleQueue?.replace(`${state.epoch}:${state.sessionId}:${lastReply.id}`, lastReply.text);
     updateRects();
   }
 
@@ -165,7 +174,7 @@
     const providersChanged = next.preferences && (next.preferences.sttProvider !== oldPreferences.sttProvider || next.preferences.ttsProvider !== oldPreferences.ttsProvider);
     if (switched || providersChanged) cancelVoice(providersChanged && state ? '语音服务已切换' : '');
     if (switched) {
-      messages = new Map(); tools.clear(); requests.clear(); renderedMessageKey = null;
+      messages = new Map(); tools.clear(); requests.clear(); blockedReplyId = null; bubbleQueue?.clear();
       $('message').value = ''; resetDraftNote(); resizeComposer();
     }
     state = next;
@@ -186,7 +195,7 @@
 
   function onRuntimeEvent(event) {
     if (!event || typeof event !== 'object') return;
-    if (event.type === 'visibility' && event.visible === false) { cancelVoice('桌宠已隐藏，语音操作已停止', false); return; }
+    if (event.type === 'visibility') { if (event.visible === false) { bubbleQueue?.pause(); cancelVoice('桌宠已隐藏，语音操作已停止', false); } else bubbleQueue?.resume(); return; }
     if (event.type === 'stop-speech') { cancelVoice('语音操作已停止', false); return; }
     if (event.type === 'composer') { setComposer(event.open !== false, true); return; }
     if (event.type === 'read-last-reply') { speakLast(); return; }
@@ -218,6 +227,7 @@
     const text = $('message').value.trim();
     if (!text || !state || !state.canSend || state.connection?.state === 'disconnected') return;
     const context = { sessionId:state.sessionId, epoch:state.epoch };
+    blockedReplyId = lastReply?.id || null; bubbleQueue?.clear();
     $('message').value = ''; resetDraftNote(); resizeComposer();
     showError('');
     try {
@@ -410,10 +420,16 @@
 
   function bindEvents() {
     $('chat-form').addEventListener('submit', send);
+    $('bubble-content').addEventListener('click', () => {
+      if (!window.getSelection()?.toString()) bubbleQueue?.next();
+    });
+    $('compact-text').addEventListener('keydown', event => {
+      if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); bubbleQueue?.next(); }
+    });
     $('message').addEventListener('compositionstart', () => { composing = true; });
     $('message').addEventListener('compositionend', () => { composing = false; });
     $('message').addEventListener('keydown', event => { if (UI.shouldSubmitText(event, composing)) { event.preventDefault(); send(); } });
-    $('message').addEventListener('input', resizeComposer);
+    $('message').addEventListener('input', () => { if ($('message').value.trim()) { blockedReplyId = lastReply?.id || null; bubbleQueue?.clear(); } resizeComposer(); });
     $('cancel-voice').addEventListener('click', () => cancelVoice());
     $('pet').addEventListener('contextmenu', event => { event.preventDefault(); clearTimeout(holdTimer); call(() => api.showContextMenu()); });
     $('pet').addEventListener('pointerdown', event => {
@@ -436,13 +452,13 @@
     document.addEventListener('toggle', updateRects, true);
     window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
     window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
-    window.addEventListener('beforeunload', () => { cancelVoice(''); unsubscribe?.(); });
+    window.addEventListener('beforeunload', () => { cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
     const observer = new ResizeObserver(updateRects);
     [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
   }
 
   let unsubscribe;
-  if (!api || !UI) {
+  if (!api || !UI || !Bubbles) {
     $('error').textContent = '桌宠桥接未就绪，请从应用打开。';
     $('error').hidden = false; $('interaction-feedback').hidden = false;
     return;

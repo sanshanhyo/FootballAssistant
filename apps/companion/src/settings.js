@@ -346,6 +346,7 @@
   }
   function onEvent(event) {
     if (!event || stopped) return;
+    if (event.type === 'update') { renderUpdate(event.status || event.state); return; }
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') {
       const value = event.state || {};
@@ -361,6 +362,42 @@
       renderObservations();
       if (activePage === 'records') { historyLoad += 1; scheduleRecords(); }
     }
+  }
+  function renderBootstrap(value) {
+    if (!value) return;
+    const backend = { ready: '已连接', starting: '正在启动', stopped: '已停止', unavailable: '不可用', error: '启动失败' }[value.backend?.state] || '待确认';
+    const game = { running: '检测到游戏进程', not_detected: '未检测到游戏进程', unknown: '游戏进程状态未知' }[value.game?.state] || '游戏进程状态未知';
+    $('bootstrap-status').textContent = `后台服务：${backend}（${value.backend?.owned ? '由应用管理' : '外部或尚未启动'}） · ${game}。进程检测不代表数据已连接。`;
+    $('bootstrap-reader').textContent = value.readerPlatformSupported === false ? '此平台当前尚不支持真实游戏页面读取；可使用桌宠与模拟演示。' : value.bridgeConfigured ? 'Reader 已配置，真实页面读取结果请以当前页面预览为准。' : '尚未配置本机 Reader bridge；检测到游戏进程也不能读取页面。';
+  }
+  function renderUpdate(value) {
+    if (!value) return;
+    const labels = { disabled: '尚未配置可信 Alpha 更新源', idle: '等待检查官方 Release', up_to_date: '当前已是最新版本', update_available: '发现官方新版本（需手动安装，安装包尚未验签）', manual_required: '请前往官方 Release 手动下载与安装', no_release: '官方尚未发布可用版本', network_error: '无法连接官方更新源，可重试', checking: '正在检查', available: '有已验证的新版本', downloading: '正在下载', downloaded: '已验证安装包已下载，请退出后手动安装', 'up-to-date': '当前已是最新版本', error: '更新失败，可重试' };
+    $('update-status').textContent = `当前版本 ${value.currentVersion || '未知'} · ${labels[value.state] || '状态未知'}${value.availableVersion ? ' · ' + value.availableVersion : ''}`;
+    $('update-check').disabled = ['disabled', 'checking', 'downloading'].includes(value.state);
+    $('update-download').disabled = value.state !== 'available' || value.signedDownloadAvailable === false;
+  }
+  function renderModelConfig(value) {
+    if (!value) return;
+    $('model-provider').value = value.provider;
+    $('model-base-url').value = value.baseUrl;
+    $('model-name').value = value.model;
+    $('model-api-key').value = '';
+    $('model-storage-note').textContent = value.hasApiKey
+      ? value.storage === 'encrypted' ? '已配置密钥 · 使用系统安全存储加密保存。' : '已配置密钥 · 仅本次运行有效，退出后需重新输入。'
+      : value.secureStorageAvailable ? '尚未配置密钥 · 可使用系统安全存储。' : '尚未配置密钥 · 系统安全存储不可用，仅支持会话内使用。';
+  }
+  async function saveModelConfig(removeKey = false) {
+    const input = { provider: $('model-provider').value, baseUrl: $('model-base-url').value, model: $('model-name').value };
+    if (removeKey) input.removeKey = true;
+    else if ($('model-api-key').value) input.apiKey = $('model-api-key').value;
+    // Clear typed secret before IPC settles; never echo it in notices or logs.
+    $('model-api-key').value = '';
+    $('model-remove-key').disabled = true;
+    const value = await perform(() => api.saveModelConfig(input), { button: $('model-save') });
+    delete input.apiKey;
+    $('model-remove-key').disabled = false;
+    if (value) { renderModelConfig(value); notice(value.restartRequired ? '配置已保存。现有外部服务需由你重启后生效。' : '模型配置已保存；尚未发送模型请求。'); }
   }
   function bind() {
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
@@ -389,6 +426,11 @@
       const result = await perform(() => api.saveMemory({ text }), { button: $('save-memory'), success: '已明确保存这条记忆。' });
       if (result !== undefined) { if (input.value.trim() === text) input.value = ''; refreshMemories(); }
     });
+    $('bootstrap-refresh').addEventListener('click', async () => renderBootstrap(await perform(() => api.bootstrapStatus(), { button: $('bootstrap-refresh') })));
+    $('update-check').addEventListener('click', async () => renderUpdate(await perform(() => api.checkUpdate(), { button: $('update-check') })));
+    $('update-download').addEventListener('click', async () => renderUpdate(await perform(() => api.downloadUpdate(), { button: $('update-download') })));
+    $('model-config-form').addEventListener('submit', event => { event.preventDefault(); saveModelConfig(); });
+    $('model-remove-key').addEventListener('click', () => saveModelConfig(true));
     $('quit').addEventListener('click', () => perform(() => api.quit()));
     window.addEventListener('beforeunload', () => { stopped = true; clearTimeout(recordsTimer); clearTimeout(noticeTimer); unsubscribe?.(); });
   }
@@ -398,4 +440,7 @@
   unsubscribe = api.subscribe(onEvent);
   perform(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeech();
+  perform(() => api.getModelConfig()).then(renderModelConfig);
+  perform(() => api.updateStatus()).then(renderUpdate);
+  perform(() => api.bootstrapStatus()).then(renderBootstrap);
 })();

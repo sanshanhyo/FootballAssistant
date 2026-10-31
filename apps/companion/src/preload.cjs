@@ -39,4 +39,4 @@ const pet = {
   dragStart: () => invoke('drag-start'), dragMove: () => invoke('drag-move'), dragEnd: () => invoke('drag-end'),
   inputRects: rects => ipcRenderer.send('companion:input-rects', rects),
 };
-contextBridge.exposeInMainWorld('companion', isSettings ? common : { ...common, ...pet });
+contextBridge.exposeInMainWorld('companion', isSettings ? { ...common, bootstrapStatus: () => invoke('bootstrap-status'), updateStatus: () => invoke('update-status'), checkUpdate: () => invoke('update-check'), downloadUpdate: () => invoke('update-download'), getModelConfig: () => invoke('model-config-get'), saveModelConfig: input => invoke('model-config-save', input) } : { ...common, ...pet });

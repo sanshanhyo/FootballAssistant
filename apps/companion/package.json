@@ -1,6 +1,6 @@
 {
   "name": "football-assistant-companion",
-  "version": "0.1.0",
+  "version": "0.0.1-alpha.1",
   "private": true,
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
@@ -13,7 +13,7 @@
     "test": "node --test test/*.test.cjs",
     "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/character.cjs && node --check src/renderer.js && node --check src/settings.js && npm test",
     "pack:mac": "electron-builder --mac dir --arm64",
-    "pack:win": "electron-builder --win zip --x64"
+    "pack:win": "electron-builder --win portable --x64"
   },
   "devDependencies": {
     "electron": "45.1.0",
@@ -48,19 +48,40 @@
       "category": "public.app-category.games",
       "identity": null,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "按住桌宠时使用麦克风，将你的语音转换成文字。"
+        "NSMicrophoneUsageDescription": "\u6309\u4f4f\u684c\u5ba0\u65f6\u4f7f\u7528\u9ea6\u514b\u98ce\uff0c\u5c06\u4f60\u7684\u8bed\u97f3\u8f6c\u6362\u6210\u6587\u5b57\u3002"
       }
     },
     "win": {
       "target": [
         {
-          "target": "zip",
+          "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ],
       "signAndEditExecutable": false
-    }
+    },
+    "extraResources": [
+      {
+        "from": "../../build/desktop-backend/football-assistant-backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!**/.env*",
+          "!**/runtime.json",
+          "!**/*.log",
+          "!**/local-data/**",
+          "!**/local-game/**",
+          "!**/*.db",
+          "!**/*.sqlite*",
+          "!**/*.fm",
+          "!**/*.fms",
+          "!**/model-config.json",
+          "!**/credentials*.json",
+          "!**/settings.json"
+        ]
+      }
+    ]
   }
 }

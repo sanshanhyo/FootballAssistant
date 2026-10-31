@@ -151,7 +151,7 @@ def _registry(path):
 
 def _load_decoder():
     """Import only checkout-owned files; never import code beside input manifests."""
-    scripts = Path(__file__).resolve().parents[4] / "modules/game-bridge/scripts"
+    scripts = (Path(sys._MEIPASS) / "game-bridge-scripts") if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[4] / "modules/game-bridge/scripts"
     modules = []
     for name in ("wire_decoder", "decode_native_packet"):
         spec = importlib.util.spec_from_file_location(name, scripts / (name + ".py"))

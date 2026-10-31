@@ -42,6 +42,7 @@ football_assistant_contracts = "contracts"
 
 [tool.setuptools.package-data]
 football_assistant_contracts = ["schemas/*.json"]
+football_assistant_agent = ["resources/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["modules/data-core/tests", "modules/save-adapter/tests"]

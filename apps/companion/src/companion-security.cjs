@@ -8,7 +8,7 @@ const SHARED_IPC = [
 const WINDOW_IPC = Object.freeze({
   pet: new Set([...SHARED_IPC, 'send-message', 'context-menu', 'transcribe', 'speak',
     'cancel-speech-operation', 'microphone-permission', 'drag-start', 'drag-move', 'drag-end', 'input-rects']),
-  settings: new Set(SHARED_IPC),
+  settings: new Set([...SHARED_IPC, 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
 });
 
 function allowsWindowIpc({ role, trustedMainFrame, currentUrl, pageUrl }, method) {

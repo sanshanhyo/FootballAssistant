@@ -5,7 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from football_assistant_agent.managed_team_intent import asks_managed_team
-from football_assistant_agent.service import AgentService, COACH_STYLE, PERSONALITY
+from football_assistant_agent.service import AgentService
+from football_assistant_agent.persona import default_persona
+from football_assistant_agent.system_rules import SYSTEM_RULES
 from football_assistant_agent.ui_advice import UI_INSTRUCTIONS
 from football_assistant_data.app import create_app
 from test_reader import settings, AUTH
@@ -64,7 +66,8 @@ def test_authenticated_chat_and_advice_routes_return_honest_local_answer_without
 
 
 def test_coach_voice_allows_opinions_but_preserves_fact_and_failure_boundaries():
-    assert COACH_STYLE in PERSONALITY
+    COACH_STYLE = default_persona()
+    assert "不能操作或修改游戏" in SYSTEM_RULES
     for wording in ('自然短句', '我押', '我猜', '照经验', '不能假装已经分析或计算', '不能捏造', '断线', '认证失败', '预算限制'):
         assert wording in COACH_STYLE
     assert '不必固定三段标题' in UI_INSTRUCTIONS

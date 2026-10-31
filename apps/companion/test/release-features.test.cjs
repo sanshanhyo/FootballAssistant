@@ -13,9 +13,15 @@ test('Alpha 0.0.1 rejects speech before invoking the provider', () => {
 
 test('desktop artifact excludes local runtime, credentials, captures, logs and saves', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.equal(manifest.version, '0.0.1-alpha.1');
   const files = manifest.build.files;
   assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));
-  assert.equal(manifest.build.extraResources, undefined);
+  assert.equal(manifest.build.extraResources.length, 1);
+  const backend = manifest.build.extraResources[0];
+  assert.equal(backend.from, '../../build/desktop-backend/football-assistant-backend');
+  assert.equal(backend.to, 'backend');
+  for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/credentials*.json', '!**/local-game/**', '!**/*.fm']) assert.ok(backend.filter.includes(excluded));
+  assert.equal(manifest.build.win.target[0].target, 'portable');
   assert.equal(manifest.build.extraFiles, undefined);
 });

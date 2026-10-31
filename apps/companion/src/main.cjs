@@ -1,8 +1,11 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences, dialog, safeStorage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createCredentialConfig } = require('./credentials.cjs');
+const { createUpdateController } = require('./update-controller.cjs');
+const { loadSettings, detectGame, BackendSupervisor } = require('./bootstrap.cjs');
 const { RealReaderClient } = require('./reader-clients.cjs');
 const { request, defaultRuntimeFile } = require('./backend.cjs');
 const { CompanionRuntime } = require('./companion-runtime.cjs');
@@ -18,6 +21,15 @@ if (process.env.FA_COMPANION_USER_DATA_DIR) {
   app.setPath('userData', isolatedPath);
 }
 
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on('second-instance', () => showPet());
+let backendSupervisor;
+let backendOptions;
+let credentials;
+let savingModel = false;
+let updateController;
+let bootstrapStatus;
 let win;
 let settingsWindow;
 let tray;
@@ -130,6 +142,30 @@ function trayImage() {
   return image;
 }
 function registerIpc() {
+  handle('bootstrap-status', async () => {
+    const backend = { ...backendSupervisor.status };
+    if (backend.state === 'ready' && !(await backendSupervisor.healthy())) { backend.state = 'unavailable'; backend.message = '本机后端当前不可连接。'; }
+    return { ...bootstrapStatus, backend, game: await detectGame() };
+  });
+  handle('model-config-get', () => credentials.getPublicConfig());
+  handle('model-config-save', async input => {
+    if (savingModel || quitting) throw new Error('配置正在应用，请稍后再试。');
+    savingModel = true;
+    try {
+      let saved;
+      try { saved = await credentials.save(input); } catch { throw new Error('模型配置保存失败；请检查地址、模型名与本机安全存储。'); }
+      if (backendSupervisor?.external || !app.isPackaged || (backendSupervisor?.status.state === 'ready' && !backendSupervisor.status.owned)) return { ...saved, restartRequired: true };
+      await backendSupervisor?.stop();
+      if (quitting) return { ...saved, restartRequired: true };
+      backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: await credentials.backendEnv() });
+      bootstrapStatus.backend = await backendSupervisor.start();
+      return { ...saved, restartRequired: false, backendState: bootstrapStatus.backend.state };
+    } finally { savingModel = false; }
+  });
+  handle('update-open-release', async () => { await shell.openExternal('https://github.com/sanshanhyo/FootballAssistant/releases'); return { opened: true }; });
+  handle('update-status', () => updateController.status);
+  handle('update-check', () => updateController.check());
+  handle('update-download', () => updateController.download());
   handle('get-state', () => runtime.state());
   handle('refresh-reader-previews', () => runtime.refreshReaderPreviews());
   handle('set-capture-profile', profile => runtime.setCaptureProfile(profile));
@@ -214,7 +250,7 @@ async function buildWindow() {
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
-      runtime: runtime.state(),
+      runtime: runtime.state(), bootstrap: bootstrapStatus, updates: updateController.status,
       renderer: await win.webContents.executeJavaScript('({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet"))})'),
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
@@ -224,7 +260,19 @@ async function buildWindow() {
   }
 }
 async function main() {
-  const runtimeFile = defaultRuntimeFile(process.env, process.argv);
+  const settings = await loadSettings(app.getPath('userData'));
+  const external = Boolean(process.env.FOOTBALL_ASSISTANT_RUNTIME_FILE || process.argv.includes('--runtime-file'));
+  const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
+  credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
+  backendOptions = { userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
+  backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+  updateController = createUpdateController({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
+    configSchema: 1, backendProtocol: 1, bridgeProtocol: 1, cacheDir: path.join(app.getPath('userData'), 'updates'),
+    feedUrl: undefined, publicKey: undefined, onStatus: state => emit({ type: 'update-status', state }) }); // Signed downloads need a reviewed feed/key; public GitHub checks remain read-only.
+  if (app.isPackaged) updateController.start();
+  bootstrapStatus = { backend: await backendSupervisor.start(), game: await detectGame(), readerPlatformSupported: process.platform === 'darwin', bridgeConfigured: external || settings.backendEnvFile || !backendSupervisor.status.owned ? null : Boolean(settings.bridgePrivateRoot) };
+  if (app.isPackaged && bootstrapStatus.backend.state !== 'ready') dialog.showErrorBox('FootballAssistant 后端未连接', bootstrapStatus.backend.message);
+
   runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await runtime.init(); runtime.on('event', emit);
   registerIpc();
@@ -239,11 +287,11 @@ async function main() {
   tray.on('right-click', () => contextMenu().popup());
   app.on('activate', showPet);
 }
-app.whenReady().then(main).catch(error => { console.error(error.message); app.exit(1); });
+if (primaryInstance) app.whenReady().then(main).catch(async () => { dialog.showErrorBox('FootballAssistant 无法启动', '本机配置或启动失败；请检查用户数据目录中的 settings.json。不会覆盖现有配置。'); await backendSupervisor?.stop(); app.exit(1); });
 app.on('window-all-closed', () => { /* The tray owns application lifetime. */ });
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault(); quitting = true;
-  clearInterval(pointerTimer); speech.dispose(); tray?.destroy();
-  Promise.resolve(runtime?.close()).finally(() => app.quit());
+  clearInterval(pointerTimer); updateController?.stop(); speech.dispose(); tray?.destroy();
+  Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });

@@ -54,7 +54,13 @@ require(${JSON.stringify(path.join(appRoot, 'src', 'main.cjs'))});
     await check('single click shows only speech while settings retain tools and source cards', async () => {
       await page.locator('#pet').click(); await page.locator('#message').fill('解释当前观测'); await page.locator('#send').click();
       await page.waitForFunction(() => document.querySelector('#compact-text').textContent.includes('模拟回复'));
-      assert.equal((await page.locator('#compact-bubble').innerText()).trim(), (await page.locator('#compact-text').innerText()).trim());
+      assert.ok(await page.evaluate(() => Array.from(new Intl.Segmenter('zh', { granularity: 'grapheme' }).segment(document.querySelector('#compact-text').textContent)).length <= 40));
+      assert.equal(await page.locator('#bubble-progress').isVisible(), true);
+      const firstPart = await page.locator('#compact-text').innerText();
+      await page.locator('#compact-text').click();
+      assert.notEqual(await page.locator('#compact-text').innerText(), firstPart);
+      const completeReply = await page.evaluate(async () => (await window.companion.getState()).value.messages.find(message => message.role === 'assistant').text);
+      assert.ok(completeReply.length > firstPart.length);
       const settingsCreated = application.waitForEvent('window');
       await page.evaluate(() => window.companion.openSettings());
       settings = await settingsCreated; settings.setDefaultTimeout(5_000);

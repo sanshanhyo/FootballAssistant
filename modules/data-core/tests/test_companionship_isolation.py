@@ -46,7 +46,8 @@ def test_greeting_never_uses_legacy_snapshot(tmp_path, captured_model, source_st
         for marker in ('TEST-captured-budget', 'TEST-captured-injury', 'TEST-private-path', 'TEST-mismatched-session'):
             assert marker not in serialized
         assert captured_model['message_history'] == []
-        assert '你是埃克拉（Eckera）' in captured_model['prompt']
+        assert '你是埃克拉（Eckera）' in json.loads(captured_model['message'])['untrusted_persona']
+        assert '你是埃克拉（Eckera）' not in captured_model['prompt']
         assert '小北' not in captured_model['prompt']
         assert '阿明' not in captured_model['prompt']
         assert 'TEST-旧' not in captured_model['prompt']
