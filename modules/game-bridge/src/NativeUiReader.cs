@@ -123,6 +123,14 @@ internal sealed partial class NativeUiReader : IDisposable
         methodProofsThisFrame.Clear();
         fieldProofsThisFrame.Clear();
         var output = new UiCapture();
+        var requestedFocus = Environment.GetEnvironmentVariable(UiFocusPath.EnvironmentVariable);
+        UiFocusPath? focus = null;
+        output.FocusRequested = requestedFocus is not null;
+        if (requestedFocus is not null)
+        {
+            if (!UiFocusPath.TryParse(requestedFocus, out focus)) { output.StopReason = "invalid_focus_path"; return output; }
+            output.FocusRootPath = focus!.Path; // Only canonical numeric paths enter diagnostics.
+        }
         if (domainGet() == 0) { output.StopReason = "domain_unavailable"; return output; }
         runtimeUtility = runtimeUtility == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "UIElementsRuntimeUtility") : runtimeUtility;
         textElement = textElement == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "TextElement") : textElement;
@@ -134,7 +142,15 @@ internal sealed partial class NativeUiReader : IDisposable
         var visited = 0;
         string? Limit() => budget.Elapsed.TotalMilliseconds > 15 ? "time_budget" :
             visited >= 2500 ? "node_limit" : output.Count >= UiTraversalBounds.MaximumTexts ? "text_limit" : null;
-        for (var panelIndex = 0; panelIndex < count; panelIndex++)
+        if (focus is not null && focus.PanelIndex >= count)
+        {
+            output.StopReason = "focus_panel_unavailable";
+            output.ElapsedMs = Math.Round(budget.Elapsed.TotalMilliseconds, 3);
+            return output;
+        }
+        var firstPanel = focus?.PanelIndex ?? 0;
+        var endPanel = focus is null ? count : firstPanel + 1;
+        for (var panelIndex = firstPanel; panelIndex < endPanel; panelIndex++)
         {
             var limit = Limit();
             if (limit is not null) { output.StopReason = limit; break; }
@@ -143,9 +159,22 @@ internal sealed partial class NativeUiReader : IDisposable
             var panelStart = budget.Elapsed.TotalMilliseconds;
             var panel = At(panels, panelIndex);
             var root = panel == 0 ? 0 : Get(panel, "get_visualTree");
+            if (focus is not null)
+            {
+                if (!focus.TryResolve(root, Limit, element => { var eligible = Visible(element, diagnostics); if (eligible) diagnostics.visible_nodes++; return eligible; },
+                    element => Number(Get(element, "get_childCount")), At,
+                    () => { visited++; diagnostics.visited_nodes++; output.FocusDescentNodes++; },
+                    out root, out var focusReason))
+                {
+                    diagnostics.stop_reason = output.StopReason = focusReason;
+                    diagnostics.elapsed_ms = Math.Round(budget.Elapsed.TotalMilliseconds - panelStart, 3);
+                    break;
+                }
+                output.FocusResolved = true;
+            }
             if (root == 0) { diagnostics.stop_reason = "root_unavailable"; diagnostics.elapsed_ms = budget.Elapsed.TotalMilliseconds - panelStart; continue; }
             var stack = new Stack<(nint Element, string Path, int Depth)>();
-            stack.Push((root, $"panel{panelIndex}", 0));
+            stack.Push((root, focus?.Path ?? $"panel{panelIndex}", 0));
             while (stack.Count > 0)
             {
                 limit = Limit();
@@ -191,7 +220,7 @@ internal sealed partial class NativeUiReader : IDisposable
             diagnostics.elapsed_ms = Math.Round(budget.Elapsed.TotalMilliseconds - panelStart, 3);
             if (output.StopReason != "complete") break;
         }
-        if (output.StopReason == "complete" && output.PanelsAvailable > 32) output.StopReason = "panel_limit";
+        if (focus is null && output.StopReason == "complete" && output.PanelsAvailable > 32) output.StopReason = "panel_limit";
         output.ElapsedMs = Math.Round(budget.Elapsed.TotalMilliseconds, 3);
         return output;
     }

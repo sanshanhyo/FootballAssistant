@@ -15,6 +15,10 @@ public sealed class UiCapture : List<UiText>
     public UiCapture() : base(UiTraversalBounds.MaximumTexts) { }
     public List<UiPanelDiagnostics> Panels { get; } = new();
     public int PanelsAvailable { get; set; }
+    public bool FocusRequested { get; set; }
+    public bool FocusResolved { get; set; }
+    public string? FocusRootPath { get; set; }
+    public int FocusDescentNodes { get; set; }
     public double ElapsedMs { get; set; }
     public string StopReason { get; set; } = "complete";
     public bool Truncated => StopReason != "complete" || Panels.Any(p => p.truncated);
@@ -65,6 +69,59 @@ internal static class UiTraversalBounds
     }
 }
 
+// Explicit local diagnostic selection, not a page classifier or game entity path.
+internal sealed record UiFocusPath(string Path, int PanelIndex, int[] ChildIndices)
+{
+    public const string EnvironmentVariable = "FOOTBALL_ASSISTANT_UI_FOCUS_PATH";
+
+    public static bool TryParse(string value, out UiFocusPath? focus)
+    {
+        focus = null;
+        if (value.Length is < 6 or > UiTraversalBounds.MaximumPathLength) return false;
+        var parts = value.Split('/');
+        if (!parts[0].StartsWith("panel", StringComparison.Ordinal)) return false;
+        bool Index(string text, int maximum, out int index) =>
+            int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out index)
+            && index >= 0 && index <= maximum && text == index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (!Index(parts[0][5..], 31, out var panel)) return false;
+        var children = new int[parts.Length - 1];
+        for (var i = 1; i < parts.Length; i++)
+            if (!Index(parts[i], 511, out children[i - 1])) return false;
+        focus = new UiFocusPath(value, panel, children);
+        return true;
+    }
+
+    // Same read-only getters as normal traversal. Each ancestor consumes the shared
+    // node/time budget; check between calls, never fall back to the unfocused root.
+    public bool TryResolve(nint root, Func<string?> limit, Func<nint, bool> visible,
+        Func<nint, int> childCount, Func<nint, int, nint> childAt, Action visited,
+        out nint resolved, out string reason)
+    {
+        resolved = 0;
+        reason = "complete";
+        foreach (var index in ChildIndices)
+        {
+            var stopped = limit();
+            if (stopped is not null) { reason = stopped; return false; }
+            if (root == 0) { reason = "focus_root_unavailable"; return false; }
+            visited();
+            if (!visible(root)) { reason = "focus_ancestor_ineligible"; return false; }
+            stopped = limit();
+            if (stopped is not null) { reason = stopped; return false; }
+            var count = childCount(root);
+            if (index >= Math.Clamp(count, 0, 512)) { reason = "focus_child_unavailable"; return false; }
+            stopped = limit();
+            if (stopped is not null) { reason = stopped; return false; }
+            root = childAt(root, index);
+        }
+        var finalLimit = limit();
+        if (finalLimit is not null) { reason = finalLimit; return false; }
+        if (root == 0) { reason = "focus_root_unavailable"; return false; }
+        resolved = root;
+        return true;
+    }
+}
+
 public static class ObservationFactory
 {
     public const string AdapterVersion = "0.4.0";
@@ -102,6 +159,9 @@ public static class ObservationFactory
                 elapsed_ms = capture.ElapsedMs, stop_reason = capture.StopReason, truncated = capture.Truncated,
                 captured_texts = texts.Count, max_texts = UiTraversalBounds.MaximumTexts, max_nodes = 2500, budget_ms = 15,
                 max_depth = UiTraversalBounds.MaximumDepth, max_path_length = UiTraversalBounds.MaximumPathLength,
+                focus_requested = capture.FocusRequested, focus_resolved = capture.FocusResolved,
+                focus_root_path = capture.FocusRootPath, focus_descent_nodes = capture.FocusDescentNodes,
+                depth_scope = capture.FocusRequested ? "relative_to_requested_focus_root" : "relative_to_panel_root",
                 supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
                 visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"
             });

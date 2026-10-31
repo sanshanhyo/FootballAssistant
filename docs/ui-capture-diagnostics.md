@@ -9,3 +9,11 @@
 深度与路径准入：`max_depth=48`（根深度 0）、`max_path_length=128`。子节点超过任一边界时，在读取该子节点对象前跳过，分别增加 `depth_skipped` 或 `path_limit_skipped` 并令面板/采样 `truncated=true`。计数是被跳过的子树根，不是所有后代数。路径保持原始 `panelN/childIndex/...` 字符串，不截断、不哈希、不提升为稳定实体 ID；超过 128 字符的子树不会导致整个观测序列化失败。既有路径与 profile selector 语义不变；深入读取也不证明新文字的可见性或字段关联。
 
 模型证据单独限制为 16000 字符（每条 literal path + text 长度之和，不含 JSON 编码开销），仅纳入完整前缀条目，不裁剪单条文字。所有最多 240 条 UI 事实仍需通过验证，包括未纳入模型的尾部。`evidence_truncated` 与 `evidence_budget` 显式报告采样/纳入/遗漏数量及字符计数；截断不代表完整页面。`capture_text_sha256` 仅用于生成后刷新时检查完整 UI 文本内容是否变化（含遗漏尾部、不含变化的诊断耗时），不是实体 ID，不建立相邻文字关联。
+
+## 显式局部子树诊断（可选）
+
+仅当进程环境设置 `FOOTBALL_ASSISTANT_UI_FOCUS_PATH` 时启用。值必须为完整、规范的 `panelN/childIndex/...` 数字路径（也允许仅 panelN），最多 128 字符，panel 0..31、每级 child 0..511，不接受前导零、空白、空段、负号或尾随斜杠。环境变量不存在才使用常规采样；设为空值或无效值将 fail-closed，不自动回退。未硬编码任何游戏页面路径。
+
+只定位所选 panel 并沿指定索引读取现有子节点；祖先沿用 get_visible/worldBound 可用性筛选。路径解析祖先计入同一 2500 节点和 15ms 预算，getter 之间检查时间/节点边界；失败、索引不存在、祖先不可用或预算耗尽均只发送诊断，不扫描其余树作为替代。聚焦根的遍历深度从 0 计算，仍最多 48；输出保留原始完整路径，仍不得超过 128 字符，文字/字节/其他限制不变。
+
+capture metrics 增加 `focus_requested`、`focus_resolved`、`focus_root_path`（只输出通过校验的数字路径）、`focus_descent_nodes`、`depth_scope`。无效路径为 invalid_focus_path，不存在 panel 为 focus_panel_unavailable，解析过程可报告 focus_child_unavailable / focus_root_unavailable / focus_ancestor_ineligible 或原有预算停止原因。focus_resolved 只证明路径定位成功，不证明可见性、页面名称或足球实体；truncated/complete 仅描述所选子树，不能代表其余 UI。此功能仅是显式本地采样诊断，不是生产页面识别，也不会自动关联日期、对手等文本。

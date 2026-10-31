@@ -100,6 +100,49 @@ Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadB
 using (var page = JsonDocument.Parse(chinese))
     Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 240, "page reduced to byte budget");
 
+// TEST-only generic paths, never a hardcoded game/page selection.
+foreach (var invalidFocus in new[] { "", " ", "panel", "panel00", "Panel0", "panel32", "panel-1", "panel0/", "panel0//1", "panel0/00", "panel0/512", "panel0/-1", "panel0/1x", "panel0/1\n", "panel0/" + new string('1', 123) })
+    Assert(!UiFocusPath.TryParse(invalidFocus, out _), "invalid focus grammar fails closed");
+Assert(UiFocusPath.TryParse("panel31/511", out _), "bounded panel/child endpoints accepted");
+Assert(UiFocusPath.TryParse("panel0/0/1", out var focusTest), "literal focus path parsed");
+var focusVisits = 0;
+var focusCalls = 0;
+Assert(focusTest!.TryResolve(1, () => null, _ => true, _ => 2,
+    (node, index) => { focusCalls++; return node * 10 + index + 1; }, () => focusVisits++,
+    out var focusRoot, out var focusReason) && focusRoot == 112, "focus resolves only selected child path");
+Assert(focusVisits == 2 && focusCalls == 2 && focusReason == "complete", "descent ancestors charged to shared node budget");
+Assert(UiFocusPath.TryParse("panel0/0/0/0", out var longFocusTest), "bounded descent fixture");
+focusVisits = focusCalls = 0;
+Assert(!longFocusTest!.TryResolve(1, () => focusVisits >= 2 ? "node_limit" : null, _ => true, _ => 1,
+    (node, index) => { focusCalls++; return node + 1; }, () => focusVisits++,
+    out focusRoot, out focusReason) && focusReason == "node_limit" && focusRoot == 0, "descent node budget never falls back to original root");
+Assert(focusVisits == 2 && focusCalls == 1, "no child getter after node budget exhausted");
+var focusTimeExpired = false;
+focusCalls = 0;
+Assert(!focusTest.TryResolve(1, () => focusTimeExpired ? "time_budget" : null, _ => true,
+    _ => { focusTimeExpired = true; return 2; }, (node, index) => { focusCalls++; return 2; }, () => { },
+    out focusRoot, out focusReason) && focusReason == "time_budget" && focusCalls == 0 && focusRoot == 0, "descent time limit checked between getters");
+Assert(!focusTest.TryResolve(1, () => null, _ => true, _ => 0, (_, _) => throw new Exception("Out-of-range child getter called"), () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_child_unavailable" && focusRoot == 0, "missing child fails closed");
+Assert(!focusTest.TryResolve(1, () => null, _ => false, _ => throw new Exception("Ineligible ancestor traversed"), (_, _) => 0, () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_ancestor_ineligible", "existing ancestor visibility filter retained");
+Assert(!focusTest.TryResolve(1, () => null, _ => true, _ => 2, (_, _) => 0, () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_root_unavailable" && focusRoot == 0, "null descendant never falls back");
+Assert(UiFocusPath.TryParse("panel0", out var panelFocusTest) && panelFocusTest!.TryResolve(1, () => null,
+    _ => throw new Exception("Root-only focus unexpectedly descends"), _ => 0, (_, _) => 0, () => { }, out focusRoot, out focusReason)
+    && focusRoot == 1, "explicit panel-root focus is supported without implicit default");
+var focusedCapture = new UiCapture { FocusRequested = true, FocusResolved = true, FocusRootPath = "panel0/0/1", FocusDescentNodes = 2 };
+focusedCapture.Add(new UiText("panel0/0/1/0", "TEST focused text"));
+using (var focusedPage = JsonDocument.Parse(ObservationFactory.Create(focusedCapture, null, "offline-focus-test")))
+{
+    var focusedFacts = focusedPage.RootElement.GetProperty("payload").GetProperty("facts");
+    using var focusMetrics = JsonDocument.Parse(focusedFacts[0].GetProperty("value").GetString()!);
+    Assert(focusMetrics.RootElement.GetProperty("focus_requested").GetBoolean() && focusMetrics.RootElement.GetProperty("focus_resolved").GetBoolean(), "focus state explicit in diagnostics");
+    Assert(focusMetrics.RootElement.GetProperty("focus_root_path").GetString() == "panel0/0/1", "focus is a literal path, not a page identity");
+    Assert(focusMetrics.RootElement.GetProperty("depth_scope").GetString() == "relative_to_requested_focus_root", "focused depth scope explicit");
+    Assert(focusedFacts[1].GetProperty("entity_id").GetString() == "panel0/0/1/0", "emitted paths preserve full ancestor prefix");
+}
+
 // Synthetic deep single-child trees exercise the exact admission helper used by
 // native traversal, without loading game objects or invoking native getters.
 var deepDiagnostics = new UiPanelDiagnostics();
