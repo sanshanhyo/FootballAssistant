@@ -117,15 +117,45 @@ jobs:
       - name: Archive macOS application preserving executable permissions
         if: runner.os == 'macOS'
         run: tar -czf dist/FootballAssistant-macos-arm64.tar.gz -C dist/mac-arm64 FootballAssistant.app
-      - uses: actions/upload-artifact@v4
+      - name: Upload macOS application
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
         with:
-          name: companion-${{ matrix.artifact }}
+          name: companion-macos-arm64
+          path: apps/companion/dist/FootballAssistant-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Windows installer separately
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-windows-setup-x64
+          path: apps/companion/dist/FootballAssistant-*-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Windows portable separately
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-windows-portable-x64
+          path: apps/companion/dist/FootballAssistant-*-Portable-x64.exe
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Windows update metadata
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-windows-update-metadata-x64
           path: |
-            apps/companion/dist/*.exe
             apps/companion/dist/*.blockmap
             apps/companion/dist/*.yml
-            apps/companion/dist/*.zip
-            apps/companion/dist/*.tar.gz
-            ${{ runner.temp }}/companion-smoke.*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload Windows smoke diagnostics
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-windows-diagnostics-x64
+          path: ${{ runner.temp }}/companion-smoke*
           if-no-files-found: error
           retention-days: 7

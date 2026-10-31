@@ -75,3 +75,12 @@ manual-only until a reviewed release-signing key and Windows signing certificate
 are provisioned. The current unsigned Alpha therefore does **not** claim that
 automatic application replacement is operational. No signing keys, GitHub
 secrets or Release publication are created by these build changes.
+
+### CI downloads
+
+Windows Setup and Portable are uploaded as **separate** artifacts:
+`companion-windows-setup-x64` and `companion-windows-portable-x64`. Download only
+the desired distribution; neither download includes the other EXE. Update
+metadata and smoke diagnostics are separate maintainer artifacts. macOS remains
+one `companion-macos-arm64` artifact containing one permission-preserving tar.gz.
+Every upload fails if its file selection is empty.
