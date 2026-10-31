@@ -4,7 +4,7 @@
 
 `stop_reason` 为 complete、time_budget、node_limit、text_limit、stack_limit、panel_limit，或 domain_unavailable / panels_unavailable / root_unavailable。深度和子节点裁剪也令 truncated=true，即使全局没有停止。pending_nodes 是已知待遍历根节点数，不是其全部后代数；不可见节点的后代没有探测。elapsed_ms 仅为原有遍历预算区间，初始化/获取面板列表不在该区间，单个原生 getter 不能被中途抢占；15ms 不是硬实时保证。
 
-读取面仍仅支持 `UnityEngine.UIElements.TextElement`（含派生类）的 `get_text`；其他 widget 计数不等于其一定有文字。可见性仍仅是 `get_visible` 与有限、正宽高 worldBound，不能证明视口裁剪、遮挡或当前页面。诊断不会自动识别页面或关联足球实体/字段。深度上限从 28 调整为 48，文字上限从 80 调整为 240；15ms、2500 节点、120000 字节、面板/子节点/栈上限均未提高，也未增加 getter。Reader 拉取上限为 274（240 原 UI 事实 + 34 诊断）；投影读取最多 240 UI 文本，模型证据另设字符预算，诊断不进入模型证据。
+读取面仍仅支持 `UnityEngine.UIElements.TextElement`（含派生类）的 `get_text`；其他 widget 计数不等于其一定有文字。文本资格仍要求 `get_visible=true` 与有限、正宽高 worldBound；遍历资格单独只要求 `get_visible=true`。空/无效边界的可见布局节点不读取自身文本，但继续有界检查子节点，每个后代独立验证。`visible=false` 仍保守剪整树；这不是完整 Unity 可见性判定，也不能证明视口裁剪、遮挡或当前页面。诊断不会自动识别页面或关联足球实体/字段。深度上限从 28 调整为 48，文字上限从 80 调整为 240；15ms、2500 节点、120000 字节、面板/子节点/栈上限均未提高，也未增加 getter。Reader 拉取上限为 274（240 原 UI 事实 + 34 诊断）；投影读取最多 240 UI 文本，模型证据另设字符预算，诊断不进入模型证据。
 
 深度与路径准入：`max_depth=48`（根深度 0）、`max_path_length=128`。子节点超过任一边界时，在读取该子节点对象前跳过，分别增加 `depth_skipped` 或 `path_limit_skipped` 并令面板/采样 `truncated=true`。计数是被跳过的子树根，不是所有后代数。普通模式路径保持原始 `panelN/childIndex/...` 字符串，不截断、不哈希、不提升为稳定实体 ID；超过 128 字符的子树不会导致整个观测序列化失败。既有路径与 profile selector 语义不变；深入读取也不证明新文字的可见性或字段关联。
 
@@ -12,9 +12,9 @@
 
 ## 显式局部子树诊断（可选）
 
-仅当进程环境设置 `FOOTBALL_ASSISTANT_UI_FOCUS_PATH` 时启用。值必须为完整、规范的 `panelN/childIndex/...` 数字路径（也允许仅 panelN），最多 128 字符，panel 0..31、每级 child 0..511，不接受前导零、空白、空段、负号或尾随斜杠。环境变量不存在才使用常规采样；设为空值或无效值将 fail-closed，不自动回退。未硬编码任何游戏页面路径。
+可通过进程环境 `FOOTBALL_ASSISTANT_UI_FOCUS_PATH` 或已授权的本地热切配置指定。值必须为完整、规范的 `panelN/childIndex/...` 数字路径（也允许仅 panelN），最多 128 字符，panel 0..31、每级 child 0..511，不接受前导零、空白、空段、负号或尾随斜杠。环境变量不存在才使用常规采样；设为空值或无效值将 fail-closed，不自动回退。未硬编码任何游戏页面路径。
 
-只定位所选 panel 并沿指定索引读取现有子节点；祖先沿用 get_visible/worldBound 可用性筛选。路径解析祖先计入同一 2500 节点和 15ms 预算，getter 之间检查时间/节点边界；失败、索引不存在、祖先不可用或预算耗尽均只发送诊断，不扫描其余树作为替代。聚焦根的遍历深度从 0 计算，仍最多 48；聚焦模式输出 capture-local 的 `focus/childIndex/...` 相对路径（根为 `focus`），完整已验证根路径另存 `focus_root_path`。相对路径仍不得超过 128 字符，文字/字节/其他限制不变；普通模式的 `panelN/...` 完整路径不变。
+只定位所选 panel 并沿指定索引读取现有子节点；祖先使用与普通遍历相同的资格分离：get_visible=true 时允许下降，worldBound 无效只排除本节点文本；get_visible=false 仍阻止下降。路径解析祖先计入同一 2500 节点和 15ms 预算，getter 之间检查时间/节点边界；失败、索引不存在、祖先不可用或预算耗尽均只发送诊断，不扫描其余树作为替代。聚焦根的遍历深度从 0 计算，仍最多 48；聚焦模式输出 capture-local 的 `focus/childIndex/...` 相对路径（根为 `focus`），完整已验证根路径另存 `focus_root_path`。相对路径仍不得超过 128 字符，文字/字节/其他限制不变；普通模式的 `panelN/...` 完整路径不变。
 
 capture metrics 增加 `path_scope`（focus_relative / panel_absolute）、`identity_scope=capture_local_ui_path`、`focus_requested`、`focus_resolved`、`focus_root_path`（只输出通过校验的数字路径）、`focus_descent_nodes`、`depth_scope`。无效路径为 invalid_focus_path，不存在 panel 为 focus_panel_unavailable，解析过程可报告 focus_child_unavailable / focus_root_unavailable / focus_ancestor_ineligible 或原有预算停止原因。focus_resolved 只证明路径定位成功，不证明可见性、页面名称或足球实体；truncated/complete 仅描述所选子树，不能代表其余 UI。此功能仅是显式本地采样诊断，不是生产页面识别，也不会自动关联日期、对手等文本。
 
@@ -24,8 +24,8 @@ focus_relative 是显式实验采样坐标，不是稳定 UI/球员 ID；不同�
 
 在已设置合法 focus path 的进程中额外设置 `FOOTBALL_ASSISTANT_UI_WIDGET_DIAGNOSTICS=1` 才启用。最多 16 个类的 namespace/name（各 96 字符，截断显式标记）与类计数；最多前 32 个已访问节点样本和前 32 个被原有可见性规则剪枝的节点样本。未知类的溢出、样本裁剪、元数据错误和时间预算跳过均显式计数。类索引只在当前诊断内有效，不是对象 ID。
 
-样本仅含路径、阶段（focused_subtree 或失败的 focus_descent）、类索引、TextElement 支持标志、已读 visible/bounds 判定、原遍历已读取的 child_count 和剪枝原因，不含 UI 文本、字段值或业务对象。visible=false 时 bounds_valid=null；被剪枝节点 child_count=null，表示未读，不是零。不会为了填这些空值调用额外 UI getter，也不会探测被剪枝后代。已有 Identity 类元数据接口只在新类且未超出预算时查询，失败不会停掉原采样。
+样本仅含路径、阶段（focused_subtree 或文本资格不满足的 focus_descent）、类索引、TextElement 支持标志、已读 visible/bounds 判定、原遍历已读取的 child_count 和资格原因，不含 UI 文本、字段值或业务对象。`text_eligible` 表示可见且边界有效（是否支持文本另看 text_element_supported），`subtree_pruned` 仅表示 visible=false 的整树剪枝；`text_ineligible_bounds` 表示只排除本节点文本。后一类留在 visited，不再计入 pruned；summary 和 panel 的 `text_ineligible_bounds_nodes` 单独计数。visible=false 时 bounds_valid=null；被剪枝节点 child_count=null，表示未读，不是零。不会为了填这些空值调用额外 UI getter，也不会探测被剪枝后代。已有 Identity 类元数据接口只在新类且未超出预算时查询，失败不会停掉原采样。
 
 元数据按小批 JSON scalar fact 输出在 diagnostic/widgets/*，最多 28 条总诊断（含原 capture/panel/transport），每 scalar <=4000 字符；仍共用原 120000 字节、15ms、2500 节点预算，不进入模型证据。若聚焦路径在不可用祖先处失败，只记录该祖先类型/原因；不自动扩大读树。
 
-Unity 官方[元素管理说明](https://docs.unity3d.com/6000.0/Documentation/Manual/UIE-best-practices-for-managing-elements.html)指出 visibility:hidden 的后代可覆盖 visibility；[worldBound 说明](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/UIElements.VisualElement-worldBound.html)仅定义元素的变换后 AABB。因此现有整棵子树剪枝可能漏掉后代，但这不是 FM 日期缺失原因的实测证明。本次只定位哪类/哪处被剪枝，不修改可见性判断或后代遍历行为。
+Unity 官方[元素管理说明](https://docs.unity3d.com/6000.0/Documentation/Manual/UIE-best-practices-for-managing-elements.html)指出 visibility:hidden 的后代可覆盖 visibility；[worldBound 说明](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/UIElements.VisualElement-worldBound.html)仅定义元素的变换后 AABB。因此现有整棵子树剪枝可能漏掉后代，但这不是 FM 日期缺失原因的实测证明。策略 `traversal_policy=visible_descend_bounds_text_v2` 只修正可见但无有效自身边界的布局父节点：允许有界下降，不读其自身文本。不扩展 visible=false 后代覆盖行为，不新增 getter 或扫描预算；实际字段覆盖与当前球员身份仍需独立验证。capture metrics 明确 `hidden_ancestor_subtrees_pruned=true`、`pixel_visibility_verified=false`。

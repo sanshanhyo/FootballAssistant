@@ -33,6 +33,7 @@ public sealed class UiPanelDiagnostics
     public int visible_nodes { get; set; }
     public int visibility_false { get; set; }
     public int invalid_or_empty_bounds { get; set; }
+    public int text_ineligible_bounds_nodes { get; set; }
     public int text_element_nodes { get; set; }
     public int other_widget_nodes { get; set; }
     public int empty_text_nodes { get; set; }
@@ -44,6 +45,14 @@ public sealed class UiPanelDiagnostics
     public double elapsed_ms { get; set; }
     public string stop_reason { get; set; } = "complete";
     public bool truncated => stop_reason != "complete" || depth_skipped > 0 || path_limit_skipped > 0 || child_limit_skipped > 0;
+}
+
+// Conservative traversal heuristic, not complete pixel visibility. Hidden ancestors
+// remain pruned; an empty parent AABB does not establish its descendants' bounds.
+public readonly record struct UiTraversalEligibility(bool Visible, bool? BoundsValid)
+{
+    public bool CanDescend => Visible;
+    public bool CanReadText => Visible && BoundsValid == true;
 }
 
 // Metadata-only, opt-in instrumentation of the traversal already performed.
@@ -60,6 +69,7 @@ public sealed class UiWidgetInventory
     public IEnumerable<UiWidgetClass> Classes => classes.Values;
     public int ObservedNodes { get; private set; }
     public int PrunedNodes { get; private set; }
+    public int TextIneligibleNodes { get; private set; }
     public int UnclassifiedNodes { get; private set; }
     public int MetadataErrors { get; private set; }
     public int BudgetSkippedNodes { get; set; }
@@ -68,7 +78,9 @@ public sealed class UiWidgetInventory
         bool? boundsValid, int? childCount, Func<nint, (string Namespace, string Name)> identity)
     {
         ObservedNodes++;
-        var pruned = !visible || boundsValid != true;
+        var eligibility = new UiTraversalEligibility(visible, boundsValid);
+        var pruned = !eligibility.CanDescend;
+        if (visible && !eligibility.CanReadText) TextIneligibleNodes++;
         if (pruned) PrunedNodes++;
         if (!classes.TryGetValue(type, out var summary) && attemptedTypes.Count < MaximumClasses && attemptedTypes.Add(type))
         {
@@ -92,9 +104,22 @@ public sealed class UiWidgetInventory
         }
         if (Visited.Count >= MaximumSamples && (!pruned || Pruned.Count >= MaximumSamples)) return;
         var sample = new UiWidgetSample(path, phase, summary?.class_index, supported, visible, boundsValid, childCount,
-            !visible ? "visible_false" : boundsValid != true ? "invalid_or_empty_bounds" : "eligible");
+            !visible ? "visible_false" : !eligibility.CanReadText ? "text_ineligible_bounds" : "eligible",
+            eligibility.CanReadText, pruned);
         if (Visited.Count < MaximumSamples) Visited.Add(sample);
         if (pruned && Pruned.Count < MaximumSamples) Pruned.Add(sample);
+    }
+
+    // Focus descent observes eligibility before its existing childCount getter.
+    // Fill the recorded sample afterwards without querying the game again.
+    public void UpdateChildCount(string path, string phase, int childCount)
+    {
+        var index = Visited.FindIndex(sample => sample.path == path && sample.phase == phase && sample.child_count is null);
+        if (index < 0 || Visited[index].subtree_pruned) return;
+        var sample = Visited[index];
+        Visited[index] = sample with { child_count = childCount };
+        var summary = Classes.FirstOrDefault(item => item.class_index == sample.class_index);
+        if (summary is not null) { summary.child_count_observations++; summary.child_count_total += childCount; }
     }
 }
 
@@ -113,7 +138,7 @@ public sealed class UiWidgetClass
 }
 
 public sealed record UiWidgetSample(string path, string phase, int? class_index, bool text_element_supported,
-    bool visible, bool? bounds_valid, int? child_count, string eligibility);
+    bool visible, bool? bounds_valid, int? child_count, string eligibility, bool text_eligible, bool subtree_pruned);
 
 // Local operator control only. No UI/native getters, hooks, sockets or capture scheduling.
 public sealed record UiCaptureSelection(long Sequence, string FocusPath, bool WidgetDiagnostics);
@@ -419,7 +444,9 @@ public static class ObservationFactory
                 identity_scope = "capture_local_ui_path",
                 depth_scope = capture.FocusRequested ? "relative_to_requested_focus_root" : "relative_to_panel_root",
                 supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
-                visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"
+                visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility",
+                traversal_policy = "visible_descend_bounds_text_v2",
+                hidden_ancestor_subtrees_pruned = true, pixel_visibility_verified = false
             });
             foreach (var panel in capture.Panels) Diagnostic($"panel{panel.panel_index}", panel);
             if (capture.WidgetInventory is { } inventory)
@@ -427,7 +454,7 @@ public static class ObservationFactory
                 if (!capture.FocusRequested || capture.Panels.Count > 1)
                     throw new ArgumentException("Widget diagnostics require a single focused capture.");
                 Diagnostic("widgets/summary", new { observed_nodes = inventory.ObservedNodes,
-                    pruned_nodes = inventory.PrunedNodes, unclassified_nodes = inventory.UnclassifiedNodes,
+                    pruned_nodes = inventory.PrunedNodes, text_ineligible_bounds_nodes = inventory.TextIneligibleNodes, unclassified_nodes = inventory.UnclassifiedNodes,
                     metadata_errors = inventory.MetadataErrors, metadata_classes_attempted = inventory.MetadataClassesAttempted,
                     budget_skipped_nodes = inventory.BudgetSkippedNodes,
                     class_limit = UiWidgetInventory.MaximumClasses, sample_limit = UiWidgetInventory.MaximumSamples,

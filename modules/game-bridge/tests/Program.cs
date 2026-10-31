@@ -117,7 +117,7 @@ Assert(widgetInventory.Classes.First().nodes == 2 && widgetInventory.Classes.Fir
 var failedInventory = new UiWidgetInventory();
 failedInventory.Observe(1, "panel0/0", "focus_descent", false, true, false, null,
     _ => throw new InvalidOperationException("TEST missing class metadata"));
-Assert(failedInventory.MetadataErrors == 1 && failedInventory.Pruned.Single().eligibility == "invalid_or_empty_bounds", "metadata failure does not disable or change existing prune outcome");
+Assert(failedInventory.MetadataErrors == 1 && failedInventory.Pruned.Count == 0 && failedInventory.Visited.Single().eligibility == "text_ineligible_bounds", "metadata failure never converts a bounds-only text skip into subtree pruning");
 failedInventory.Observe(1, "focus/0", "focused_subtree", false, false, null, null,
     _ => throw new Exception("Failed class metadata should not be retried within capture"));
 Assert(failedInventory.MetadataErrors == 1 && failedInventory.MetadataClassesAttempted == 1, "failed metadata lookup cached for this capture");
@@ -134,6 +134,124 @@ using (var inventoryPage = JsonDocument.Parse(inventoryJson))
     Assert(inventoryDiagnostics.All(f => f.GetProperty("value").GetString()!.Length <= 4000), "Unicode class names fit scalar contract");
     Assert(inventoryFacts.Any(f => f.GetProperty("entity_kind").GetString() == "ui_element"), "bounded metadata leaves room for actual UI text");
 }
+
+// Pure synthetic trees exercise the shared traversal/text policy and path guard.
+// No game handles, native getters or process access are used by these fixtures.
+static (List<int> Texts, List<int> ChildCounts, List<int> Items, int Visited, string? Stop) WalkBoundsFixture(
+    Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> nodes,
+    int maximumNodes = 2500, bool expireAfterVisibility = false)
+{
+    var texts = new List<int>();
+    var childCounts = new List<int>();
+    var items = new List<int>();
+    var visited = 0;
+    var timeExpired = false;
+    var stack = new Stack<(int Node, string Path, int Depth)>();
+    stack.Push((1, "focus", 0));
+    var pathGuard = new UiPanelDiagnostics();
+    string? Limit() => timeExpired ? "time_budget" : visited >= maximumNodes ? "node_limit" : null;
+    while (stack.Count > 0)
+    {
+        var stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        var current = stack.Pop();
+        visited++;
+        var node = nodes[current.Node];
+        var eligibility = new UiTraversalEligibility(node.Visible, node.Bounds);
+        if (expireAfterVisibility) timeExpired = true;
+        if (!eligibility.CanDescend) continue;
+        stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        if (eligibility.CanReadText) texts.Add(current.Node);
+        stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        childCounts.Add(current.Node);
+        for (var index = Math.Min(node.Children.Length, 512) - 1; index >= 0; index--)
+        {
+            stopped = Limit();
+            if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+            if (!UiTraversalBounds.TryChildPath(current.Path, current.Depth, index, pathGuard, out var childPath)) continue;
+            items.Add(current.Node);
+            stack.Push((node.Children[index], childPath, current.Depth + 1));
+        }
+    }
+    return (texts, childCounts, items, visited, null);
+}
+foreach (var visibleValue in new[] { false, true })
+foreach (bool? boundsValue in new bool?[] { null, false, true })
+{
+    var eligibility = new UiTraversalEligibility(visibleValue, boundsValue);
+    Assert(eligibility.CanDescend == visibleValue && eligibility.CanReadText == (visibleValue && boundsValue == true),
+        "descent depends only on visibility while text also requires positive valid bounds");
+}
+var timedValidText = WalkBoundsFixture(new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+    [1] = (true, true, Array.Empty<int>())
+}, expireAfterVisibility: true);
+Assert(timedValidText.Stop == "time_budget" && timedValidText.Texts.Count == 0 && timedValidText.ChildCounts.Count == 0,
+    "a valid text node is not read after eligibility consumes the time budget");
+foreach (bool? emptyBounds in new bool?[] { false, null })
+{
+    var emptyParentTree = new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+        [1] = (true, emptyBounds, new[] { 2 }), [2] = (true, true, Array.Empty<int>())
+    };
+    var emptyParentResult = WalkBoundsFixture(emptyParentTree);
+    Assert(emptyParentResult.Texts.SequenceEqual(new[] { 2 }) && emptyParentResult.ChildCounts.Contains(1),
+        "empty/missing bounds parent is traversed but its text getter is never used");
+    var nodeLimited = WalkBoundsFixture(emptyParentTree, maximumNodes: 1);
+    Assert(nodeLimited.Stop == "node_limit" && nodeLimited.Visited == 1 && nodeLimited.Texts.Count == 0 &&
+        nodeLimited.ChildCounts.Count == 0 && nodeLimited.Items.Count == 0,
+        "bounds-only descent does not call child getters after the shared node budget expires");
+    var timeLimited = WalkBoundsFixture(emptyParentTree, expireAfterVisibility: true);
+    Assert(timeLimited.Stop == "time_budget" && timeLimited.Texts.Count == 0 &&
+        timeLimited.ChildCounts.Count == 0 && timeLimited.Items.Count == 0,
+        "time budget exhausted by eligibility check prevents text/childCount/item calls");
+}
+var emptyChain = new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+    [1] = (true, false, new[] { 2 }), [2] = (true, false, new[] { 3 }),
+    [3] = (true, true, Array.Empty<int>())
+};
+var emptyChainResult = WalkBoundsFixture(emptyChain);
+Assert(emptyChainResult.Texts.SequenceEqual(new[] { 3 }) && emptyChainResult.Visited == 3,
+    "each descendant independently validates bounds; empty child does not hide valid grandchild");
+emptyChain[1] = (false, null, new[] { 2 });
+var hiddenParentResult = WalkBoundsFixture(emptyChain);
+Assert(hiddenParentResult.Visited == 1 && hiddenParentResult.Texts.Count == 0 &&
+    hiddenParentResult.ChildCounts.Count == 0 && hiddenParentResult.Items.Count == 0,
+    "visible=false still conservatively prunes all descendants without child getters");
+emptyChain[1] = (true, false, new[] { 2 });
+Assert(UiFocusPath.TryParse("panel0/0/0", out var throughEmptyFocus), "synthetic deep focus parsed");
+var emptyFocusVisits = 0;
+var emptyFocusChildren = 0;
+Assert(throughEmptyFocus!.TryResolve(1, () => null,
+    node => new UiTraversalEligibility(emptyChain[(int)node].Visible, emptyChain[(int)node].Bounds).CanDescend,
+    node => { emptyFocusChildren++; return emptyChain[(int)node].Children.Length; },
+    (node, index) => emptyChain[(int)node].Children[index], () => emptyFocusVisits++,
+    out var emptyFocusRoot, out var emptyFocusReason) && emptyFocusRoot == 3 && emptyFocusVisits == 2 && emptyFocusChildren == 2,
+    "deep focus crosses visible empty-layout ancestors without reading ancestor text");
+emptyFocusVisits = emptyFocusChildren = 0;
+Assert(!throughEmptyFocus.TryResolve(1, () => emptyFocusVisits >= 1 ? "node_limit" : null,
+    node => new UiTraversalEligibility(emptyChain[(int)node].Visible, emptyChain[(int)node].Bounds).CanDescend,
+    node => { emptyFocusChildren++; return 1; }, (_, _) => throw new Exception("Item called after focus budget"),
+    () => emptyFocusVisits++, out emptyFocusRoot, out emptyFocusReason) && emptyFocusReason == "node_limit" && emptyFocusChildren == 0,
+    "focus descent across empty layout still checks shared budget before childCount/item");
+var ancestorInventory = new UiWidgetInventory();
+ancestorInventory.Observe(1, "panel0/0", "focus_descent", false, true, false, null, _ => ("TEST", "Layout"));
+ancestorInventory.UpdateChildCount("panel0/0", "focus_descent", 3);
+ancestorInventory.UpdateChildCount("panel0/0", "focus_descent", 3);
+Assert(ancestorInventory.Visited.Single().child_count == 3 &&
+    ancestorInventory.Classes.Single().child_count_observations == 1 && ancestorInventory.Classes.Single().child_count_total == 3,
+    "focus diagnostic fills an actually-read child count exactly once without extra game getters");
+var boundsOnlyInventory = new UiWidgetInventory();
+boundsOnlyInventory.Observe(1, "focus", "focused_subtree", true, true, false, 1, _ => ("TEST", "Layout"));
+Assert(boundsOnlyInventory.TextIneligibleNodes == 1 && boundsOnlyInventory.PrunedNodes == 0 &&
+    boundsOnlyInventory.Pruned.Count == 0 && !boundsOnlyInventory.Visited.Single().text_eligible &&
+    !boundsOnlyInventory.Visited.Single().subtree_pruned && boundsOnlyInventory.Visited.Single().child_count == 1 &&
+    boundsOnlyInventory.Classes.Single().invalid_or_empty_bounds == 1,
+    "diagnostics distinguish skipped node text from whole-subtree pruning and preserve known child count");
+boundsOnlyInventory.Observe(2, "focus/0", "focused_subtree", true, false, null, null, _ => ("TEST", "Hidden"));
+Assert(boundsOnlyInventory.PrunedNodes == 1 && boundsOnlyInventory.Pruned.Single().subtree_pruned &&
+    !boundsOnlyInventory.Pruned.Single().text_eligible && boundsOnlyInventory.Pruned.Single().child_count is null,
+    "genuinely pruned subtree still reports unread children as unknown");
 
 // TEST-only generic paths, never a hardcoded game/page selection.
 foreach (var invalidFocus in new[] { "", " ", "panel", "panel00", "Panel0", "panel32", "panel-1", "panel0/", "panel0//1", "panel0/00", "panel0/512", "panel0/-1", "panel0/1x", "panel0/1\n", "panel0/" + new string('1', 123) })

@@ -106,22 +106,21 @@ internal sealed partial class NativeUiReader : IDisposable
         return Call(objectClass(instance), instance, "get_Item", (nint)arguments, 1);
     }
 
-    private bool Visible(nint element, UiPanelDiagnostics diagnostics) => Visible(element, diagnostics, out _, out _);
-
-    private bool Visible(nint element, UiPanelDiagnostics diagnostics, out bool visibleFlag, out bool? boundsValid)
+    private UiTraversalEligibility ReadEligibility(nint element, UiPanelDiagnostics diagnostics)
     {
-        boundsValid = null;
-        visibleFlag = Boolean(Get(element, "get_visible"));
-        if (!visibleFlag) { diagnostics.visibility_false++; return false; }
-        boundsValid = false;
+        var visibleFlag = Boolean(Get(element, "get_visible"));
+        if (!visibleFlag) { diagnostics.visibility_false++; return new(false, null); }
         var rect = Get(element, "get_worldBound");
-        if (rect == 0) { diagnostics.invalid_or_empty_bounds++; return false; }
+        if (rect == 0)
+        {
+            diagnostics.invalid_or_empty_bounds++;
+            return new(true, false);
+        }
         var values = new float[4];
         Marshal.Copy(unbox(rect), values, 0, values.Length);
-        var visible = values.All(float.IsFinite) && values[2] > 0 && values[3] > 0;
-        boundsValid = visible;
-        if (!visible) diagnostics.invalid_or_empty_bounds++;
-        return visible;
+        var boundsValid = values.All(float.IsFinite) && values[2] > 0 && values[3] > 0;
+        if (!boundsValid) diagnostics.invalid_or_empty_bounds++;
+        return new(true, boundsValid);
     }
 
     public IReadOnlyList<UiText> Capture(UiCaptureSelection? selection = null)
@@ -177,19 +176,29 @@ internal sealed partial class NativeUiReader : IDisposable
             var root = panel == 0 ? 0 : Get(panel, "get_visualTree");
             if (focus is not null)
             {
+                string ancestorPath = "";
                 if (!focus.TryResolve(root, Limit, element => {
-                    var eligible = Visible(element, diagnostics, out var ancestorVisible, out var ancestorBounds);
-                    if (eligible) diagnostics.visible_nodes++;
-                    else if (output.WidgetInventory is not null)
+                    var eligibility = ReadEligibility(element, diagnostics);
+                    if (eligibility.CanReadText) diagnostics.visible_nodes++;
+                    else if (eligibility.CanDescend) diagnostics.text_ineligible_bounds_nodes++;
+                    var ancestorDepth = output.FocusDescentNodes - 1;
+                    ancestorPath = $"panel{panelIndex}" + string.Concat(focus.ChildIndices.Take(ancestorDepth).Select(index => $"/{index}"));
+                    if (!eligibility.CanReadText && output.WidgetInventory is not null)
                     {
-                        var ancestorType = objectClass(element);
-                        var ancestorDepth = output.FocusDescentNodes - 1;
-                        var ancestorPath = $"panel{panelIndex}" + string.Concat(focus.ChildIndices.Take(ancestorDepth).Select(index => $"/{index}"));
-                        ObserveWidget(ancestorType, ancestorPath, "focus_descent", assignable(textElement, ancestorType), ancestorVisible, ancestorBounds, null);
+                        if (Limit() is null)
+                        {
+                            var ancestorType = objectClass(element);
+                            ObserveWidget(ancestorType, ancestorPath, "focus_descent", assignable(textElement, ancestorType), eligibility.Visible, eligibility.BoundsValid, null);
+                        }
+                        else output.WidgetInventory.BudgetSkippedNodes++;
                     }
-                    return eligible;
+                    return eligibility.CanDescend;
                 },
-                    element => Number(Get(element, "get_childCount")), At,
+                    element => {
+                        var childCount = Number(Get(element, "get_childCount"));
+                        output.WidgetInventory?.UpdateChildCount(ancestorPath, "focus_descent", childCount);
+                        return childCount;
+                    }, At,
                     () => { visited++; diagnostics.visited_nodes++; output.FocusDescentNodes++; },
                     out root, out var focusReason))
                 {
@@ -210,22 +219,32 @@ internal sealed partial class NativeUiReader : IDisposable
                 visited++;
                 diagnostics.visited_nodes++;
                 if (element == 0) continue;
-                var eligible = Visible(element, diagnostics, out var visibleFlag, out var boundsValid);
-                if (!eligible)
+                var eligibility = ReadEligibility(element, diagnostics);
+                if (!eligibility.CanDescend)
                 {
                     if (output.WidgetInventory is not null)
                     {
-                        var prunedType = objectClass(element);
-                        ObserveWidget(prunedType, path, "focused_subtree", assignable(textElement, prunedType), visibleFlag, boundsValid, null);
+                        if (Limit() is null)
+                        {
+                            var prunedType = objectClass(element);
+                            ObserveWidget(prunedType, path, "focused_subtree", assignable(textElement, prunedType), eligibility.Visible, eligibility.BoundsValid, null);
+                        }
+                        else output.WidgetInventory.BudgetSkippedNodes++;
                     }
-                    continue; // Diagnostics never change pruning or read rejected descendants.
+                    continue; // Hidden ancestors remain conservatively pruned.
                 }
-                diagnostics.visible_nodes++;
+                if (eligibility.CanReadText) diagnostics.visible_nodes++;
+                else diagnostics.text_ineligible_bounds_nodes++;
+                limit = Limit();
+                if (limit is not null) { diagnostics.stop_reason = output.StopReason = limit; break; }
                 var type = objectClass(element);
                 var supported = assignable(textElement, type);
-                if (supported)
+                if (supported) diagnostics.text_element_nodes++;
+                else diagnostics.other_widget_nodes++;
+                if (supported && eligibility.CanReadText)
                 {
-                    diagnostics.text_element_nodes++;
+                    limit = Limit();
+                    if (limit is not null) { diagnostics.stop_reason = output.StopReason = limit; break; }
                     var text = Text(Get(element, "get_text")).Trim();
                     if (!string.IsNullOrWhiteSpace(text))
                     {
@@ -234,9 +253,11 @@ internal sealed partial class NativeUiReader : IDisposable
                     }
                     else diagnostics.empty_text_nodes++;
                 }
-                else diagnostics.other_widget_nodes++;
+                // Bounds exclude only this node's text, never infer child bounds.
+                limit = Limit();
+                if (limit is not null) { diagnostics.stop_reason = output.StopReason = limit; break; }
                 var childCount = Number(Get(element, "get_childCount"));
-                ObserveWidget(type, path, "focused_subtree", supported, visibleFlag, boundsValid, childCount);
+                ObserveWidget(type, path, "focused_subtree", supported, eligibility.Visible, eligibility.BoundsValid, childCount);
                 var children = Math.Clamp(childCount, 0, 512);
                 diagnostics.child_limit_skipped += Math.Max(0, childCount - children);
                 for (var childIndex = children - 1; childIndex >= 0; childIndex--)
