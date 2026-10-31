@@ -19,6 +19,7 @@ public sealed class UiCapture : List<UiText>
     public bool FocusResolved { get; set; }
     public string? FocusRootPath { get; set; }
     public int FocusDescentNodes { get; set; }
+    public UiWidgetInventory? WidgetInventory { get; set; }
     public double ElapsedMs { get; set; }
     public string StopReason { get; set; } = "complete";
     public bool Truncated => StopReason != "complete" || Panels.Any(p => p.truncated);
@@ -43,6 +44,75 @@ public sealed class UiPanelDiagnostics
     public string stop_reason { get; set; } = "complete";
     public bool truncated => stop_reason != "complete" || depth_skipped > 0 || path_limit_skipped > 0 || child_limit_skipped > 0;
 }
+
+// Metadata-only, opt-in instrumentation of the traversal already performed.
+public sealed class UiWidgetInventory
+{
+    public const string EnvironmentVariable = "FOOTBALL_ASSISTANT_UI_WIDGET_DIAGNOSTICS";
+    public const int MaximumClasses = 16;
+    public const int MaximumSamples = 32;
+    private readonly Dictionary<nint, UiWidgetClass> classes = new();
+    private readonly HashSet<nint> attemptedTypes = new();
+    public int MetadataClassesAttempted => attemptedTypes.Count;
+    public List<UiWidgetSample> Visited { get; } = new();
+    public List<UiWidgetSample> Pruned { get; } = new();
+    public IEnumerable<UiWidgetClass> Classes => classes.Values;
+    public int ObservedNodes { get; private set; }
+    public int PrunedNodes { get; private set; }
+    public int UnclassifiedNodes { get; private set; }
+    public int MetadataErrors { get; private set; }
+    public int BudgetSkippedNodes { get; set; }
+
+    public void Observe(nint type, string path, string phase, bool supported, bool visible,
+        bool? boundsValid, int? childCount, Func<nint, (string Namespace, string Name)> identity)
+    {
+        ObservedNodes++;
+        var pruned = !visible || boundsValid != true;
+        if (pruned) PrunedNodes++;
+        if (!classes.TryGetValue(type, out var summary) && attemptedTypes.Count < MaximumClasses && attemptedTypes.Add(type))
+        {
+            try
+            {
+                var (ns, name) = identity(type);
+                summary = new UiWidgetClass { class_index = classes.Count, @namespace = ns[..Math.Min(ns.Length, 96)],
+                    name = name[..Math.Min(name.Length, 96)], name_truncated = ns.Length > 96 || name.Length > 96 };
+                classes[type] = summary;
+            }
+            catch (Exception) { MetadataErrors++; } // Diagnostic failure never disables capture.
+        }
+        if (summary is null) UnclassifiedNodes++;
+        else
+        {
+            summary.nodes++;
+            if (!visible) summary.visible_false++;
+            if (boundsValid == false) summary.invalid_or_empty_bounds++;
+            if (supported) summary.text_element_nodes++;
+            if (childCount.HasValue) { summary.child_count_observations++; summary.child_count_total += childCount.Value; }
+        }
+        if (Visited.Count >= MaximumSamples && (!pruned || Pruned.Count >= MaximumSamples)) return;
+        var sample = new UiWidgetSample(path, phase, summary?.class_index, supported, visible, boundsValid, childCount,
+            !visible ? "visible_false" : boundsValid != true ? "invalid_or_empty_bounds" : "eligible");
+        if (Visited.Count < MaximumSamples) Visited.Add(sample);
+        if (pruned && Pruned.Count < MaximumSamples) Pruned.Add(sample);
+    }
+}
+
+public sealed class UiWidgetClass
+{
+    public int class_index { get; set; }
+    public string @namespace { get; set; } = "";
+    public string name { get; set; } = "";
+    public bool name_truncated { get; set; }
+    public int nodes { get; set; }
+    public int visible_false { get; set; }
+    public int invalid_or_empty_bounds { get; set; }
+    public int text_element_nodes { get; set; }
+    public int child_count_observations { get; set; }
+    public long child_count_total { get; set; }
+}
+
+public sealed record UiWidgetSample(string path, string phase, int? class_index, bool text_element_supported,
+    bool visible, bool? bounds_valid, int? child_count, string eligibility);
 
 // Literal UI hierarchy paths only: never hash/shorten them into apparent stable IDs.
 internal static class UiTraversalBounds
@@ -170,6 +240,28 @@ public static class ObservationFactory
                 visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"
             });
             foreach (var panel in capture.Panels) Diagnostic($"panel{panel.panel_index}", panel);
+            if (capture.WidgetInventory is { } inventory)
+            {
+                if (!capture.FocusRequested || capture.Panels.Count > 1)
+                    throw new ArgumentException("Widget diagnostics require a single focused capture.");
+                Diagnostic("widgets/summary", new { observed_nodes = inventory.ObservedNodes,
+                    pruned_nodes = inventory.PrunedNodes, unclassified_nodes = inventory.UnclassifiedNodes,
+                    metadata_errors = inventory.MetadataErrors, metadata_classes_attempted = inventory.MetadataClassesAttempted,
+                    budget_skipped_nodes = inventory.BudgetSkippedNodes,
+                    class_limit = UiWidgetInventory.MaximumClasses, sample_limit = UiWidgetInventory.MaximumSamples,
+                    class_summary_incomplete = inventory.UnclassifiedNodes > 0, pruned_children_read = false,
+                    visited_samples_truncated = inventory.ObservedNodes > inventory.Visited.Count,
+                    pruned_samples_truncated = inventory.PrunedNodes > inventory.Pruned.Count,
+                    descendant_visibility = "unknown_for_pruned_subtrees", values_read = "none_metadata_only" });
+                // Bounded batches keep every scalar <=4000 chars and total diagnostics <=34.
+                var widgetClasses = inventory.Classes.ToArray();
+                for (var i = 0; i < widgetClasses.Length; i += 2)
+                    Diagnostic($"widgets/classes{i / 2}", widgetClasses.Skip(i).Take(2).ToArray());
+                for (var i = 0; i < inventory.Visited.Count; i += 4)
+                    Diagnostic($"widgets/visited{i / 4}", inventory.Visited.Skip(i).Take(4).ToArray());
+                for (var i = 0; i < inventory.Pruned.Count; i += 4)
+                    Diagnostic($"widgets/pruned{i / 4}", inventory.Pruned.Skip(i).Take(4).ToArray());
+            }
         }
         var diagnosticCount = facts.Count;
         foreach (var text in texts)

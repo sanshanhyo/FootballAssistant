@@ -106,14 +106,20 @@ internal sealed partial class NativeUiReader : IDisposable
         return Call(objectClass(instance), instance, "get_Item", (nint)arguments, 1);
     }
 
-    private bool Visible(nint element, UiPanelDiagnostics diagnostics)
+    private bool Visible(nint element, UiPanelDiagnostics diagnostics) => Visible(element, diagnostics, out _, out _);
+
+    private bool Visible(nint element, UiPanelDiagnostics diagnostics, out bool visibleFlag, out bool? boundsValid)
     {
-        if (!Boolean(Get(element, "get_visible"))) { diagnostics.visibility_false++; return false; }
+        boundsValid = null;
+        visibleFlag = Boolean(Get(element, "get_visible"));
+        if (!visibleFlag) { diagnostics.visibility_false++; return false; }
+        boundsValid = false;
         var rect = Get(element, "get_worldBound");
         if (rect == 0) { diagnostics.invalid_or_empty_bounds++; return false; }
         var values = new float[4];
         Marshal.Copy(unbox(rect), values, 0, values.Length);
         var visible = values.All(float.IsFinite) && values[2] > 0 && values[3] > 0;
+        boundsValid = visible;
         if (!visible) diagnostics.invalid_or_empty_bounds++;
         return visible;
     }
@@ -131,6 +137,8 @@ internal sealed partial class NativeUiReader : IDisposable
             if (!UiFocusPath.TryParse(requestedFocus, out focus)) { output.StopReason = "invalid_focus_path"; return output; }
             output.FocusRootPath = focus!.Path; // Only canonical numeric paths enter diagnostics.
         }
+        if (focus is not null && Environment.GetEnvironmentVariable(UiWidgetInventory.EnvironmentVariable) == "1")
+            output.WidgetInventory = new UiWidgetInventory();
         if (domainGet() == 0) { output.StopReason = "domain_unavailable"; return output; }
         runtimeUtility = runtimeUtility == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "UIElementsRuntimeUtility") : runtimeUtility;
         textElement = textElement == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "TextElement") : textElement;
@@ -140,6 +148,14 @@ internal sealed partial class NativeUiReader : IDisposable
         var count = Math.Clamp(output.PanelsAvailable, 0, 32);
         var budget = Stopwatch.StartNew();
         var visited = 0;
+        void ObserveWidget(nint type, string path, string phase, bool supported, bool visibleFlag, bool? boundsValid, int? childCount)
+        {
+            var inventory = output.WidgetInventory;
+            if (inventory is null) return;
+            if (budget.Elapsed.TotalMilliseconds > 15) { inventory.BudgetSkippedNodes++; return; }
+            inventory.Observe(type, path, phase, supported, visibleFlag, boundsValid, childCount,
+                value => { var identity = Identity(value); return (identity.Namespace, identity.Name); });
+        }
         string? Limit() => budget.Elapsed.TotalMilliseconds > 15 ? "time_budget" :
             visited >= 2500 ? "node_limit" : output.Count >= UiTraversalBounds.MaximumTexts ? "text_limit" : null;
         if (focus is not null && focus.PanelIndex >= count)
@@ -161,7 +177,18 @@ internal sealed partial class NativeUiReader : IDisposable
             var root = panel == 0 ? 0 : Get(panel, "get_visualTree");
             if (focus is not null)
             {
-                if (!focus.TryResolve(root, Limit, element => { var eligible = Visible(element, diagnostics); if (eligible) diagnostics.visible_nodes++; return eligible; },
+                if (!focus.TryResolve(root, Limit, element => {
+                    var eligible = Visible(element, diagnostics, out var ancestorVisible, out var ancestorBounds);
+                    if (eligible) diagnostics.visible_nodes++;
+                    else if (output.WidgetInventory is not null)
+                    {
+                        var ancestorType = objectClass(element);
+                        var ancestorDepth = output.FocusDescentNodes - 1;
+                        var ancestorPath = $"panel{panelIndex}" + string.Concat(focus.ChildIndices.Take(ancestorDepth).Select(index => $"/{index}"));
+                        ObserveWidget(ancestorType, ancestorPath, "focus_descent", assignable(textElement, ancestorType), ancestorVisible, ancestorBounds, null);
+                    }
+                    return eligible;
+                },
                     element => Number(Get(element, "get_childCount")), At,
                     () => { visited++; diagnostics.visited_nodes++; output.FocusDescentNodes++; },
                     out root, out var focusReason))
@@ -183,10 +210,20 @@ internal sealed partial class NativeUiReader : IDisposable
                 visited++;
                 diagnostics.visited_nodes++;
                 if (element == 0) continue;
-                if (!Visible(element, diagnostics)) continue;
+                var eligible = Visible(element, diagnostics, out var visibleFlag, out var boundsValid);
+                if (!eligible)
+                {
+                    if (output.WidgetInventory is not null)
+                    {
+                        var prunedType = objectClass(element);
+                        ObserveWidget(prunedType, path, "focused_subtree", assignable(textElement, prunedType), visibleFlag, boundsValid, null);
+                    }
+                    continue; // Diagnostics never change pruning or read rejected descendants.
+                }
                 diagnostics.visible_nodes++;
                 var type = objectClass(element);
-                if (assignable(textElement, type))
+                var supported = assignable(textElement, type);
+                if (supported)
                 {
                     diagnostics.text_element_nodes++;
                     var text = Text(Get(element, "get_text")).Trim();
@@ -199,6 +236,7 @@ internal sealed partial class NativeUiReader : IDisposable
                 }
                 else diagnostics.other_widget_nodes++;
                 var childCount = Number(Get(element, "get_childCount"));
+                ObserveWidget(type, path, "focused_subtree", supported, visibleFlag, boundsValid, childCount);
                 var children = Math.Clamp(childCount, 0, 512);
                 diagnostics.child_limit_skipped += Math.Max(0, childCount - children);
                 for (var childIndex = children - 1; childIndex >= 0; childIndex--)

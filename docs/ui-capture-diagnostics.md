@@ -19,3 +19,13 @@
 capture metrics 增加 `path_scope`（focus_relative / panel_absolute）、`identity_scope=capture_local_ui_path`、`focus_requested`、`focus_resolved`、`focus_root_path`（只输出通过校验的数字路径）、`focus_descent_nodes`、`depth_scope`。无效路径为 invalid_focus_path，不存在 panel 为 focus_panel_unavailable，解析过程可报告 focus_child_unavailable / focus_root_unavailable / focus_ancestor_ineligible 或原有预算停止原因。focus_resolved 只证明路径定位成功，不证明可见性、页面名称或足球实体；truncated/complete 仅描述所选子树，不能代表其余 UI。此功能仅是显式本地采样诊断，不是生产页面识别，也不会自动关联日期、对手等文本。
 
 focus_relative 是显式实验采样坐标，不是稳定 UI/球员 ID；不同采样根的 `focus/0` 不可合并。display profile 对相对模式明确 fail-closed，不套用原 panel selector。UI advice 仅保留严格校验后的 path_scope/数字 focus_root_path/identity_scope 来源上下文，不将原始诊断值作为模型指令或字段事实；生成后完整文本指纹包括该 scope/root，防止相同相对路径/文字跨聚焦根被误判为未变化。缺少 scope 的旧普通采样默认 panel_absolute；重复或损坏 capture 诊断、非法根路径、缺少相对路径所需 scope 均被拒绝。此前 10 个 path_limit_skipped 仅证明子树被略过，不证明其中存在日期/时间；相对路径只消除已知前缀长度损失，实际字段覆盖仍需单独观察。
+
+## 聚焦子树 widget 元数据诊断（可选，不改变遍历）
+
+在已设置合法 focus path 的进程中额外设置 `FOOTBALL_ASSISTANT_UI_WIDGET_DIAGNOSTICS=1` 才启用。最多 16 个类的 namespace/name（各 96 字符，截断显式标记）与类计数；最多前 32 个已访问节点样本和前 32 个被原有可见性规则剪枝的节点样本。未知类的溢出、样本裁剪、元数据错误和时间预算跳过均显式计数。类索引只在当前诊断内有效，不是对象 ID。
+
+样本仅含路径、阶段（focused_subtree 或失败的 focus_descent）、类索引、TextElement 支持标志、已读 visible/bounds 判定、原遍历已读取的 child_count 和剪枝原因，不含 UI 文本、字段值或业务对象。visible=false 时 bounds_valid=null；被剪枝节点 child_count=null，表示未读，不是零。不会为了填这些空值调用额外 UI getter，也不会探测被剪枝后代。已有 Identity 类元数据接口只在新类且未超出预算时查询，失败不会停掉原采样。
+
+元数据按小批 JSON scalar fact 输出在 diagnostic/widgets/*，最多 28 条总诊断（含原 capture/panel/transport），每 scalar <=4000 字符；仍共用原 120000 字节、15ms、2500 节点预算，不进入模型证据。若聚焦路径在不可用祖先处失败，只记录该祖先类型/原因；不自动扩大读树。
+
+Unity 官方[元素管理说明](https://docs.unity3d.com/6000.0/Documentation/Manual/UIE-best-practices-for-managing-elements.html)指出 visibility:hidden 的后代可覆盖 visibility；[worldBound 说明](https://docs.unity3d.com/6000.0/Documentation/ScriptReference/UIElements.VisualElement-worldBound.html)仅定义元素的变换后 AABB。因此现有整棵子树剪枝可能漏掉后代，但这不是 FM 日期缺失原因的实测证明。本次只定位哪类/哪处被剪枝，不修改可见性判断或后代遍历行为。

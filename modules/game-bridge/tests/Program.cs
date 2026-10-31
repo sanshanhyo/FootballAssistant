@@ -100,6 +100,41 @@ Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadB
 using (var page = JsonDocument.Parse(chinese))
     Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 240, "page reduced to byte budget");
 
+// Widget inventory uses only already-observed UI metadata; no native/game objects.
+var widgetInventory = new UiWidgetInventory();
+var identityCalls = 0;
+for (var i = 0; i < 40; i++)
+    widgetInventory.Observe(i + 1, $"focus/{i}", "focused_subtree", i % 2 == 0, false, null, null,
+        _ => { identityCalls++; return (new string('类', 120), new string('型', 120)); });
+Assert(widgetInventory.Classes.Count() == 16 && identityCalls == 16, "class metadata lookups capped at16 unique types");
+Assert(widgetInventory.Visited.Count == 32 && widgetInventory.Pruned.Count == 32, "visited and pruned samples each capped at32");
+Assert(widgetInventory.ObservedNodes == 40 && widgetInventory.PrunedNodes == 40 && widgetInventory.UnclassifiedNodes == 24, "sample and class truncation retain observed totals");
+Assert(widgetInventory.Classes.All(c => c.name_truncated && c.name.Length == 96 && c.@namespace.Length == 96), "metadata names bounded with explicit truncation");
+Assert(widgetInventory.Pruned.All(s => s.bounds_valid is null && s.child_count is null), "unread bounds/children never fabricated as false/zero");
+widgetInventory.Observe(1, "focus/0/0", "focused_subtree", true, true, true, 2,
+    _ => throw new Exception("Cached class unexpectedly queried again"));
+Assert(widgetInventory.Classes.First().nodes == 2 && widgetInventory.Classes.First().child_count_total == 2, "cached class histogram aggregates eligible metadata");
+var failedInventory = new UiWidgetInventory();
+failedInventory.Observe(1, "panel0/0", "focus_descent", false, true, false, null,
+    _ => throw new InvalidOperationException("TEST missing class metadata"));
+Assert(failedInventory.MetadataErrors == 1 && failedInventory.Pruned.Single().eligibility == "invalid_or_empty_bounds", "metadata failure does not disable or change existing prune outcome");
+failedInventory.Observe(1, "focus/0", "focused_subtree", false, false, null, null,
+    _ => throw new Exception("Failed class metadata should not be retried within capture"));
+Assert(failedInventory.MetadataErrors == 1 && failedInventory.MetadataClassesAttempted == 1, "failed metadata lookup cached for this capture");
+var inventoryCapture = new UiCapture { FocusRequested = true, FocusResolved = true, FocusRootPath = "panel0/0", WidgetInventory = widgetInventory };
+inventoryCapture.Panels.Add(new UiPanelDiagnostics());
+inventoryCapture.AddRange(Enumerable.Range(0, 240).Select(i => new UiText($"focus/{i}", new string('球', 1000))));
+var inventoryJson = ObservationFactory.Create(inventoryCapture, null, "offline-widget-inventory");
+Assert(Encoding.UTF8.GetByteCount(inventoryJson) <= ObservationFactory.MaximumPayloadBytes, "inventory shares unchanged120KB transport budget");
+using (var inventoryPage = JsonDocument.Parse(inventoryJson))
+{
+    var inventoryFacts = inventoryPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    var inventoryDiagnostics = inventoryFacts.Where(f => f.GetProperty("entity_kind").GetString() == "ui_capture_diagnostic").ToArray();
+    Assert(inventoryDiagnostics.Length <= 34, "bounded inventory fits existing diagnostic fact allowance");
+    Assert(inventoryDiagnostics.All(f => f.GetProperty("value").GetString()!.Length <= 4000), "Unicode class names fit scalar contract");
+    Assert(inventoryFacts.Any(f => f.GetProperty("entity_kind").GetString() == "ui_element"), "bounded metadata leaves room for actual UI text");
+}
+
 // TEST-only generic paths, never a hardcoded game/page selection.
 foreach (var invalidFocus in new[] { "", " ", "panel", "panel00", "Panel0", "panel32", "panel-1", "panel0/", "panel0//1", "panel0/00", "panel0/512", "panel0/-1", "panel0/1x", "panel0/1\n", "panel0/" + new string('1', 123) })
     Assert(!UiFocusPath.TryParse(invalidFocus, out _), "invalid focus grammar fails closed");
