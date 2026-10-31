@@ -9,6 +9,36 @@ namespace FootballAssistant.GameBridge;
 
 public sealed record UiText(string ElementId, string Text);
 
+// Diagnostics describe traversal only, never screen identity or football semantics.
+public sealed class UiCapture : List<UiText>
+{
+    public UiCapture() : base(80) { }
+    public List<UiPanelDiagnostics> Panels { get; } = new();
+    public int PanelsAvailable { get; set; }
+    public double ElapsedMs { get; set; }
+    public string StopReason { get; set; } = "complete";
+    public bool Truncated => StopReason != "complete" || Panels.Any(p => p.truncated);
+}
+
+public sealed class UiPanelDiagnostics
+{
+    public int panel_index { get; set; }
+    public int visited_nodes { get; set; }
+    public int visible_nodes { get; set; }
+    public int visibility_false { get; set; }
+    public int invalid_or_empty_bounds { get; set; }
+    public int text_element_nodes { get; set; }
+    public int other_widget_nodes { get; set; }
+    public int empty_text_nodes { get; set; }
+    public int emitted_texts { get; set; }
+    public int depth_skipped { get; set; }
+    public int child_limit_skipped { get; set; }
+    public int pending_nodes { get; set; }
+    public double elapsed_ms { get; set; }
+    public string stop_reason { get; set; } = "complete";
+    public bool truncated => stop_reason != "complete" || depth_skipped > 0 || child_limit_skipped > 0;
+}
+
 public static class ObservationFactory
 {
     public const string AdapterVersion = "0.4.0";
@@ -17,7 +47,7 @@ public static class ObservationFactory
 
     public static string Create(IReadOnlyList<UiText> texts, string? gameBuild, string sessionId)
     {
-        if (texts.Count is < 1 or > 120)
+        if (texts.Count > 120 || (texts.Count == 0 && texts is not UiCapture))
             throw new ArgumentOutOfRangeException(nameof(texts));
         if (texts.Any(t => string.IsNullOrWhiteSpace(t.Text) || t.Text.Length > 4000 || t.ElementId.Length > 128))
             throw new ArgumentException("UI text must fit the observation contract.", nameof(texts));
@@ -25,7 +55,32 @@ public static class ObservationFactory
             throw new ArgumentException("Provenance values must be bounded.");
 
         var facts = new List<object>();
-        var estimatedBytes = 2048;
+        var estimatedBytes = 3072;
+        // Each diagnostic is a bounded JSON string scalar in the existing fact protocol.
+        // Reserve its actual serialized size before fitting texts to the byte budget.
+        void Diagnostic(string id, object metrics)
+        {
+            var value = JsonSerializer.Serialize(metrics);
+            if (value.Length > 4000) throw new ArgumentException("UI diagnostics exceed scalar limit.");
+            var fact = new { entity_kind = "ui_capture_diagnostic", entity_id = "diagnostic/" + id, field = "capture_metrics", value };
+            estimatedBytes += JsonSerializer.SerializeToUtf8Bytes(fact).Length + 1;
+            facts.Add(fact);
+        }
+        var capture = texts as UiCapture;
+        if (capture is not null)
+        {
+            if (capture.Panels.Count > 32) throw new ArgumentException("UI panel diagnostics exceed limit.");
+            Diagnostic("capture", new {
+                panels_available = capture.PanelsAvailable, panels_visited = capture.Panels.Count,
+                visited_nodes = capture.Panels.Sum(p => p.visited_nodes),
+                elapsed_ms = capture.ElapsedMs, stop_reason = capture.StopReason, truncated = capture.Truncated,
+                captured_texts = texts.Count, max_texts = 80, max_nodes = 2500, budget_ms = 15,
+                supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
+                visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"
+            });
+            foreach (var panel in capture.Panels) Diagnostic($"panel{panel.panel_index}", panel);
+        }
+        var diagnosticCount = facts.Count;
         foreach (var text in texts)
         {
             var fact = new { entity_kind = "ui_element", entity_id = text.ElementId, field = "ui_tree_text", value = text.Text };
@@ -34,6 +89,10 @@ public static class ObservationFactory
             facts.Add(fact);
             estimatedBytes += bytes;
         }
+        if (capture is not null)
+            Diagnostic("transport", new { emitted_texts = facts.Count - diagnosticCount,
+                omitted_texts = texts.Count - (facts.Count - diagnosticCount),
+                truncated = texts.Count > facts.Count - diagnosticCount, stop_reason = texts.Count > facts.Count - diagnosticCount ? "payload_byte_limit" : "complete" });
         if (facts.Count == 0) throw new ArgumentException("No text fits the bounded observation.");
 
         var now = DateTimeOffset.UtcNow.ToString("O");

@@ -1,7 +1,7 @@
 """Alpha current-capture text evidence, deliberately not native business facts."""
 from datetime import datetime, timezone
 
-from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, _time
+from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, MAX_FACTS, MAX_UI_FACTS, MAX_DIAGNOSTIC_FACTS, _time
 from .business_advice import CAPABILITIES
 
 LIMITATIONS = [
@@ -55,8 +55,19 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
         require(envelope.get('captured_at') == status.get('last_captured_at') and
                 envelope.get('observed_at') == status.get('observed_at'), 'event_mismatch')
         facts = snapshot.get('facts')
-        require(isinstance(facts, list) and 0 < len(facts) <= 80 and
+        require(isinstance(facts, list) and 0 < len(facts) <= MAX_FACTS and
                 snapshot.get('has_more') is False and snapshot.get('facts_total') == len(facts), 'ui_page_missing_or_incomplete')
+        diagnostics = [fact for fact in facts if isinstance(fact, dict)
+                       and fact.get('entity_kind') == 'ui_capture_diagnostic']
+        require(len(diagnostics) <= MAX_DIAGNOSTIC_FACTS, 'ui_page_missing_or_incomplete')
+        for diagnostic in diagnostics:
+            require(diagnostic.get('field') == 'capture_metrics'
+                    and isinstance(diagnostic.get('entity_id'), str)
+                    and diagnostic['entity_id'].startswith('diagnostic/')
+                    and isinstance(diagnostic.get('value'), str), 'invalid_ui_diagnostic')
+        facts = [fact for fact in facts if fact not in diagnostics]
+        require(0 < len(facts) <= MAX_UI_FACTS, 'ui_page_missing_or_incomplete')
+        # Diagnostic strings are deliberately never parsed into or sent as evidence.
         evidence = []
         for fact in facts:
             require(isinstance(fact, dict) and fact.get('entity_kind') == 'ui_element' and

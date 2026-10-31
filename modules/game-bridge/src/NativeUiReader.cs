@@ -106,57 +106,93 @@ internal sealed partial class NativeUiReader : IDisposable
         return Call(objectClass(instance), instance, "get_Item", (nint)arguments, 1);
     }
 
-    private bool Visible(nint element)
+    private bool Visible(nint element, UiPanelDiagnostics diagnostics)
     {
-        if (!Boolean(Get(element, "get_visible"))) return false;
+        if (!Boolean(Get(element, "get_visible"))) { diagnostics.visibility_false++; return false; }
         var rect = Get(element, "get_worldBound");
-        if (rect == 0) return false;
+        if (rect == 0) { diagnostics.invalid_or_empty_bounds++; return false; }
         var values = new float[4];
         Marshal.Copy(unbox(rect), values, 0, values.Length);
-        return values.All(float.IsFinite) && values[2] > 0 && values[3] > 0;
+        var visible = values.All(float.IsFinite) && values[2] > 0 && values[3] > 0;
+        if (!visible) diagnostics.invalid_or_empty_bounds++;
+        return visible;
     }
 
     public IReadOnlyList<UiText> Capture()
     {
         methodProofsThisFrame.Clear();
         fieldProofsThisFrame.Clear();
-        if (domainGet() == 0) return Array.Empty<UiText>();
+        var output = new UiCapture();
+        if (domainGet() == 0) { output.StopReason = "domain_unavailable"; return output; }
         runtimeUtility = runtimeUtility == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "UIElementsRuntimeUtility") : runtimeUtility;
         textElement = textElement == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "TextElement") : textElement;
         var panels = Call(runtimeUtility, 0, "GetSortedPlayerPanels");
-        if (panels == 0) return Array.Empty<UiText>();
-        var count = Math.Clamp(Number(Get(panels, "get_Count")), 0, 32);
-        var output = new List<UiText>(80);
+        if (panels == 0) { output.StopReason = "panels_unavailable"; return output; }
+        output.PanelsAvailable = Number(Get(panels, "get_Count"));
+        var count = Math.Clamp(output.PanelsAvailable, 0, 32);
         var budget = Stopwatch.StartNew();
         var visited = 0;
-        for (var panelIndex = 0; panelIndex < count && output.Count < 80; panelIndex++)
+        string? Limit() => budget.Elapsed.TotalMilliseconds > 15 ? "time_budget" :
+            visited >= 2500 ? "node_limit" : output.Count >= 80 ? "text_limit" : null;
+        for (var panelIndex = 0; panelIndex < count; panelIndex++)
         {
+            var limit = Limit();
+            if (limit is not null) { output.StopReason = limit; break; }
+            var diagnostics = new UiPanelDiagnostics { panel_index = panelIndex };
+            output.Panels.Add(diagnostics);
+            var panelStart = budget.Elapsed.TotalMilliseconds;
             var panel = At(panels, panelIndex);
-            if (panel == 0) continue;
-            var root = Get(panel, "get_visualTree");
-            if (root == 0) continue;
+            var root = panel == 0 ? 0 : Get(panel, "get_visualTree");
+            if (root == 0) { diagnostics.stop_reason = "root_unavailable"; diagnostics.elapsed_ms = budget.Elapsed.TotalMilliseconds - panelStart; continue; }
             var stack = new Stack<(nint Element, string Path, int Depth)>();
             stack.Push((root, $"panel{panelIndex}", 0));
-            while (stack.Count > 0 && visited++ < 2500 && output.Count < 80)
+            while (stack.Count > 0)
             {
-                if (budget.ElapsedMilliseconds > 15) return output;
+                limit = Limit();
+                if (limit is not null) { diagnostics.stop_reason = output.StopReason = limit; break; }
                 var (element, path, depth) = stack.Pop();
-                if (element == 0 || depth > 28) continue;
-                if (!Visible(element)) continue;
+                visited++;
+                diagnostics.visited_nodes++;
+                if (element == 0) continue;
+                if (depth > 28) { diagnostics.depth_skipped++; continue; }
+                if (!Visible(element, diagnostics)) continue;
+                diagnostics.visible_nodes++;
                 var type = objectClass(element);
                 if (assignable(textElement, type))
                 {
+                    diagnostics.text_element_nodes++;
                     var text = Text(Get(element, "get_text")).Trim();
-                    if (!string.IsNullOrWhiteSpace(text)) output.Add(new UiText(path, text[..Math.Min(text.Length, 1000)]));
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        output.Add(new UiText(path, text[..Math.Min(text.Length, 1000)]));
+                        diagnostics.emitted_texts++;
+                    }
+                    else diagnostics.empty_text_nodes++;
                 }
-                var children = Math.Clamp(Number(Get(element, "get_childCount")), 0, 512);
+                else diagnostics.other_widget_nodes++;
+                var childCount = Number(Get(element, "get_childCount"));
+                var children = Math.Clamp(childCount, 0, 512);
+                diagnostics.child_limit_skipped += Math.Max(0, childCount - children);
                 for (var childIndex = children - 1; childIndex >= 0; childIndex--)
                 {
-                    if (stack.Count >= 2500 || budget.ElapsedMilliseconds > 15) break;
+                    limit = Limit();
+                    if (limit is not null || stack.Count >= 2500)
+                    {
+                        diagnostics.stop_reason = output.StopReason = limit ?? "stack_limit";
+                        // These children have not been obtained or traversed.
+                        diagnostics.pending_nodes += childIndex + 1;
+                        break;
+                    }
                     stack.Push((At(element, childIndex), $"{path}/{childIndex}", depth + 1));
                 }
+                if (diagnostics.stop_reason != "complete") break;
             }
+            diagnostics.pending_nodes += stack.Count;
+            diagnostics.elapsed_ms = Math.Round(budget.Elapsed.TotalMilliseconds - panelStart, 3);
+            if (output.StopReason != "complete") break;
         }
+        if (output.StopReason == "complete" && output.PanelsAvailable > 32) output.StopReason = "panel_limit";
+        output.ElapsedMs = Math.Round(budget.Elapsed.TotalMilliseconds, 3);
         return output;
     }
 

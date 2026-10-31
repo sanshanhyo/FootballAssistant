@@ -106,10 +106,10 @@ internal sealed class BridgeRuntime : IDisposable
                 catch (Exception error) { Trace("Native observer explicit checkpoint failed (" + error.GetType().Name + "); other readers continue."); }
             }
             var text = reader.Capture();
-            if (text.Count == 0) Trace("Capture: no eligible UI tree text yet; no empty fact set published.");
+            if (text.Count == 0 && text is not UiCapture) Trace("Capture: no eligible UI tree text yet; no empty fact set published.");
             else
             {
-                var build = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_BUILD") ?? reader.ReadApplicationVersion();
+                var build = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_BUILD") ?? (text.Count > 0 ? reader.ReadApplicationVersion() : null);
                 var observation = ObservationFactory.Create(text, build, sessionId);
                 var queued = publisher.Offer(observation);
                 Trace($"Capture: raw_ui_tree_text_count={text.Count}; queued={queued}; partial=true; user_visibility_not_guaranteed.");

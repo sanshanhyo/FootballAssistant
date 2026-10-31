@@ -12,7 +12,9 @@ import unicodedata
 ADAPTER_ID = "footballassistant.runtime-ui-tree"
 ADAPTER_VERSION = "0.4.0"
 GAME_BUILD = "27.0.0+2486695"
-MAX_FACTS = 80
+MAX_UI_FACTS = 80
+MAX_DIAGNOSTIC_FACTS = 34  # capture + transport + at most 32 panels
+MAX_FACTS = MAX_UI_FACTS + MAX_DIAGNOSTIC_FACTS
 MAX_AGE_SECONDS = 15
 RULE_ID = "fm27-27.0.0+2486695-ui-tree-0.4.0-zh-overview-v2"
 SELECTORS = {
@@ -130,6 +132,17 @@ def project_display_profile(snapshot, *, now=None, max_age_seconds=MAX_AGE_SECON
                      and _time(envelope.get("observed_at")) == observed, "event_mismatch")
         else:
             _require(snapshot.get("reader_api") == "legacy", "invalid_metadata")
+        # Traversal diagnostics share the scalar fact transport, not UI selectors.
+        diagnostics = [fact for fact in facts if isinstance(fact, dict)
+                       and fact.get("entity_kind") == "ui_capture_diagnostic"]
+        _require(len(diagnostics) <= MAX_DIAGNOSTIC_FACTS, "incomplete_snapshot")
+        for diagnostic in diagnostics:
+            _require(diagnostic.get("field") == "capture_metrics"
+                     and isinstance(diagnostic.get("entity_id"), str)
+                     and diagnostic["entity_id"].startswith("diagnostic/")
+                     and isinstance(diagnostic.get("value"), str), "invalid_fact")
+        facts = [fact for fact in facts if fact not in diagnostics]
+        _require(len(facts) <= MAX_UI_FACTS, "incomplete_snapshot")
         paths = {}
         for fact in facts:
             _require(isinstance(fact, dict), "invalid_fact")

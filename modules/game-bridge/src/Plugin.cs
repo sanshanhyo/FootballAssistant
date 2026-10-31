@@ -57,7 +57,7 @@ public sealed class Plugin : BasePlugin
         {
             reader ??= new NativeUiReader(gameAssembly);
             var texts = reader.Capture();
-            if (texts.Count == 0)
+            if (texts.Count == 0 && texts is not UiCapture)
             {
                 Log.LogInfo("Bridge capture: 0 eligible UI text nodes.");
                 return;
@@ -65,7 +65,7 @@ public sealed class Plugin : BasePlugin
             // Capture again even if the screen is unchanged, so an offline/restarted
             // backend receives the next snapshot and freshness is based on observation.
             var measuredBuild = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_BUILD");
-            var observation = ObservationFactory.Create(texts, measuredBuild ?? reader.ReadApplicationVersion(), sessionId);
+            var observation = ObservationFactory.Create(texts, measuredBuild ?? (texts.Count > 0 ? reader.ReadApplicationVersion() : null), sessionId);
             var queued = publisher?.Offer(observation) == true;
             Log.LogInfo($"Bridge capture: {texts.Count} UI text nodes; queued={queued}.");
         }

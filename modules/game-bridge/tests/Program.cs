@@ -100,6 +100,31 @@ Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadB
 using (var page = JsonDocument.Parse(chinese))
     Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 80, "page reduced to byte budget");
 
+var diagnosticCapture = new UiCapture { PanelsAvailable = 33, StopReason = "panel_limit", ElapsedMs = 15.1 };
+for (var i = 0; i < 32; i++)
+    diagnosticCapture.Panels.Add(new UiPanelDiagnostics { panel_index = i, visited_nodes = 70,
+        visible_nodes = 60, text_element_nodes = 3, other_widget_nodes = 57,
+        emitted_texts = 2, stop_reason = "time_budget", pending_nodes = 10, elapsed_ms = 0.4 });
+diagnosticCapture.AddRange(Enumerable.Range(0, 80).Select(i => new UiText($"panel0/{i}", new string('球', 1000))));
+var diagnosticJson = ObservationFactory.Create(diagnosticCapture, null, "offline-diagnostic-test");
+Assert(Encoding.UTF8.GetByteCount(diagnosticJson) <= ObservationFactory.MaximumPayloadBytes, "diagnostics plus Chinese text respect byte cap");
+using (var diagnosticPage = JsonDocument.Parse(diagnosticJson))
+{
+    var facts = diagnosticPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    Assert(facts.Count(f => f.GetProperty("entity_kind").GetString() == "ui_capture_diagnostic") == 34, "all bounded panel diagnostics retained");
+    using var metrics = JsonDocument.Parse(facts[0].GetProperty("value").GetString()!);
+    Assert(metrics.RootElement.GetProperty("truncated").GetBoolean(), "panel cap reported");
+    Assert(metrics.RootElement.GetProperty("visited_nodes").GetInt32() == 2240, "visited count aggregated");
+    using var transport = JsonDocument.Parse(facts[^1].GetProperty("value").GetString()!);
+    Assert(transport.RootElement.GetProperty("omitted_texts").GetInt32() > 0, "byte truncation distinguished from traversal cap");
+}
+var emptyCapture = new UiCapture { StopReason = "domain_unavailable" };
+using (var empty = JsonDocument.Parse(ObservationFactory.Create(emptyCapture, null, "offline-empty-test")))
+    Assert(empty.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() == 2, "zero text still publishes diagnostics, never fabricated UI text");
+var skippedCapture = new UiCapture();
+skippedCapture.Panels.Add(new UiPanelDiagnostics { depth_skipped = 1 });
+Assert(skippedCapture.Truncated, "depth skip reports incomplete traversal without global cutoff");
+
 var fixture = ObservationFactory.Create(new[] { new UiText("panel0/1", "Synthetic bridge contract test") }, null, "offline-contract-test");
 // Never publish a contract-test fixture as a real runtime observation.
 using (var parsed = JsonDocument.Parse(fixture))

@@ -133,3 +133,30 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
         result = asyncio.run(agent.ui_advice('TEST', None, 'player_info', snapshot(), refresh=lambda: current))
         assert result['status'] == 'blocked' and result['evidence'] == []
         assert 'TEST conditional advice' not in result['reply']
+
+
+def test_capture_diagnostics_are_excluded_from_evidence_and_keep_text_bound():
+    data = snapshot()
+    for index in range(80 - len(data['facts'])):
+        data['facts'].append(dict(entity_kind='ui_element', entity_id=f'TEST-extra/{index}',
+                                  field='ui_tree_text', value='TEST filler'))
+    for index in range(34):
+        data['facts'].append(dict(entity_kind='ui_capture_diagnostic',
+                                  entity_id=f'diagnostic/TEST-{index}', field='capture_metrics',
+                                  value='TEST DIAGNOSTIC MUST NOT REACH MODEL'))
+    data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
+    result = prepare_ui_advice('player_info', data, now=NOW)
+    assert result['status'] == 'ready' and len(result['evidence']) == 80
+    assert 'DIAGNOSTIC MUST NOT' not in str(result)
+    data['facts'][-1] = dict(entity_kind='ui_element', entity_id='TEST-overflow',
+                              field='ui_tree_text', value='TEST overflow')
+    assert prepare_ui_advice('player_info', data, now=NOW)['status'] == 'blocked'
+
+
+def test_diagnostics_without_ui_text_cannot_enable_advice():
+    data = snapshot()
+    data['facts'] = [dict(entity_kind='ui_capture_diagnostic', entity_id='diagnostic/capture',
+                          field='capture_metrics', value='{"stop_reason":"time_budget"}')]
+    data['facts_total'] = data['source_status']['facts_count'] = 1
+    result = prepare_ui_advice('player_info', data, now=NOW)
+    assert result['status'] == 'blocked' and result['evidence'] == []
