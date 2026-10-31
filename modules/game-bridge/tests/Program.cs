@@ -339,6 +339,142 @@ try
     Assert(!server.Pending(), "redirect was not followed");
 }
 finally { server.Stop(); }
+// Runtime focus control is local metadata only; these fixtures never touch a game.
+// The Doorstop control channel is macOS-only; Linux supports offline filesystem tests.
+if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
+{
+var focusControlRoot = Path.Combine(Path.GetTempPath(), "footballassistant-focus-control-" + Guid.NewGuid());
+Directory.CreateDirectory(Path.Combine(focusControlRoot, "control"));
+Directory.CreateDirectory(Path.Combine(focusControlRoot, "diagnostics"));
+try
+{
+    var focusControlNow = DateTimeOffset.Parse("2026-10-31T07:00:00Z");
+    var focusControlPath = Path.Combine(focusControlRoot, "control", "ui-capture.json");
+    var focusStatusPath = Path.Combine(focusControlRoot, "diagnostics", "ui-capture-status.json");
+    var focusControl = new UiCaptureControl(focusControlRoot, 1234, "TEST-focus-session", new string('a', 64));
+    Dictionary<string, object> FocusRequest(long sequence, string path = "panel0/0/6", bool widgets = true) => new()
+    {
+        ["pid"] = 1234, ["session_id"] = "TEST-focus-session", ["managed_build_sha256"] = new string('a', 64),
+        ["sequence"] = sequence, ["requested_at"] = focusControlNow.ToString("O"),
+        ["focus_path"] = path, ["widget_diagnostics"] = widgets
+    };
+    void SubmitFocus(Dictionary<string, object> request) => File.WriteAllText(focusControlPath, JsonSerializer.Serialize(request));
+    JsonElement FocusStatus()
+    {
+        focusControl.WriteStatus();
+        using var json = JsonDocument.Parse(File.ReadAllText(focusStatusPath));
+        return json.RootElement.Clone();
+    }
+    UiCapture FocusCapture(string path) => new() { FocusRequested = true, FocusResolved = true, FocusRootPath = path };
+
+    focusControl.Poll(focusControlNow);
+    Assert(focusControl.BeginCapture(focusControlNow) is null, "absent control preserves environment defaults");
+    SubmitFocus(FocusRequest(1));
+    focusControl.Poll(focusControlNow);
+    var firstFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    Assert(firstFocusSelection.Sequence == 1 && firstFocusSelection.FocusPath == "panel0/0/6" && firstFocusSelection.WidgetDiagnostics,
+        "valid same-session request selects one immutable configuration");
+    var pendingFocusStatus = FocusStatus();
+    Assert(pendingFocusStatus.GetProperty("accepted_sequence").GetInt64() == 1 &&
+        pendingFocusStatus.GetProperty("applied_sequence").ValueKind == JsonValueKind.Null,
+        "receipt is accepted, never falsely acknowledged as applied");
+    focusControl.CompleteCapture(firstFocusSelection, FocusCapture(firstFocusSelection.FocusPath), focusControlNow);
+    var appliedFocusStatus = FocusStatus();
+    Assert(appliedFocusStatus.GetProperty("applied_sequence").GetInt64() == 1 &&
+        appliedFocusStatus.GetProperty("focus_path").GetString() == "panel0/0/6" &&
+        appliedFocusStatus.GetProperty("focus_resolved").GetBoolean() &&
+        appliedFocusStatus.GetProperty("applied_at").ValueKind == JsonValueKind.String,
+        "acknowledgement describes the completed capture, not just an accepted file");
+
+    SubmitFocus(FocusRequest(2, "panel0/0/2", false));
+    focusControl.Poll(focusControlNow);
+    var secondFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    SubmitFocus(FocusRequest(3, "panel0/0/6"));
+    focusControl.Poll(focusControlNow);
+    Assert(secondFocusSelection.Sequence == 2 && secondFocusSelection.FocusPath == "panel0/0/2" && !secondFocusSelection.WidgetDiagnostics,
+        "new control cannot mutate configuration already captured by an in-flight frame");
+    focusControl.CompleteCapture(secondFocusSelection, FocusCapture(secondFocusSelection.FocusPath), focusControlNow);
+    Assert(FocusStatus().GetProperty("applied_sequence").GetInt64() == 2,
+        "in-flight completion acknowledges its own configuration, not newer pending control");
+    var thirdFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    Assert(thirdFocusSelection.Sequence == 3 && thirdFocusSelection.FocusPath == "panel0/0/6",
+        "A to B to A with increasing request sequence is supported");
+    focusControl.CompleteCapture(thirdFocusSelection, FocusCapture(thirdFocusSelection.FocusPath), focusControlNow);
+
+    void AssertFocusRejected(string label)
+    {
+        focusControl.Poll(focusControlNow);
+        var selection = focusControl.BeginCapture(focusControlNow);
+        Assert(selection is not null && selection.Sequence == 3 && selection.FocusPath == "panel0/0/6",
+            label + " retains last applied selection");
+        var rejectedStatus = FocusStatus();
+        Assert(rejectedStatus.GetProperty("applied_sequence").GetInt64() == 3,
+            label + " does not falsely advance applied acknowledgement");
+        Assert(rejectedStatus.GetProperty("last_error").ValueKind == JsonValueKind.String,
+            label + " records a bounded rejection reason");
+    }
+    foreach (var change in new Action<Dictionary<string, object>>[] {
+        r => r["unknown"] = true,
+        r => r["pid"] = 4321,
+        r => r["pid"] = "1234",
+        r => r["session_id"] = "TEST-other-session",
+        r => r["managed_build_sha256"] = new string('b', 64),
+        r => r["sequence"] = 0,
+        r => r["sequence"] = -1,
+        r => r["sequence"] = 2,
+        r => r["sequence"] = "4",
+        r => r["focus_path"] = "panel32/0",
+        r => r["focus_path"] = "panel0/512",
+        r => r["focus_path"] = "panel00/0",
+        r => r["focus_path"] = "panel0/../6",
+        r => r["focus_path"] = "focus/0/6",
+        r => r["focus_path"] = "panel0" + string.Concat(Enumerable.Repeat("/0", 64)),
+        r => r["widget_diagnostics"] = "true",
+        r => r["requested_at"] = "2026-10-31T07:00:00",
+        r => r["requested_at"] = focusControlNow.AddSeconds(1).ToString("O"),
+        r => r["requested_at"] = focusControlNow.AddSeconds(-31).ToString("O"),
+        r => r.Remove("widget_diagnostics")
+    })
+    {
+        var badRequest = FocusRequest(4);
+        change(badRequest);
+        SubmitFocus(badRequest);
+        AssertFocusRejected("invalid control");
+    }
+    var validFocusJson = JsonSerializer.Serialize(FocusRequest(4));
+    File.WriteAllText(focusControlPath, validFocusJson[..^1] + ",\"focus_path\":\"panel0/0/2\"}");
+    AssertFocusRejected("duplicate JSON property");
+    File.WriteAllText(focusControlPath, "{\"pid\":");
+    AssertFocusRejected("partially written JSON");
+    File.WriteAllText(focusControlPath, validFocusJson + new string(' ', 2049 - Encoding.UTF8.GetByteCount(validFocusJson)));
+    AssertFocusRejected("2049-byte request");
+    if (!OperatingSystem.IsWindows())
+    {
+        var linkedTarget = Path.Combine(focusControlRoot, "linked-request.json");
+        File.WriteAllText(linkedTarget, validFocusJson);
+        File.Delete(focusControlPath);
+        File.CreateSymbolicLink(focusControlPath, linkedTarget);
+        AssertFocusRejected("linked request file");
+        File.Delete(focusControlPath);
+        var controlDirectory = Path.Combine(focusControlRoot, "control");
+        var movedControl = Path.Combine(focusControlRoot, "control-original");
+        Directory.Move(controlDirectory, movedControl);
+        Directory.CreateSymbolicLink(controlDirectory, movedControl);
+        AssertFocusRejected("linked control directory");
+        Directory.Delete(controlDirectory);
+        Directory.Move(movedControl, controlDirectory);
+    }
+    File.WriteAllText(focusControlPath, validFocusJson + new string(' ', 2048 - Encoding.UTF8.GetByteCount(validFocusJson)));
+    focusControl.Poll(focusControlNow);
+    Assert(focusControl.BeginCapture(focusControlNow)!.Sequence == 4, "exact 2048-byte request is accepted");
+    Assert(focusControl.BeginCapture(focusControlNow.AddSeconds(31))!.Sequence == 3,
+        "pending request expiring before a capture cannot displace applied configuration");
+    Assert(FocusStatus().GetProperty("applied_sequence").GetInt64() == 3,
+        "expired unapplied request never receives applied acknowledgement");
+}
+finally { Directory.Delete(focusControlRoot, true); }
+}
+
 Console.WriteLine("PASS: thread gate, Chinese byte budget, observation semantics, loopback restrictions, authenticated async delivery and token rotation. No game/loader was opened.");
 
 static void Assert(bool condition, string label)

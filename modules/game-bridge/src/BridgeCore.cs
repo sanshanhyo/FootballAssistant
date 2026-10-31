@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Win32.SafeHandles;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -113,6 +114,187 @@ public sealed class UiWidgetClass
 
 public sealed record UiWidgetSample(string path, string phase, int? class_index, bool text_element_supported,
     bool visible, bool? bounds_valid, int? child_count, string eligibility);
+
+// Local operator control only. No UI/native getters, hooks, sockets or capture scheduling.
+public sealed record UiCaptureSelection(long Sequence, string FocusPath, bool WidgetDiagnostics);
+
+public sealed class UiCaptureControl
+{
+    public const int MaximumRequestBytes = 2048;
+    private readonly string privateRoot;
+    private readonly int pid;
+    private readonly string sessionId, managedBuildSha;
+    private readonly object gate = new();
+    private UiCaptureSelection? pending, applied;
+    private DateTimeOffset pendingExpires, appliedAt;
+    private long acceptedSequence;
+    private bool? focusResolved;
+    private string? captureStopReason, lastError;
+    private byte[]? lastRequest;
+
+    public UiCaptureControl(string privateRoot, int pid, string sessionId, string managedBuildSha)
+    {
+        this.privateRoot = Path.GetFullPath(privateRoot);
+        this.pid = pid;
+        this.sessionId = sessionId;
+        this.managedBuildSha = managedBuildSha;
+    }
+
+    private void CheckDirectory(string name)
+    {
+        if (new DirectoryInfo(privateRoot).LinkTarget is not null ||
+            new DirectoryInfo(Path.Combine(privateRoot, name)).LinkTarget is not null)
+            throw new InvalidDataException("linked_control_path");
+    }
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int Open(string path, int flags);
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAt(SafeFileHandle directory, string path, int flags);
+
+    private FileStream OpenRequestNoFollow()
+    {
+        // macOS runtime; Linux is also supported for offline tests. No native game access.
+        var mac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+        if (!mac && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            throw new InvalidDataException("unsupported_control_platform");
+        var noFollow = mac ? 0x100 : 0x20000;
+        var directory = mac ? 0x100000 : 0x10000;
+        var nonBlock = mac ? 0x4 : 0x800;
+        var closeOnExec = mac ? 0x1000000 : 0x80000;
+        SafeFileHandle Handle(int fd)
+        {
+            if (fd < 0) throw new IOException("Control file could not be opened without following links.");
+            return new SafeFileHandle((nint)fd, ownsHandle: true);
+        }
+        using var root = Handle(Open(privateRoot, directory | noFollow | closeOnExec));
+        using var control = Handle(OpenAt(root, "control", directory | noFollow | closeOnExec));
+        var file = Handle(OpenAt(control, "ui-capture.json", noFollow | nonBlock | closeOnExec));
+        try { return new FileStream(file, FileAccess.Read); }
+        catch { file.Dispose(); throw; }
+    }
+
+    public void Poll(DateTimeOffset now)
+    {
+        try
+        {
+            CheckDirectory("control");
+            var path = Path.Combine(privateRoot, "control", "ui-capture.json");
+            var info = new FileInfo(path);
+            if (info.LinkTarget is not null) throw new InvalidDataException("linked_control_path");
+            if (!info.Exists) return; // Deletion never silently broadens the capture.
+            if (info.Length > MaximumRequestBytes) throw new InvalidDataException("request_too_large");
+            byte[] bytes;
+            using (var stream = OpenRequestNoFollow())
+            {
+                var buffer = new byte[MaximumRequestBytes + 1];
+                var length = 0;
+                while (length < buffer.Length)
+                {
+                    var count = stream.Read(buffer, length, buffer.Length - length);
+                    if (count == 0) break;
+                    length += count;
+                }
+                if (length > MaximumRequestBytes) throw new InvalidDataException("request_too_large");
+                bytes = buffer[..length];
+            }
+            CheckDirectory("control");
+            if (new FileInfo(path).LinkTarget is not null) throw new InvalidDataException("linked_control_path");
+            lock (gate)
+            {
+                if (lastRequest is not null && lastRequest.AsSpan().SequenceEqual(bytes)) return;
+                lastRequest = bytes;
+            }
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 4 });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("invalid_request");
+            var fields = new HashSet<string>(StringComparer.Ordinal);
+            var allowed = new HashSet<string>(new[] { "pid", "session_id", "managed_build_sha256", "sequence",
+                "requested_at", "focus_path", "widget_diagnostics" }, StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+                if (!allowed.Contains(property.Name) || !fields.Add(property.Name)) throw new InvalidDataException("invalid_request_fields");
+            if (fields.Count != allowed.Count) throw new InvalidDataException("invalid_request_fields");
+            if (root.GetProperty("pid").GetInt32() != pid || root.GetProperty("session_id").GetString() != sessionId ||
+                root.GetProperty("managed_build_sha256").GetString() != managedBuildSha)
+                throw new InvalidDataException("request_scope_mismatch");
+            var sequence = root.GetProperty("sequence").GetInt64();
+            var requestedText = root.GetProperty("requested_at").GetString();
+            if (requestedText is null || !(requestedText.EndsWith("Z", StringComparison.Ordinal) ||
+                (requestedText.Length >= 6 && requestedText[^3] == ':' && requestedText[^6] is '+' or '-')))
+                throw new InvalidDataException("invalid_request_timestamp");
+            var requested = root.GetProperty("requested_at").GetDateTimeOffset();
+            if (requested > now || now - requested > TimeSpan.FromSeconds(30)) throw new InvalidDataException("request_expired_or_future");
+            var focus = root.GetProperty("focus_path").GetString();
+            if (focus is null || !UiFocusPath.TryParse(focus, out _)) throw new InvalidDataException("invalid_focus_path");
+            var widgets = root.GetProperty("widget_diagnostics").GetBoolean();
+            lock (gate)
+            {
+                if (sequence <= acceptedSequence) throw new InvalidDataException("request_sequence_replayed");
+                pending = new UiCaptureSelection(sequence, focus, widgets);
+                pendingExpires = requested.AddSeconds(30);
+                acceptedSequence = sequence;
+                lastError = null;
+            }
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException or OverflowException or ArgumentException)
+        {
+            lock (gate) lastError = error is InvalidDataException ? error.Message : "control_read_or_parse_failed";
+        }
+    }
+
+    // One immutable selection per capture; expiry limits acceptance, not duration of an applied setting.
+    public UiCaptureSelection? BeginCapture(DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            if (pending is not null && now > pendingExpires)
+            {
+                pending = null;
+                lastError = "request_expired_before_capture";
+            }
+            return pending ?? applied;
+        }
+    }
+
+    // Only the main-thread caller after Capture returns may acknowledge application.
+    public void CompleteCapture(UiCaptureSelection? selection, UiCapture capture, DateTimeOffset now)
+    {
+        if (selection is null) return;
+        lock (gate)
+        {
+            applied = selection;
+            appliedAt = now;
+            focusResolved = capture.FocusResolved;
+            captureStopReason = capture.StopReason;
+            if (pending?.Sequence == selection.Sequence) pending = null;
+        }
+    }
+
+    // Background-only status I/O: acceptance alone never populates applied_sequence.
+    public void WriteStatus()
+    {
+        object status;
+        lock (gate) status = new {
+            pid, session_id = sessionId, managed_build_sha256 = managedBuildSha,
+            accepted_sequence = acceptedSequence == 0 ? (long?)null : acceptedSequence,
+            applied_sequence = applied?.Sequence, focus_path = applied?.FocusPath,
+            widget_diagnostics = applied?.WidgetDiagnostics, focus_resolved = focusResolved,
+            capture_stop_reason = captureStopReason, applied_at = applied is null ? (DateTimeOffset?)null : appliedAt,
+            last_error = lastError
+        };
+        CheckDirectory("diagnostics");
+        var path = Path.Combine(privateRoot, "diagnostics", "ui-capture-status.json");
+        if (new FileInfo(path).LinkTarget is not null) throw new InvalidDataException("linked_status_path");
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                JsonSerializer.Serialize(stream, status);
+            File.Move(temporary, path, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+}
 
 // Literal UI hierarchy paths only: never hash/shorten them into apparent stable IDs.
 internal static class UiTraversalBounds

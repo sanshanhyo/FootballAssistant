@@ -124,12 +124,12 @@ internal sealed partial class NativeUiReader : IDisposable
         return visible;
     }
 
-    public IReadOnlyList<UiText> Capture()
+    public IReadOnlyList<UiText> Capture(UiCaptureSelection? selection = null)
     {
         methodProofsThisFrame.Clear();
         fieldProofsThisFrame.Clear();
         var output = new UiCapture();
-        var requestedFocus = Environment.GetEnvironmentVariable(UiFocusPath.EnvironmentVariable);
+        var requestedFocus = selection?.FocusPath ?? Environment.GetEnvironmentVariable(UiFocusPath.EnvironmentVariable);
         UiFocusPath? focus = null;
         output.FocusRequested = requestedFocus is not null;
         if (requestedFocus is not null)
@@ -137,7 +137,7 @@ internal sealed partial class NativeUiReader : IDisposable
             if (!UiFocusPath.TryParse(requestedFocus, out focus)) { output.StopReason = "invalid_focus_path"; return output; }
             output.FocusRootPath = focus!.Path; // Only canonical numeric paths enter diagnostics.
         }
-        if (focus is not null && Environment.GetEnvironmentVariable(UiWidgetInventory.EnvironmentVariable) == "1")
+        if (focus is not null && (selection?.WidgetDiagnostics ?? (Environment.GetEnvironmentVariable(UiWidgetInventory.EnvironmentVariable) == "1")))
             output.WidgetInventory = new UiWidgetInventory();
         if (domainGet() == 0) { output.StopReason = "domain_unavailable"; return output; }
         runtimeUtility = runtimeUtility == 0 ? FindClass("UnityEngine.UIElementsModule.dll", "UnityEngine.UIElements", "UIElementsRuntimeUtility") : runtimeUtility;
