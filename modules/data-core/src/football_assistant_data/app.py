@@ -203,6 +203,17 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                     schedule_projection=projection, provenance=prepared['provenance'],
                     reasons=prepared['reasons'])
 
+    @app.get("/v1/reader/tactics",dependencies=[Depends(authorized)])
+    async def reader_tactics():
+        # Authenticated, model-free local preview; provenance never goes to a provider.
+        from football_assistant_agent.ui_advice import prepare_ui_advice
+        prepared = prepare_ui_advice('tactical_analysis', app.state.observations.reader_snapshot(0, MAX_FACTS))
+        projection = prepared['tactics_projection']
+        return dict(status=projection['status'] if projection else 'unavailable',
+                    source='ui', partial=True, production_ready=False,
+                    tactics_projection=projection, provenance=prepared['provenance'],
+                    reasons=prepared['reasons'])
+
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
         try:

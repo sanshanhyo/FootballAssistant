@@ -10,6 +10,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 from openai import AsyncOpenAI
 
+from football_assistant_data.tactics_projection import DISPLAY_FIELDS, LIMITATIONS as TACTICS_LIMITATIONS
 from .storage import CompanionStore
 from .ui_advice import UI_INSTRUCTIONS, prepare_ui_advice
 from .business_advice import BUSINESS_INSTRUCTIONS, prepare_business_advice
@@ -68,13 +69,16 @@ class AgentService:
     async def ui_advice(self, message, conversation_id, capability, snapshot, *, refresh=None):
         prepared = prepare_ui_advice(capability, snapshot)
         def blocked(data):
-            return {**data, "status": "blocked", "evidence": [], "schedule_projection": None, "conversation_id": conversation_id,
+            return {**data, "status": "blocked", "evidence": [], "schedule_projection": None, "tactics_projection": None, "conversation_id": conversation_id,
                     "source_status": "ui_unavailable", "reply": "当前没有可用的新鲜 UI 文本。请打开相关游戏页面后重新提问。"}
         if prepared["status"] != "ready":
             return blocked(prepared)
         if capability == "schedule_analysis" and (prepared.get("schedule_projection") or {}).get("status") != "experimental_ui_schedule":
             return {**blocked(prepared), "reasons": ["schedule_profile_unavailable"],
                     "reply": "当前采样不匹配已支持的中文赛程布局，未发送任何 UI 文本给模型。请打开赛程安排页后重新采样。"}
+        if capability == "tactical_analysis" and (prepared.get("tactics_projection") or {}).get("status") != "experimental_ui_tactics":
+            return {**blocked(prepared), "reasons": ["tactics_profile_unavailable"],
+                    "reply": "当前采样不匹配已支持的中文战术布局，未发送任何 UI 文本给模型。请打开战术页后重新采样。"}
         model_evidence = prepared
         if (prepared.get("schedule_projection") or {}).get("status") == "experimental_ui_schedule":
             # Explicit outbound whitelist: provenance stays local, even when valid.
@@ -91,6 +95,11 @@ class AgentService:
                     "来源路径、采样时间和身份元数据仅保留在本地，未提供给模型；不得编造。",
                 ],
             }
+        if capability == "tactical_analysis":
+            model_evidence = {
+                "tactics_projection": {key: prepared["tactics_projection"][key] for key in DISPLAY_FIELDS},
+                "limitations": list(TACTICS_LIMITATIONS),
+            }
         response = await self._chat(message, conversation_id,
             {"source_status": "partial_ui_evidence", "ui_evidence": model_evidence}, ui=True)
         if refresh is not None:
@@ -99,6 +108,8 @@ class AgentService:
                     current["capture_text_sha256"] != prepared["capture_text_sha256"] or
                     (current.get("schedule_projection") or {}).get("projection_sha256") !=
                     (prepared.get("schedule_projection") or {}).get("projection_sha256") or
+                    (current.get("tactics_projection") or {}).get("projection_sha256") !=
+                    (prepared.get("tactics_projection") or {}).get("projection_sha256") or
                     current["provenance"]["session_id"] != prepared["provenance"]["session_id"]):
                 return blocked({**prepared, "reasons": ["ui_changed_or_expired_during_generation"]})
             prepared = current
@@ -146,7 +157,8 @@ class AgentService:
             headers = {"User-Agent": "FootballAssistant/0.1"}
             schedule_ui = ui and (context.get("ui_evidence", {}).get("schedule_projection") or {}).get("status") == "experimental_ui_schedule"
             # Required provider routing header, never derived from game/capture identity.
-            headers["x-opencode-session"] = str(uuid4()) if schedule_ui else conversation_id
+            tactics_ui = ui and "tactics_projection" in context.get("ui_evidence", {})
+            headers["x-opencode-session"] = str(uuid4()) if schedule_ui or tactics_ui else conversation_id
             async with AsyncOpenAI(api_key=self.settings.api_key, base_url=self.settings.base_url, timeout=self.settings.model_timeout, max_retries=0, default_headers=headers) as client:
                 provider = OpenAICompatibleProvider("footballassistant-configured", openai_client=client)
                 model = OpenAIChatModel(self.settings.model, provider=provider)

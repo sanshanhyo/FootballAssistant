@@ -213,3 +213,29 @@ rows on a changed/expired capture. Schedule requests that do not match the profi
 call; there is no raw-text fallback. Other capabilities retain their existing
 generic UI evidence behavior. No new model requests, model configuration,
 Mac deployment or production-native capability are enabled by this change.
+
+### Experimental tactical UI display association
+
+Authenticated `GET /v1/reader/tactics` provides a model-free, reader-only-compatible
+preview. `tactical_analysis` on `POST /v1/agent/ui-advice` requires this profile;
+no match blocks before model configuration, budget or provider access, with no raw
+UI fallback. Existing UI consent, runtime freshness/session checks and refresh
+fences still apply. Native business readiness remains unchanged and false.
+
+The profile pins FM27 `27.0.0+2486695`, adapter `0.4.0`, macOS arm64 and the normal
+`panel_absolute` Chinese layout with the exact `队形` anchor. Independent mentality
+and style must exactly delimit the title as mentality + formation description +
+` - ` + style. The formation begins with 2–5 positive single-digit hyphenated
+segments totalling 10 outfield players. Its descriptor remains display text, not
+player or role assignments. Only observed U+200B is removed; raw matched text and
+capture-local field paths remain available locally. Duplicates, missing fields,
+unsupported controls/markup and malformed associations fail closed.
+
+`tactics_projection.status=experimental_ui_tactics` exposes `formation_display`,
+`style_display`, `mentality_display`; `lineup`, `roles`, and `instructions` are
+null (unread/unknown, never asserted empty). Provider input is explicitly limited
+to those three display strings and static caveats, not raw UI, paths, hashes,
+identities or capture provenance. Routing uses a fresh random identifier. Advice
+is conditional and partial; visibility, team identity and native tactical
+entities are not established. Fixtures test the profile without provider traffic;
+this implementation is not a new live-game acceptance claim.
