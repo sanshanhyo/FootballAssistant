@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace FootballAssistant.GameBridge;
 
@@ -19,6 +20,15 @@ internal static class MainThreadGuard
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool EnumWindows(EnumWindowProc callback, nint parameter);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassNameW(nint window, StringBuilder name, int maximum);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint window);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ClientRect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(nint window, out ClientRect rect);
+
     internal static uint CurrentWindowsThreadId() => GetCurrentThreadId();
 
     internal static WindowsThreadIdentity ReadWindowsIdentity(uint installerThread = 0)
@@ -32,7 +42,8 @@ internal static class MainThreadGuard
         uint owner = 0;
         var thread = window == 0 ? 0 : GetWindowThreadProcessId(window, out owner);
         var identity = new WindowsThreadIdentity(window, (uint)process.Id, owner, GetCurrentThreadId(), thread, installerThread, selected);
-        if (window != 0) return identity;
+        // Enumerate even if MainWindowHandle is nonzero: uniqueness cannot be inferred from that property.
+        var candidates = new List<WindowsWindowDiagnostic>(32);
         // No titles/text or other-process window details retained; diagnostics never authorize a window.
         var owned = 0;
         var visited = 0;
@@ -49,6 +60,20 @@ internal static class MainThreadGuard
                 if (candidateOwner == (uint)process.Id && candidateThread != 0)
                 {
                     if (owned++ == 0) { first = candidate; firstThread = candidateThread; }
+                    var name = new StringBuilder(128);
+                    var nameLength = GetClassNameW(candidate, name, name.Capacity);
+                    var nameError = nameLength == 0 ? Marshal.GetLastWin32Error() : 0;
+                    var visible = IsWindowVisible(candidate);
+                    var hasRect = GetClientRect(candidate, out var rect);
+                    var rectError = hasRect ? 0 : Marshal.GetLastWin32Error();
+                    // Recheck owner after inspecting shape; a destroyed/reused HWND is not stable evidence.
+                    var afterThread = GetWindowThreadProcessId(candidate, out var afterOwner);
+                    candidates.Add(new(candidate.ToInt64(), candidateOwner, candidateThread,
+                        afterOwner == candidateOwner && afterThread == candidateThread,
+                        nameLength == 0 ? null : name.ToString(), nameLength > 0 && nameLength < 127,
+                        nameError, visible, hasRect,
+                        hasRect ? (long)rect.Right - rect.Left : null,
+                        hasRect ? (long)rect.Bottom - rect.Top : null, rectError));
                     if (owned >= 32) { bounded = true; return false; }
                 }
                 return true;
@@ -58,7 +83,7 @@ internal static class MainThreadGuard
         var completed = EnumWindows(callback, 0);
         var error = completed || bounded || callbackFailed ? 0 : Marshal.GetLastWin32Error();
         GC.KeepAlive(callback);
-        return identity with { WindowScanCount = owned, WindowScanVisited = Math.Min(visited, 512), FirstOwnedWindow = first, FirstOwnedThreadId = firstThread,
+        return identity with { WindowCandidates = candidates.ToArray(), WindowScanCount = owned, WindowScanVisited = Math.Min(visited, 512), FirstOwnedWindow = first, FirstOwnedThreadId = firstThread,
             WindowScanStatus = callbackFailed ? "callback_failed" : completed ? "complete" : bounded ? "bounded" : "failed", WindowScanError = error };
     }
 

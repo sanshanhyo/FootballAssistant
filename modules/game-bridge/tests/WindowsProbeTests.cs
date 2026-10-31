@@ -3,6 +3,48 @@ using System.Runtime.InteropServices;
 using FootballAssistant.GameBridge;
 
 static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
+var configDirectory = Path.Combine(Path.GetTempPath(), "footballassistant-probe-config-" + Guid.NewGuid());
+Directory.CreateDirectory(configDirectory);
+try
+{
+    var assemblyPath = Path.Combine(configDirectory, "FootballAssistant.GameBridge.dll");
+    var configPath = Path.Combine(configDirectory, WindowsProbeConfiguration.FileName);
+    var privatePath = Path.Combine(configDirectory, WindowsProbeConfiguration.PrivateDirectoryName);
+    void RejectConfig(string? content)
+    {
+        if (content is not null) File.WriteAllText(configPath, content);
+        var rejected = false;
+        try { WindowsProbeConfiguration.ResolvePrivateRoot(null, assemblyPath); }
+        catch (Exception error) when (error is IOException or InvalidOperationException or System.Text.Json.JsonException) { rejected = true; }
+        Check(rejected, "missing/malformed/oversized/non-probe config rejected");
+    }
+    RejectConfig(null);
+    foreach (var content in new[] { "{}", "[]", "{", new string(' ', 1025),
+        "{\"schema_version\":1,\"mode\":\"read\"}",
+        "{\"schema_version\":1,\"mode\":\"probe_only\",\"private_root\":\"elsewhere\"}",
+        "{\"schema_version\":1,\"mode\":\"probe_only\",\"mode\":\"probe_only\"}" }) RejectConfig(content);
+    File.WriteAllText(configPath, "{\"schema_version\":1,\"mode\":\"probe_only\"}");
+    Check(WindowsProbeConfiguration.ResolvePrivateRoot(null, assemblyPath) == privatePath, "fixed adjacent opt-in resolves fixed private root");
+    Check(!Directory.Exists(privatePath), "config resolution does not create directories");
+    var explicitRoot = Path.Combine(configDirectory, "legacy-explicit-root");
+    Check(WindowsProbeConfiguration.ResolvePrivateRoot(explicitRoot, "") == explicitRoot, "explicit environment root remains compatible");
+    var relativeRejected = false;
+    try { WindowsProbeConfiguration.ResolvePrivateRoot("relative", assemblyPath); }
+    catch (InvalidOperationException) { relativeRejected = true; }
+    Check(relativeRejected, "relative explicit root rejected");
+    if (!OperatingSystem.IsWindows())
+    {
+        var link = Path.Combine(configDirectory, "linked-root");
+        Directory.CreateSymbolicLink(link, configDirectory);
+        var linkRejected = false;
+        try { WindowsProbeConfiguration.ResolvePrivateRoot(link, assemblyPath); }
+        catch (InvalidOperationException) { linkRejected = true; }
+        Check(linkRejected, "symbolic-link root rejected");
+        Directory.Delete(link);
+    }
+}
+finally { Directory.Delete(configDirectory, true); }
+Console.WriteLine("PASS probe configuration: explicit fixed-file opt-in, strict bounded schema, no path override, relative/reparse rejection.");
 var good = new WindowsThreadIdentity(123, 1, 1, 2, 2, 2, true);
 Check(good.Matches(), "matching explicit owner");
 foreach (var bad in new[] { good with { Window = 0 }, good with { ProcessId = 0 }, good with { OwnerProcessId = 9 },
@@ -88,6 +130,13 @@ static class WindowsHarness
         {
             Environment.SetEnvironmentVariable("FOOTBALL_ASSISTANT_WINDOWS_GAME_HWND", window.ToInt64().ToString());
             check(MainThreadGuard.IsCurrent(), "owned window gate");
+            var diagnostic = MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId());
+            check(diagnostic.WindowScanStatus == "complete", "owned-window scan completes");
+            var ownWindow = diagnostic.WindowCandidates!.Single(x => x.Hwnd == window.ToInt64());
+            check(ownWindow.ClassName == "Static" || ownWindow.ClassName == "STATIC", "actual window class observed");
+            check(ownWindow.ClassNameComplete && ownWindow.OwnerStable && !ownWindow.VisibleStyle &&
+                ownWindow.ClientRectAvailable && ownWindow.ClientWidth == 10 && ownWindow.ClientHeight == 10,
+                "bounded class/visibility/client shape diagnostics match owned fixture");
             check(!Task.Run(MainThreadGuard.IsCurrent).GetAwaiter().GetResult(), "worker rejected");
             var lines = new List<string>();
             using (var scheduler = new WindowsProbeScheduler(lines.Add, interval: 10))

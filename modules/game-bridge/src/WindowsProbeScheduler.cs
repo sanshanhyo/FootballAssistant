@@ -1,12 +1,19 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace FootballAssistant.GameBridge;
+
+// Win32 metadata only: no window title, game UI text or IL2CPP data.
+internal sealed record WindowsWindowDiagnostic(long Hwnd, uint OwnerPid, uint OwnerTid, bool OwnerStable,
+    string? ClassName, bool ClassNameComplete, int ClassError, bool VisibleStyle,
+    bool ClientRectAvailable, long? ClientWidth, long? ClientHeight, int ClientRectError);
 
 // A matching window owner is necessary, not proof of a safe Unity PlayerLoop phase.
 internal readonly record struct WindowsThreadIdentity(nint Window, uint ProcessId, uint OwnerProcessId,
     uint CurrentThreadId, uint OwnerThreadId, uint InstallerThreadId, bool ExplicitWindow)
 {
+    internal WindowsWindowDiagnostic[]? WindowCandidates { get; init; }
     internal int WindowScanCount { get; init; }
     internal int WindowScanVisited { get; init; }
     internal nint FirstOwnedWindow { get; init; }
@@ -56,7 +63,7 @@ internal sealed class WindowsProbeScheduler : IDisposable
             if (id == 0 || id != timer) return;
             if (Volatile.Read(ref stopped) != 0) { CancelOnOwner(); return; }
             var identity = platform.Identity(installerThread); // Re-read OS identity on EVERY callback.
-            Log($"windows_probe_tick tick={++ticks}; entry_tid={installerThread}; callback_tid={identity.CurrentThreadId}; hwnd={identity.Window}; pid={identity.ProcessId}; owner_pid={identity.OwnerProcessId}; owner_tid={identity.OwnerThreadId}; explicit_hwnd={identity.ExplicitWindow}; owner_match={identity.Matches()}; window_scan={identity.WindowScanStatus ?? "not_needed"}; scanned_windows={identity.WindowScanVisited}; owned_windows={identity.WindowScanCount}; first_owned_hwnd={identity.FirstOwnedWindow}; first_owned_tid={identity.FirstOwnedThreadId}; window_scan_error={identity.WindowScanError}; native_reads=disabled");
+            Log($"windows_probe_tick tick={++ticks}; entry_tid={installerThread}; callback_tid={identity.CurrentThreadId}; hwnd={identity.Window}; pid={identity.ProcessId}; owner_pid={identity.OwnerProcessId}; owner_tid={identity.OwnerThreadId}; explicit_hwnd={identity.ExplicitWindow}; owner_match={identity.Matches()}; window_scan={identity.WindowScanStatus ?? "not_needed"}; scanned_windows={identity.WindowScanVisited}; owned_windows={identity.WindowScanCount}; first_owned_hwnd={identity.FirstOwnedWindow}; first_owned_tid={identity.FirstOwnedThreadId}; window_scan_error={identity.WindowScanError}; windows={JsonSerializer.Serialize(identity.WindowCandidates ?? Array.Empty<WindowsWindowDiagnostic>())}; native_reads=disabled");
         }
         catch (Exception error) { Log($"windows_probe_callback_error type={error.GetType().Name}; native_reads=disabled"); }
         finally { Volatile.Write(ref entered, 0); }

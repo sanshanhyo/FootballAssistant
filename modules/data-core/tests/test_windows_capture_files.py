@@ -1,4 +1,5 @@
 """Windows tests use actual kernel handles; non-Windows must not emulate a pass."""
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -75,9 +76,10 @@ def test_real_windows_rejects_junction_ancestor(local_control, tmp_path):
     result = subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(junction), str(local_control.parent)], capture_output=True)
     assert result.returncode == 0, 'Windows junction fixture must be created for this security test'
     try:
-        with pytest.raises(ValueError, match='reparse'):
+        with pytest.raises((ValueError, OSError)) as error:
             with WindowsCaptureFiles().directory(junction / 'control'):
                 pass
+        assert getattr(error.value, 'winerror', None) != 87, 'must reject reparse, not malformed NT arguments'
     finally:
         os.rmdir(junction)
 
@@ -135,8 +137,9 @@ def test_real_windows_failed_rename_cleans_owned_temporary(local_control):
     with files.directory(local_control) as directory:
         # A held read handle disallows deletion/replacement of the destination.
         with files._open(str(local_control / 'ui-capture.json'), 0x80000000, 1):
-            with pytest.raises(OSError):
+            with pytest.raises(OSError) as error:
                 files.write_request(directory, b'{"new":true}')
+            assert error.value.winerror in (5, 32), "must be access/sharing refusal, not malformed rename (87)"
         assert files.read(directory, 'ui-capture.json') == {'old': True}
     assert not list(local_control.glob('.ui-capture-*'))
 
@@ -169,3 +172,40 @@ def test_real_windows_default_adapter_does_not_approve_game_evidence(local_contr
     data['observation']['source']['platform'] = 'windows-x64'
     assert controller.access(data, 'tactics', now=NOW)['status'] == 'unavailable'
     assert not (local_control / 'ui-capture.json').exists()
+
+
+def test_native_rename_buffer_layout_is_length_delimited_and_handle_relative():
+    from football_assistant_data.windows_capture_files import _RenameInfo, _IoStatusBlock, _rename_buffer
+    buffer = _rename_buffer(1234)
+    info = _RenameInfo.from_buffer(buffer)
+    assert info.root == 1234 and info.replace == 1
+    assert info.length == len('ui-capture.json'.encode('utf-16-le'))
+    assert len(buffer) == max(ctypes.sizeof(_RenameInfo), _RenameInfo.name.offset + info.length)
+    assert buffer.raw[_RenameInfo.name.offset:_RenameInfo.name.offset + info.length].decode('utf-16-le') == 'ui-capture.json'
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        assert ctypes.sizeof(_RenameInfo) == 24
+        assert [_RenameInfo.root.offset, _RenameInfo.length.offset, _RenameInfo.name.offset] == [8, 16, 20]
+        assert ctypes.sizeof(_IoStatusBlock) == 16
+        assert _IoStatusBlock.information.offset == 8
+
+
+@windows
+def test_real_windows_no_absolute_child_opens_after_directory_is_held(local_control, monkeypatch):
+    files = WindowsCaptureFiles()
+    with files.directory(local_control) as directory:
+        def forbidden(*args, **kwargs):
+            pytest.fail('no absolute-path open allowed through the write-shared final parent')
+        monkeypatch.setattr(files, '_open', forbidden)
+        with files.locked(directory):
+            files.write_request(directory, b'{"sequence":1}')
+            files.write_request(directory, b'{"sequence":2}')
+            assert files.read(directory, 'ui-capture.json') == {'sequence': 2}
+
+
+def test_native_object_attributes_layout():
+    from football_assistant_data.windows_capture_files import _ObjectAttributes, _UnicodeString
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        assert ctypes.sizeof(_ObjectAttributes) == 48
+        assert [_ObjectAttributes.root.offset, _ObjectAttributes.name.offset, _ObjectAttributes.attributes.offset] == [8, 16, 24]
+        assert ctypes.sizeof(_UnicodeString) == 16
+        assert _UnicodeString.buffer.offset == 8

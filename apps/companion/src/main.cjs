@@ -43,6 +43,7 @@ let installedUpdates;
 let updateRecovery;
 let updateLifecycle;
 let updateQuiescing = false;
+let updateBackendStopped = false;
 let updateSessionEnding = false;
 let lastGameClearAt = 0;
 let activeIpc = 0;
@@ -313,11 +314,12 @@ async function prepareUpdateRestart({ targetVersion }) {
   const game = await detectGame();
   if (game.state !== 'not_detected' || !updateSafeNow()) throw new Error('Update postponed: application/game became active');
   lastGameClearAt = Date.now();
-  updateQuiescing = true;
+  updateQuiescing = true; updateBackendStopped = false;
   const recovery = await updateRecovery.prepare({ targetVersion });
   if (recovery.state !== 'prepared') { updateQuiescing = false; throw new Error('Update recovery checkpoint could not be saved'); }
   await runtime.persist();
   if (runtime.storageWarning) { updateQuiescing = false; throw new Error('Conversation state could not be saved before update'); }
+  updateBackendStopped = backendSupervisor.status.owned === true;
   await backendSupervisor.stop(); // Only the helper this app owns, never FM/external services.
   if ((await detectGame()).state !== 'not_detected' || updateSessionEnding) throw new Error('Update postponed: game started or Windows session is ending');
   lastGameClearAt = Date.now();
@@ -328,14 +330,14 @@ async function recoverFailedUpdate(error) {
     await updateRecovery.fail(`Update installation blocked: ${error.message}`);
     // A final verification failure must not leave the chat backend silently stopped.
     // Recreate only our own supervisor; external services are never killed/replaced.
-    if (!quitting && !updateSessionEnding) {
+    if (updateBackendStopped && !quitting && !updateSessionEnding) {
       backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
       bootstrapStatus.backend = await backendSupervisor.start();
     }
   } catch {
     bootstrapStatus.backend = { state: 'failed', owned: false, message: '更新已中止；本机后端恢复失败，请重启应用。配置备份已保留。' };
   } finally {
-    updateQuiescing = false;
+    updateQuiescing = false; updateBackendStopped = false;
     emit({ type: 'update-status', state: { ...updateController.status, state: 'recovery_required', installation: installedUpdates.status, recovery: updateRecovery.status } });
   }
 }

@@ -42,8 +42,29 @@ coreclr_path=C:\approved-private-location\runtime\coreclr.dll
 corlib_dir=C:\approved-private-location\runtime
 ```
 
-Set `FOOTBALL_ASSISTANT_PRIVATE_ROOT` to an absolute, private writable diagnostics directory
-in the launched game's environment. No connection file, GameAssembly path, Mac profile,
+Normal Steam startup need not inherit a shell's environment. Place only this fixed UTF-8 (without BOM) file
+beside the self-owned `FootballAssistant.GameBridge.dll` in the approved private test directory:
+
+`footballassistant.windows-probe.json`
+
+```json
+{"schema_version":1,"mode":"probe_only"}
+```
+
+The file is capped at 1024 bytes, has exactly these two distinct properties, and accepts no
+path override or read mode. Logs are fixed beneath the DLL directory at
+`windows-probe-private/logs/windows-scheduler-probe.log`. No file is searched in the current
+working directory, original game folder, Steam configuration or registry. Missing/invalid
+configuration fails closed before installing a timer. The DLL/runtime/config remain in the
+test directory; only separately approved Doorstop proxy and ini belong in the original game.
+
+For compatibility, an explicit `FOOTBALL_ASSISTANT_PRIVATE_ROOT` environment value takes
+precedence and must still be an absolute private writable directory. Neither mode changes
+system/user environment variables or Steam launch options. Existing path ancestors, adjacent
+configuration and log destination are rejected if marked symbolic-link/reparse; diagnostics
+recheck the log path before each append. These are best-effort checks in a trusted,
+owner-controlled test directory, not protection against an attacker racing path replacements.
+Maintain private directory permissions; the implementation does not claim to configure ACLs. No connection file, GameAssembly path, Mac profile,
 native observer flag, UI control request or network credentials are needed for this probe.
 The bounded background logger writes `logs/windows-scheduler-probe.log`; orderly disposal
 requests completion but does not block process shutdown for disk flushing.
@@ -53,10 +74,32 @@ the current process/session. Without it, `Process.MainWindowHandle` is logged as
 **unverified candidate**, `explicit_hwnd=False`, `owner_match=False`, even if PID/TID coincide.
 Do not reuse another launch's handle. The environment is fixed at process creation; this
 first candidate intentionally has no live control channel to select a newly created HWND.
-When the candidate is zero, an EnumWindows diagnostic bounded to 512 visited / 32 owned windows records only this process's
-window count, first owned HWND/TID, completion status and Win32 error. It reads no window
-titles/text and never promotes an enumerated candidate into an authorized window.
-Candidate logs are enough to assess whether a future controlled selection mechanism is useful.
+Every tick enumerates at most 512 visited / 32 owned windows, even when MainWindowHandle
+is nonzero. The JSON `windows` array records only this process's HWND, owner PID/TID,
+owner stability across the observation, bounded class name (128-char buffer with explicit
+completeness), WS_VISIBLE style, GetClientRect success/width/height and Win32 error codes.
+No title or UI text is read. WS_VISIBLE is a style, **not evidence that pixels are unobscured**.
+A failed rectangle has null dimensions, never a fabricated zero size. Enumeration status
+must be `complete` before anyone treats the candidate set as complete. These diagnostics
+never promote a candidate to an authorized game window.
+
+### Proposed next gate (not implemented / not enabled by this diagnostic revision)
+
+First confirm FM's actual class from these logs; `UnityWndClass` is a hypothesis until then.
+Then use a fresh complete scan to require exactly one candidate with the confirmed class,
+complete class text, stable current PID, owner TID equal to installer and callback TID,
+visible style, successful positive client width/height. Zero/multiple candidates, partial
+scans, destroyed/rebuilt windows or a changed owner all fail closed. Re-read the selected
+window identity/class/style/rectangle immediately before each authorized read. Do not ask
+the user for an HWND from a previous launch or use the first enumeration result.
+
+A one-shot read should be authorized by a short-lived private request bound to this launch's
+PID/session nonce/bridge hash and an operator-observed fresh main-menu checkpoint. Consume
+the request once before the native call, including on failure; no automatic retry/read loop.
+A diagnostic phase should first prove only the domain/export identity. A separately reviewed
+small UI sample must retain its own method/shape/budget validation. This proposal does not
+change the constructor-level Windows reader prohibition in the current candidate.
+
 
 ## Evidence required from an authorized FM probe launch
 

@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="WindowsProbeTests.cs" />
+    <Compile Include="../src/WindowsProbeConfiguration.cs" Link="WindowsProbeConfiguration.cs" />
     <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
     <Compile Include="../src/WindowsProbeScheduler.cs" Link="WindowsProbeScheduler.cs" />
   </ItemGroup>
