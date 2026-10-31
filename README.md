@@ -19,7 +19,7 @@
 
 ## 下载
 
-请前往 [Releases](https://github.com/sanshanhyo/FootballAssistant/releases) 下载对应平台的 Alpha 版本。尚未发布的测试构建可在 [GitHub Actions](https://github.com/sanshanhyo/FootballAssistant/actions/workflows/desktop.yml) 中选择 `integration/alpha-reader-ui` 分支的成功构建下载（下载 artifact 可能需要登录 GitHub）。
+请前往 [Releases](https://github.com/sanshanhyo/FootballAssistant/releases) 下载对应平台的版本。
 
 - 首次启动会自动生成配置文件，可在设置中填写模型服务地址、模型名称和 API Key。
 
