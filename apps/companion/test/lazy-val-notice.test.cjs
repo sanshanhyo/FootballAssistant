@@ -28,3 +28,11 @@ test('lazy-val notice is explicitly a provenance note, not an invented upstream 
   assert.match(notice, /does not invent a copyright/);
   assert.doesNotMatch(notice, /Copyright \(c\) \d{4}/);
 });
+
+test('Git preserves upstream evidence bytes under Windows CRLF checkout', () => {
+  const attributes = fs.readFileSync(path.join(__dirname, '../../..', '.gitattributes'), 'utf8');
+  assert.match(attributes, /^\/apps\/companion\/src\/vendor\/notices\/lazy-val-1\.0\.5\/upstream-package\.json -text$/m);
+  for (const file of ['LICENSE.txt', 'AUTHORS.md', 'ACKNOWLEDGEMENTS.md', 'README.md']) {
+    assert.ok(attributes.includes(`/packaging/licenses/openssl-3.0.16/${file} -text`));
+  }
+});

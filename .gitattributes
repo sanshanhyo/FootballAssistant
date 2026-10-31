@@ -1,0 +1,7 @@
+# Preserve audited upstream bytes: these files carry exact SHA-256 evidence.
+# Do not rewrite line endings on Windows checkout or renormalize their contents.
+/apps/companion/src/vendor/notices/lazy-val-1.0.5/upstream-package.json -text
+/packaging/licenses/openssl-3.0.16/LICENSE.txt -text
+/packaging/licenses/openssl-3.0.16/AUTHORS.md -text
+/packaging/licenses/openssl-3.0.16/ACKNOWLEDGEMENTS.md -text
+/packaging/licenses/openssl-3.0.16/README.md -text
