@@ -20,7 +20,7 @@ internal static class VerifiedWindowsBuild
 
 // DRAFT: current-process module reference only; never calls LoadLibrary/NativeLibrary.Load.
 // Expected file identity must come from trusted launch evidence, not this factory itself.
-internal sealed class WindowsLoadedModuleLease : IDisposable
+internal sealed partial class WindowsLoadedModuleLease : IDisposable
 {
     [StructLayout(LayoutKind.Sequential)] private struct FileInformation
     {
@@ -50,9 +50,10 @@ internal sealed class WindowsLoadedModuleLease : IDisposable
     private nint module;
     private readonly FileStream file, executableFile;
     private readonly Dictionary<string, nint> exports;
+    private readonly PEHeaders verifiedHeaders;
     internal string VerifiedHash { get; }
-    private WindowsLoadedModuleLease(nint module, FileStream file, FileStream executableFile, Dictionary<string, nint> exports, string hash)
-    { this.module = module; this.file = file; this.executableFile = executableFile; this.exports = exports; VerifiedHash = hash; }
+    private WindowsLoadedModuleLease(nint module, FileStream file, FileStream executableFile, Dictionary<string, nint> exports, string hash, PEHeaders headers)
+    { this.module = module; this.file = file; this.executableFile = executableFile; this.exports = exports; VerifiedHash = hash; verifiedHeaders = headers; }
 
     internal static WindowsLoadedModuleLease Acquire(ApprovedModule approval)
     {
@@ -105,24 +106,36 @@ internal sealed class WindowsLoadedModuleLease : IDisposable
             var exports = new Dictionary<string, nint>(StringComparer.Ordinal);
             foreach (var name in VerifiedWindowsBuild.MetadataExports)
             {
-                var address = GetProcAddress(referenced, name);
-                var rva = address.ToInt64() - referenced.ToInt64();
-                var executableSection = headers.SectionHeaders.Any(s =>
-                    (s.SectionCharacteristics & (SectionCharacteristics.MemExecute | SectionCharacteristics.MemRead)) ==
-                        (SectionCharacteristics.MemExecute | SectionCharacteristics.MemRead) &&
-                    (s.SectionCharacteristics & SectionCharacteristics.MemWrite) == 0 &&
-                    rva >= s.VirtualAddress && rva < (long)s.VirtualAddress + s.VirtualSize);
-                if (address == 0 || rva < 0 || rva >= headers.PEHeader.SizeOfImage || !executableSection ||
-                    VirtualQuery(address, out var memory, (nuint)Marshal.SizeOf<MemoryInformation>()) == 0 ||
-                    memory.AllocationBase != referenced || memory.Type != 0x1000000 || memory.State != 0x1000 ||
-                    (memory.Protect & 0x100) != 0 || (memory.Protect & 0xff) != 0x20)
-                    throw new InvalidOperationException("Export is missing, forwarded, guarded or outside executable module memory: " + name);
-                exports.Add(name, address);
+                exports.Add(name, ValidateExport(referenced, headers, name));
             }
             WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(expectedPath);
-            return new WindowsLoadedModuleLease(referenced, file, executableFile, exports, hash);
+            return new WindowsLoadedModuleLease(referenced, file, executableFile, exports, hash, headers);
         }
         catch { if (referenced != 0) FreeLibrary(referenced); file.Dispose(); executableFile?.Dispose(); throw; }
+    }
+
+    private static nint ValidateExport(nint handle, PEHeaders headers, string name)
+    {
+        var address = GetProcAddress(handle, name);
+        var rva = address.ToInt64() - handle.ToInt64();
+        var executableSection = headers.SectionHeaders.Any(s =>
+            (s.SectionCharacteristics & (SectionCharacteristics.MemExecute | SectionCharacteristics.MemRead)) ==
+                (SectionCharacteristics.MemExecute | SectionCharacteristics.MemRead) &&
+            (s.SectionCharacteristics & SectionCharacteristics.MemWrite) == 0 &&
+            rva >= s.VirtualAddress && rva < (long)s.VirtualAddress + s.VirtualSize);
+        if (address == 0 || rva < 0 || rva >= headers.PEHeader!.SizeOfImage || !executableSection ||
+            VirtualQuery(address, out var memory, (nuint)Marshal.SizeOf<MemoryInformation>()) == 0 ||
+            memory.AllocationBase != handle || memory.Type != 0x1000000 || memory.State != 0x1000 ||
+            (memory.Protect & 0x100) != 0 || (memory.Protect & 0xff) != 0x20)
+            throw new InvalidOperationException("Export is missing, forwarded, guarded or outside executable module memory: " + name);
+        return address;
+    }
+
+    private void EnsureExports(IEnumerable<string> names)
+    {
+        if (module == 0) throw new ObjectDisposedException(nameof(WindowsLoadedModuleLease));
+        foreach (var name in names)
+            if (!exports.ContainsKey(name)) exports.Add(name, ValidateExport(module, verifiedHeaders, name));
     }
 
     private T Bind<T>(string name) where T : Delegate
@@ -153,10 +166,13 @@ internal sealed class WindowsLoadedModuleLease : IDisposable
             }, cancellationToken);
     }
 
+    partial void ReleaseUiResources();
+
     public void Dispose()
     {
         lock (lifetime)
         {
+            ReleaseUiResources(); // Optional UI partial cleans roots while exports/module are still valid.
             var handle = Interlocked.Exchange(ref module, 0);
             if (handle == 0) return;
             FreeLibrary(handle);

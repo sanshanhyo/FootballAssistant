@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>FootballAssistant.WindowsUiCandidate</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="UiCandidateEntrypoint.cs" /><Compile Include="UiCandidateHost.cs" /><Compile Include="UiCandidateConfiguration.cs" />
+    <Compile Include="WindowsSmokeReader.cs" /><Compile Include="WindowsLoadedModuleLease.Ui.cs" />
+    <Compile Include="../windows-smoke-draft/WindowsSmokePolicy.cs" Link="WindowsSmokePolicy.cs" />
+    <Compile Include="../windows-smoke-draft/WindowsLoadedModuleLease.cs" Link="WindowsLoadedModuleLease.cs" />
+    <Compile Include="../windows-smoke-draft/MetadataSmoke.cs" Link="MetadataSmoke.cs" />
+    <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
+    <Compile Include="../src/WindowsProbeScheduler.cs" Link="WindowsProbeScheduler.cs" />
+    <Compile Include="../src/WindowsProbeConfiguration.cs" Link="WindowsProbeConfiguration.cs" />
+  </ItemGroup>
+</Project>

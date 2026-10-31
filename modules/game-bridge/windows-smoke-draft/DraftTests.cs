@@ -38,6 +38,9 @@ foreach (var expired in new[] { false, true })
 }
 Check(policy.TryConsume(metadata, identity, now) is null, "nonce replay rejected");
 policy.CompleteMetadata(grant!, true);
+var resolveGrant = policy.TryConsume(Request(SmokeStage.UiResolve), identity, now)!;
+Check(policy.TryBeginCall(resolveGrant, identity, now), "separate resolve grant starts");
+policy.CompleteResolve(resolveGrant, true);
 var ui = policy.TryConsume(Request(SmokeStage.UiText), identity, now);
 Check(ui is not null, "distinct UI request only after metadata success");
 Check(policy.TryConsume(Request(SmokeStage.UiText), identity, now) is null, "UI stage cannot retry even with a new nonce");

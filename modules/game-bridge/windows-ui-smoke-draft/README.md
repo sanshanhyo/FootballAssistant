@@ -1,0 +1,203 @@
+# Windows first UI scalar — independent experimental candidate
+
+Ordinary production/probe stays zero-native on Windows and NativeUiReader retains its
+Windows constructor refusal. This separate candidate has an explicit Doorstop entrypoint,
+but has no effect without its fixed DLL-adjacent opt-in file and three separately authored
+session-bound requests. No enabling config or request is shipped. No real UI data has yet
+been read by this candidate; fake tests do not establish game success.
+
+## Explicit staged runbook (root coordinates installation/restart)
+
+1. With FM normally closed, run `Prepare-UiCandidate.ps1 -ExecutablePath <original fm.exe>
+   -GameAssemblyPath <original GameAssembly.dll> -CandidateDirectory <private DLL folder>`.
+   It only reads approved hashes/FileID and writes private `footballassistant.windows-ui.json`.
+   It does not install anything, alter a game file, launch FM or create a request.
+2. Point the separately approved Doorstop configuration at
+   `FootballAssistant.WindowsUiCandidate.dll`, retaining the private CoreCLR runtime. Start
+   normally via Steam. Wait for `windows-ui-private/session.json`, module-status ready,
+   and complete unique visible positive-client `UnityWndClass` owner/PID/TID evidence.
+3. After confirming a stable page in THIS new session, invoke `Request-UiStage.ps1
+   -CandidateDirectory <private DLL folder> -Stage metadata -StableCurrentSessionPageConfirmed`.
+   Check `ui-evidence.jsonl` for successful two-call metadata result. This is not player data.
+4. Reconfirm the current stable page; explicitly request `-Stage ui_resolve`. It permits
+   one metadata-only class/method warm-up, at most 2048 reserved native boundary units and
+   250ms soft elapsed from resolution start. No panel getter, runtime invoke, UI objects,
+   roots, observer or registry in this phase. Successful methods cache only in this held
+   module lease and session. Inspect the terminal result before proceeding.
+5. Reconfirm the stable page and explicitly request `-Stage ui_text`. One capture is allowed:
+   25ms soft elapsed, 128 reserved native boundary units, one panel, 32 nodes, depth8,
+   8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
+   retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
+
+Each request lasts at most30 seconds and binds nonce, PID, session, bridge hash, approved
+GameAssembly hash, exact class and current-page checkpoint. Full unique window ownership
+is rechecked at native boundaries. The cache does not grant capture permission. The helper
+reads `stage-state.json` and refuses out-of-order/completed/terminal stages; in-process
+policy independently enforces this. Reading a partially written status fails closed: retry
+only the helper/status read, not a consumed native stage.
+
+Budgets are cooperative, not real-time preemption of a native call or first JIT. Results
+include actual elapsed, stopped stage and **reserved** NativeOperations (not exact calls).
+Cleanup is mandatory outside the sampling cap: up to64 root frees, before module release.
+`no_eligible_text`, `bounded_no_text`, budget and `backend_failure` are distinct; none means
+that the game contains no data. Only a nonempty returned text is an actual field result.
+
+## Why not invoke existing Capture wholesale?
+
+`src/NativeUiReader.cs` constructor calls NativeLibrary.Load and binds 13 delegates; it does
+not itself resolve classes. `Capture` then scans assemblies up to 1024 twice to find
+UIElementsRuntimeUtility and TextElement, calls GetSortedPlayerPanels and list get_Count,
+and only AFTER this begins its nominal 15ms stopwatch. The stock limits also allow 32 panels,
+2500 nodes, 512 children/node and up to 240 text results, inappropriate for this smoke.
+
+Every stock Call invokes RecordMethodProof. The first successful getter lazily binds 17
+additional InspectionApi exports, including field/static-data APIs, and performs class/name/
+token proof queries. Capture does not itself enumerate registries, but BridgeRuntime.Capture
+calls registry/enumeration functions afterward. Therefore calling Capture then taking one
+result does NOT limit work to one field and brings unnecessary inspection dependencies.
+
+## Exact intended reuse: same getter path/semantics, not whole collector
+
+Use the verified *existing* module lease, never NativeLibrary.Load another GameAssembly.
+The final adapter requires these 16 actually used exports: the stock UI path's 13 plus
+three temporary-root operations (the first two are already in metadata):
+
+```
+il2cpp_domain_get
+il2cpp_domain_get_assemblies
+il2cpp_assembly_get_image
+il2cpp_image_get_name
+il2cpp_object_get_class
+il2cpp_class_get_parent
+il2cpp_object_unbox
+il2cpp_string_chars
+il2cpp_class_from_name
+il2cpp_class_get_method_from_name
+il2cpp_runtime_invoke
+il2cpp_string_length
+il2cpp_class_is_assignable_from
+il2cpp_gchandle_new
+il2cpp_gchandle_get_target
+il2cpp_gchandle_free
+```
+
+Exact managed targets/getters to verify from runtime metadata, no Mac offsets:
+
+1. Image `UnityEngine.UIElementsModule.dll`, namespace `UnityEngine.UIElements`.
+2. Types `UIElementsRuntimeUtility`, `VisualElement` and `TextElement`.
+3. Static `UIElementsRuntimeUtility.GetSortedPlayerPanels()`; returned list `get_Count()`;
+   only `get_Item(0)` on that list; panel `get_visualTree()`.
+4. Element `get_visible()` and `get_worldBound()`; positive finite Rect required to emit
+   that node's text. Hidden ancestors prune subtrees; invalid parent bounds do NOT prove
+   children are hidden. Bool, Int32 and Rect boxed payload shapes need validation before
+   unbox/read; if existing basic APIs cannot establish shapes, explicitly add only the
+   required metadata functions rather than blindly assuming layouts.
+5. `il2cpp_class_is_assignable_from(TextElement, actualClass)` before `get_text()`.
+6. `get_childCount()` and `get_Item(index)` for bounded descendants only.
+7. `il2cpp_string_length` + `il2cpp_string_chars`, at most 128 UTF-16 code units, avoid
+   ending a surrogate pair mid-character. No unbounded PtrToStringUTF8 for image names:
+   bound native name scanning and method-parent depth explicitly in the future adapter.
+
+No ReadApplicationVersion, RecordMethodProof, widget inventory, field lookup, registry,
+observer, packet, network publisher or broad runtime reflection in this adapter.
+
+## Budget and outcomes
+
+Both staged operations start their stopwatch BEFORE their work. Every native export/invoke/
+memory read in the adapter calls BeforeNative (not once around a multi-call method).
+It caps one panel, 32 nodes, depth 8, 8 children/node, one text of 128 code units; lazy DFS
+obtains one child at a time rather than eagerly fetching all siblings. Capture
+budget is 25ms soft elapsed / 128 native boundaries, explicitly a conservative experiment,
+not proof that cold resolution will fit. Results record elapsed, stopped stage, operation/
+node count, root-resolution and text-getter success. `no_eligible_text`/`bounded_no_text`/
+`time_budget` are NOT real fields and not evidence the game has no data. `backend_failure`
+is distinct and records exception type; native access violations are not made safe by catch.
+
+A single native getter cannot be interrupted by a soft budget. Cold JIT can exceed the
+soft limit. The explicit resolve-only warm-up is separately limited to250ms/2048 boundary
+units and never automatic. Do not silently expand either budget or retry.
+
+## Enforced experimental integration boundary
+
+Only after actual metadata success: acquire/validate the extra required exports on the same
+held module lease; create one backend privately from that lease. Consume a distinct UI grant
+bound to PID/session/bridge/game hash and the newly confirmed stable page. Immediately before
+capture and at each native boundary, revalidate grant expiry, cancellation and the unique
+current-session UnityWndClass owner. A factory needs to enforce module hash equality; the
+backend interface is NOT a security capability and no production code should accept arbitrary
+implementations. Complete/revoke the active UI grant on every return/exception. Failure or
+empty result is terminal for that UI attempt. Do not reconstruct the session policy.
+
+TryReadAuthorized now consumes/revalidates a separate UI-stage policy grant and revokes it
+on every return/exception; tests prove no UI before metadata success or second UI attempt.
+Tests additionally bind that private adapter to fake managed export delegates and owned fixture
+memory using a test-only partial that must never enter a runtime project. No host references it. The real adapter is only constructible inside the held module lease.
+The standalone ReadOne traversal core cannot authorize itself. The native adapter is compiled in tests but uses only fake exports/owned buffers there; tests make zero game calls.
+Run: `dotnet run --project modules/game-bridge/windows-ui-smoke-draft/UiDraftTests.csproj`.
+
+
+## Implemented native thin adapter (still unactivated)
+
+`WindowsLoadedModuleLease.Ui.cs` adds a private nested adapter and RunUiOnce on the already
+held module lease. The same lease lifetime lock covers export validation, delegate binding
+and the entire one-shot UI call. Extra exports are checked against the same PE/RX mapping;
+no library load is performed. Neither metadata host project nor ordinary production compiles
+this partial. There is no script/config/UI request path to invoke it.
+
+The adapter uses exactly the 16 exports above. It scans the assembly list ONCE for the UI,
+CoreModule and mscorlib images (count <=1024), resolves exact runtime classes for Int32,
+Boolean, String and Rect, and checks returned boxed/string runtime class before payload
+reads. Parent method search caps depth16. Image names are bounded to128 ASCII bytes (one
+bounded memory-read operation, no unbounded marshaler); indexed arguments are stack-local
+Int32 values passed through runtime_invoke. Getter exceptions stop before any later getter.
+No method proof recording or Inspector API constructor is present.
+
+Rect payload uses the same four-float sequential typed ABI as the existing reader, not a
+Mac field offset. Unity's official public source documents `[StructLayout(LayoutKind.Sequential)]`
+and x/y/width/height float fields:
+https://github.com/Unity-Technologies/UnityCsReference/blob/master/Runtime/Export/Geometry/Rect.cs
+The actual Windows build/getter path still needs runtime evidence before claiming correctness.
+
+All export calls, array/payload copies and bounded string scans consume the explicit budget
+and revalidate the active grant/window before proceeding. Class/method resolution uses the
+separate explicitly authorized 250ms/2048 warm-up. First JIT and native call duration can
+exceed a soft deadline; actual elapsed and the stopping stage are recorded, never retried.
+
+NativeUiAdapterFixture exercises the actual adapter against managed fake export delegates
+and its own allocated buffers: exact allowlisted getter sequence, one text, boxed-type mismatch
+rejection and getter-exception stop. Test-only factory is isolated in NativeUiAdapter.TestHooks.cs;
+no future runtime project may include that file or NativeUiAdapterFixture.cs.
+
+
+## Temporary-object lifetime and cleanup
+
+CoreCLR closures/collections are NOT IL2CPP GC roots. Every non-null runtime_invoke result
+(list, panel, visual element, boxed primitive/Rect, string) gets a strong non-pinned root
+immediately on return. Invoke/new/get_target budget slots and window checks are reserved
+BEFORE invoke; between the returned raw pointer and gchandle_new there is no window scan,
+CoreCLR closure allocation, diagnostic formatting or budget exception. The returned handle
+is immediately retained in a preallocated64-entry array, then get_target must equal the
+original pointer. No unrooted boxed/string return is carried across later gate work.
+
+Declarations use pointer-sized nuint for modern GC handles and explicitly I1 for C++ bool
+pinned=false, never default4-byte BOOL marshalling or legacyuint truncation. The Windows
+build's pointer-width return/input and byte pinned argument were separately confirmed by
+private, read-only static disassembly through the allocator return; no game bytes are
+included here. Fake high32-handle tests alone do not prove that ABI. Upstream Il2CppInterop also declares pointer-sized handles and I1 pinned:
+https://github.com/BepInEx/Il2CppInterop/blob/master/Il2CppInterop.Runtime/IL2CPP.cs
+Unity6.3 documents its Boehm non-compacting collector (no object relocation); strong roots
+retain these objects while pointer values are stored in the bounded traversal:
+https://docs.unity.cn/6000.3/Documentation/Manual/performance-incremental-garbage-collection.html
+
+RunUiOnce holds the module lease lifetime lock and uses deterministic adapter disposal on
+success, empty result, exception, cancellation and budget expiry. Every retained root gets
+one free attempt before the lease lock is released. Cleanup ignores the sampling budget and
+cancel/window gate: those must not strand roots. At most64 cleanup calls are possible; they
+are separate from reserved sampling-operation accounting. If one managed cleanup call fails,
+remaining frees are still attempted and cleanup failure is surfaced, never reported as a
+clean field success. No finalizer/background-game-call cleanup is used.
+
+Actual adapter fixtures now require a live fake root before object_class, unbox, string
+access or invoking an instance getter. High32-bit fake handles roundtrip and all are freed
+on success, boxed-type error and exhausted-budget exit. This simulates lifetime rules but
+NOT a real IL2CPP GC stress run. Independent candidate remains undeployed pending staged review and explicit requests.
