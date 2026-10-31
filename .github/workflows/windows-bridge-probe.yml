@@ -32,5 +32,7 @@ jobs:
             modules/game-bridge/FootballAssistant.DirectBridge.csproj
             modules/game-bridge/src/*.cs
             docs/bridge/windows-scheduler-probe.md
+            modules/data-core/src/football_assistant_data/windows_capture_files.py
+            scripts/diagnostics/windows_capture_transport_smoke.py
           if-no-files-found: error
           retention-days: 7

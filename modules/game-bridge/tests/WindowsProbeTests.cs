@@ -102,6 +102,9 @@ static class WindowsHarness
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint CreateWindowExW(uint exStyle, string className, string title, uint style,
         int x, int y, int width, int height, nint parent, nint menu, nint instance, nint parameter);
+    [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(nint window, out Rect rectangle);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyWindow(nint window);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PeekMessageW(out Message message, nint window, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern nint DispatchMessageW(ref Message message);
@@ -123,8 +126,12 @@ static class WindowsHarness
     internal static void Run(Action<bool, string> check)
     {
         var old = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_WINDOWS_GAME_HWND");
-        var window = CreateWindowExW(0, "STATIC", "FootballAssistant isolated timer test (not game)", 0,
-            0, 0, 10, 10, 0, 0, 0, 0);
+        // A hidden, borderless popup avoids implicit overlapped-window nonclient sizing.
+        // Still derive expected client dimensions independently; CreateWindowEx width/height
+        // describe the outer window, not an invariant about its eventual client rectangle.
+        const uint WsPopup = 0x80000000;
+        var window = CreateWindowExW(0, "STATIC", "FootballAssistant isolated timer test (not game)", WsPopup,
+            0, 0, 64, 48, 0, 0, 0, 0);
         check(window != 0, "create owned test window");
         try
         {
@@ -133,10 +140,25 @@ static class WindowsHarness
             var diagnostic = MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId());
             check(diagnostic.WindowScanStatus == "complete", "owned-window scan completes");
             var ownWindow = diagnostic.WindowCandidates!.Single(x => x.Hwnd == window.ToInt64());
+            var rectangleAvailable = GetClientRect(window, out var rectangle);
+            var rectangleError = rectangleAvailable ? 0 : Marshal.GetLastWin32Error();
+            var expectedWidth = (long)rectangle.Right - rectangle.Left;
+            var expectedHeight = (long)rectangle.Bottom - rectangle.Top;
+            Console.WriteLine("Win32 fixture observation: " + System.Text.Json.JsonSerializer.Serialize(new
+            {
+                observed = ownWindow, rectangleAvailable, rectangleError,
+                expectedWidth, expectedHeight, requestedOuterWidth = 64, requestedOuterHeight = 48
+            }));
             check(ownWindow.ClassName == "Static" || ownWindow.ClassName == "STATIC", "actual window class observed");
-            check(ownWindow.ClassNameComplete && ownWindow.OwnerStable && !ownWindow.VisibleStyle &&
-                ownWindow.ClientRectAvailable && ownWindow.ClientWidth == 10 && ownWindow.ClientHeight == 10,
-                "bounded class/visibility/client shape diagnostics match owned fixture");
+            check(ownWindow.ClassNameComplete, "fixture class name is complete");
+            check(ownWindow.OwnerStable && ownWindow.OwnerPid == (uint)Environment.ProcessId &&
+                ownWindow.OwnerTid == MainThreadGuard.CurrentWindowsThreadId(), "fixture owner identity is stable and correct");
+            check(!ownWindow.VisibleStyle, "hidden fixture visibility is false");
+            check(rectangleAvailable && expectedWidth > 0 && expectedHeight > 0,
+                "independent GetClientRect succeeds for positive-sized popup fixture");
+            check(ownWindow.ClientRectAvailable && ownWindow.ClientRectError == 0 &&
+                ownWindow.ClientWidth == expectedWidth && ownWindow.ClientHeight == expectedHeight,
+                "diagnostic client dimensions equal independently observed client rectangle");
             check(!Task.Run(MainThreadGuard.IsCurrent).GetAwaiter().GetResult(), "worker rejected");
             var lines = new List<string>();
             using (var scheduler = new WindowsProbeScheduler(lines.Add, interval: 10))
