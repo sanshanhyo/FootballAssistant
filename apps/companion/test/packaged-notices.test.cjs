@@ -53,3 +53,9 @@ test('asar Windows path separators use the same strict archive inventory', () =>
   assert.equal(report.packages.length, 1);
   assert.equal(report.packages[0].status, 'declared_license_only_open_issue');
 });
+
+test('asar extraction receives native paths after cross-platform inventory normalization', () => {
+  const { nativeArchivePath } = require('../packaging/audit-notices.cjs');
+  assert.equal(nativeArchivePath('node_modules/a/LICENSE', path.win32), 'node_modules\\a\\LICENSE');
+  assert.equal(nativeArchivePath('node_modules/a/LICENSE', path.posix), 'node_modules/a/LICENSE');
+});

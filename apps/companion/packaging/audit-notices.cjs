@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
+const nativeArchivePath = (file, pathApi = path) => pathApi.normalize(file);
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function auditArchive(files, read) {
   const present = new Set(files.map(file => file.replace(/\\/g, '/').replace(/^\//, '')));
@@ -53,7 +54,7 @@ function auditOpenSsl(manifest, cryptoBytes, sslBytes) {
 function auditBundle(resources) {
   const asar = require('@electron/asar');
   const archive = path.join(resources, 'app.asar');
-  const result = auditArchive(asar.listPackage(archive), file => asar.extractFile(archive, file));
+  const result = auditArchive(asar.listPackage(archive), file => asar.extractFile(archive, nativeArchivePath(file)));
   result.external_notices = ['LICENSE.electron.txt', 'LICENSES.chromium.html'].map(name => {
     const candidates = [path.join(resources, name), path.join(resources, '..', name)];
     const file = candidates.find(p => fs.existsSync(p));
@@ -74,4 +75,4 @@ if (require.main === module) {
   const text = JSON.stringify(auditBundle(path.resolve(resources)), null, 2) + '\n';
   if (output) fs.writeFileSync(output, text); else process.stdout.write(text);
 }
-module.exports = { auditArchive, auditBundle, auditOpenSsl };
+module.exports = { auditArchive, auditBundle, auditOpenSsl, nativeArchivePath };
