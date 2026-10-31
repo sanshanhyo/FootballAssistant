@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>FootballAssistant.WindowsMetadataCandidate</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="WindowsSmokePolicy.cs" /><Compile Include="WindowsLoadedModuleLease.cs" />
+    <Compile Include="MetadataSmoke.cs" /><Compile Include="CandidateConfiguration.cs" />
+    <Compile Include="MetadataCandidateEntrypoint.cs" /><Compile Include="MetadataCandidateHost.cs" />
+    <Compile Include="../src/WindowsProbeScheduler.cs" Link="WindowsProbeScheduler.cs" />
+    <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
+    <Compile Include="../src/WindowsProbeConfiguration.cs" Link="WindowsProbeConfiguration.cs" />
+  </ItemGroup>
+</Project>

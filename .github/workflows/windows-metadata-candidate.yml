@@ -1,0 +1,58 @@
+name: Windows metadata experimental candidate (not installed)
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'modules/game-bridge/windows-smoke-draft/**'
+      - '.github/workflows/windows-metadata-candidate.yml'
+  pull_request:
+    paths:
+      - 'modules/game-bridge/windows-smoke-draft/**'
+      - '.github/workflows/windows-metadata-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  candidate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Pure policy, fake metadata, strict config tests (no native game calls)
+        run: dotnet run --project modules/game-bridge/windows-smoke-draft/DraftTests.csproj
+      - name: Build independent experimental DLL (does not invoke entrypoint)
+        run: dotnet build modules/game-bridge/windows-smoke-draft/FootballAssistant.WindowsMetadataCandidate.csproj --configuration Release --output build/windows-metadata-candidate
+      - name: Verify helper script syntax without executing them
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem modules/game-bridge/windows-smoke-draft/*.ps1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+      - name: Collect explicit opt-in helpers, provenance and source
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item modules/game-bridge/windows-smoke-draft/*.ps1 build/windows-metadata-candidate/
+          Copy-Item modules/game-bridge/windows-smoke-draft/README.md build/windows-metadata-candidate/
+          New-Item -ItemType Directory build/windows-metadata-candidate/source/windows-smoke-draft,build/windows-metadata-candidate/source/src | Out-Null
+          Copy-Item modules/game-bridge/windows-smoke-draft/* build/windows-metadata-candidate/source/windows-smoke-draft/ -Exclude bin,obj
+          Copy-Item modules/game-bridge/src/WindowsProbeScheduler.cs,modules/game-bridge/src/MainThreadGuard.cs,modules/game-bridge/src/WindowsProbeConfiguration.cs build/windows-metadata-candidate/source/src/
+          Copy-Item LICENSE build/windows-metadata-candidate/
+          Copy-Item LICENSE build/windows-metadata-candidate/source/
+          git rev-parse HEAD | Out-File build/windows-metadata-candidate/source-commit.txt -Encoding utf8
+          Get-FileHash build/windows-metadata-candidate/*.dll -Algorithm SHA256 | Format-List | Out-File build/windows-metadata-candidate/SHA256.txt -Encoding utf8
+          if (Test-Path build/windows-metadata-candidate/footballassistant.windows-metadata.json) { throw 'No enabling config may be packaged.' }
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: WindowsMetadata-EXPERIMENTAL-NOT-INSTALLED
+          path: build/windows-metadata-candidate/
+          if-no-files-found: error
+          retention-days: 7
