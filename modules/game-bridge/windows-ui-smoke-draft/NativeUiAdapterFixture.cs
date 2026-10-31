@@ -12,6 +12,7 @@ sealed class NativeUiAdapterFixture : IDisposable
     private readonly nint assemblyArray, countPayload, boolPayload, rectPayload, chars;
     public readonly List<string> Invocations = new();
     public bool WrongBoxType, GetterThrows;
+    public int TextDepth = 1;
     private readonly Dictionary<nuint, nint> roots = new();
     private nuint nextHandle = IntPtr.Size == 8 ? unchecked((nuint)0x100000001UL) : 1;
     public int RootCreates, RootTargets, RootFrees;
@@ -55,6 +56,7 @@ sealed class NativeUiAdapterFixture : IDisposable
     public nint il2cpp_object_get_class(nint value)
     {
         RequireRoot(value);
+        if (value >= 300 && value < 400) return value - 300 >= TextDepth ? 22 : 33;
         return value switch { 101 => 31, 102 => 32, 103 => 33, 104 => 22, 201 => WrongBoxType ? 25 : 23, 202 => 24, 203 => 26, 204 => 25, _ => 0 };
     }
     public nint il2cpp_class_get_parent(nint value) => 0;
@@ -78,7 +80,7 @@ sealed class NativeUiAdapterFixture : IDisposable
         {
             "GetSortedPlayerPanels" => 101, "get_Count" => 201, "get_visualTree" => 103,
             "get_visible" => 202, "get_worldBound" => 203, "get_childCount" => 201,
-            "get_Item" => instance == 101 ? 102 : 104, "get_text" => 204,
+            "get_Item" => instance == 101 ? 102 : TextDepth == 1 ? 104 : instance == 103 ? 301 : instance + 1, "get_text" => 204,
             _ => throw new Exception("Unexpected getter: " + name)
         };
     }

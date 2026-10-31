@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace FootballAssistant.GameBridge;
 
-// Independent UI draft. A native lease adapter exists, but no host references or enables it.
+// Independent staged UI candidate only; ordinary production/probe never enables this reader.
 internal readonly record struct UiSmokeBounds(float X, float Y, float Width, float Height)
 {
     internal bool PositiveFinite => float.IsFinite(X) && float.IsFinite(Y) && float.IsFinite(Width) &&
@@ -25,7 +25,7 @@ internal sealed class UiSmokeBudget
     internal string Stage { get; set; } = "before_resolution";
     internal double ElapsedMs => elapsedMilliseconds();
     internal UiSmokeBudget(Func<double> elapsedMilliseconds, Action verifyGrantAndWindow,
-        double maximumMilliseconds = 25, int maximumOperations = 128)
+        double maximumMilliseconds = 100, int maximumOperations = 384)
     { this.elapsedMilliseconds = elapsedMilliseconds; this.verifyGrantAndWindow = verifyGrantAndWindow;
       this.maximumMilliseconds = maximumMilliseconds; this.maximumOperations = maximumOperations; }
     internal void Check()

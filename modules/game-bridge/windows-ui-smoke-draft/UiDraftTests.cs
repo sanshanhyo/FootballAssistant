@@ -10,9 +10,13 @@ Check(Read(backend).Text is null && backend.ChildReads == 0, "hidden ancestor pr
 backend = new FakeBackend { RootBoundsPositive = false };
 Check(Read(backend).Text == "fixture text", "invalid parent bounds do not hide valid descendant");
 backend = new FakeBackend();
-Check(Read(backend, elapsed: () => 26).StopReason == "time_budget" && backend.Calls == 0, "initial resolution inside time budget");
-backend = new FakeBackend { ResolutionCalls = 200 };
-Check(Read(backend).StopReason == "native_call_budget" && backend.Calls == 128, "resolution cannot escape native call budget");
+Check(Read(backend, elapsed: () => 101).StopReason == "time_budget" && backend.Calls == 0, "initial resolution inside time budget");
+backend = new FakeBackend();
+Check(Read(backend, elapsed: () => 25.5497).Text == "fixture text", "observed first-capture elapsed no longer prematurely stops fixture");
+backend = new FakeBackend();
+Check(Read(backend, elapsed: () => 100).Text == "fixture text", "100ms boundary retains soft-budget semantics");
+backend = new FakeBackend { ResolutionCalls = 400 };
+Check(Read(backend).StopReason == "native_call_budget" && backend.Calls == 384, "resolution cannot escape native call budget");
 backend = new FakeBackend();
 var guardCalls = 0;
 var stopped = Read(backend, () => { if (++guardCalls > 4) throw new UiSmokeStopped("window_changed"); });
@@ -85,6 +89,19 @@ using (var nativeFixture = new NativeUiAdapterFixture())
     nativeBackend.Dispose();
     Check(nativeFixture.LiveRoots == 0 && nativeFixture.RootFrees == nativeFixture.RootCreates,
         "all temporary roots freed while fixture module remains alive");
+}
+using (var chain = new NativeUiAdapterFixture { TextDepth = 8 })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), chain.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var deep = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
+    Check(deep.Text == "fixture-native-path" && deep.Nodes == 9 && deep.NativeOperations > 128 && deep.NativeOperations <= 384,
+        "one text at depth8 is reachable within384 reserved units, beyond old128 cap");
+    Check(chain.RootCreates <= 64 && chain.Invocations.Count(n => n == "get_text") == 1,
+        "depth8 still fits unchanged root cap and one text getter");
+    b.Dispose();
+    Check(chain.LiveRoots == 0 && chain.RootFrees == chain.RootCreates, "depth8 cleanup frees every temporary root");
+    Console.WriteLine($"Depth8 fixture: reserved={deep.NativeOperations}, nodes={deep.Nodes}, roots={chain.RootCreates}; no game calls.");
 }
 foreach (var wrongBox in new[] { true, false })
 {

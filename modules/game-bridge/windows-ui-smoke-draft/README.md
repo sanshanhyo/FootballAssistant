@@ -25,7 +25,7 @@ been read by this candidate; fake tests do not establish game success.
    roots, observer or registry in this phase. Successful methods cache only in this held
    module lease and session. Inspect the terminal result before proceeding.
 5. Reconfirm the stable page and explicitly request `-Stage ui_text`. One capture is allowed:
-   25ms soft elapsed, 128 reserved native boundary units, one panel, 32 nodes, depth8,
+   100ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth8,
    8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
    retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
 
@@ -41,6 +41,25 @@ include actual elapsed, stopped stage and **reserved** NativeOperations (not exa
 Cleanup is mandatory outside the sampling cap: up to64 root frees, before module release.
 `no_eligible_text`, `bounded_no_text`, budget and `backend_failure` are distinct; none means
 that the game contains no data. Only a nonempty returned text is an actual field result.
+
+## Narrow capture-budget revision
+
+The first real staged attempt resolved metadata/classes successfully, then capture stopped
+at `text_type`: 25.5497ms, 38 reserved operations, root resolved, no text getter success.
+This revision changes the capture soft elapsed cap from25 to100ms for first-use/JIT costs
+and reserved native-boundary units from128 to384 for the already bounded depth8 path.
+Cache-hit visible/bounds/type checks cost16 reserved units, child count7 and descent4:
+about27 per non-text ancestor/edge, then about24 for a text leaf, plus initial panel and
+cold method lookup. Thus128 was not enough for a depth8 diagnostic. The384 cap is not
+a promise of32 nodes: the independent64-root cap can stop earlier. Root/node/depth/
+children/panel/string limits stay unchanged. The
+failed session remains terminal; deploy only through the coordinated normal restart and
+new session/three requests. No automatic retry is introduced.
+
+A returned text is **real UI component text**, not guaranteed currently screen-visible text
+or a business/player field. The adapter checks `visible` along the visited ancestor path
+and positive finite `worldBound` for the text node; it does not establish resolved display,
+viewport intersection, ancestor clipping or occlusion.
 
 ## Why not invoke existing Capture wholesale?
 
@@ -107,7 +126,7 @@ Both staged operations start their stopwatch BEFORE their work. Every native exp
 memory read in the adapter calls BeforeNative (not once around a multi-call method).
 It caps one panel, 32 nodes, depth 8, 8 children/node, one text of 128 code units; lazy DFS
 obtains one child at a time rather than eagerly fetching all siblings. Capture
-budget is 25ms soft elapsed / 128 native boundaries, explicitly a conservative experiment,
+budget is 100ms soft elapsed / 384 reserved native boundary units, explicitly a conservative experiment,
 not proof that cold resolution will fit. Results record elapsed, stopped stage, operation/
 node count, root-resolution and text-getter success. `no_eligible_text`/`bounded_no_text`/
 `time_budget` are NOT real fields and not evidence the game has no data. `backend_failure`
