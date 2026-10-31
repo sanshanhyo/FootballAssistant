@@ -60,3 +60,13 @@ PyInstaller 无实体文件的 namespace 标记及其生成的标准库归档分
 未认领的 Python 模块或 DATA 条目列入 unresolved 并阻断构建，不能因为 wheel
 缺 RECORD 就静默跳过。AUTHORS/NOTICE 和 SPDX 标签仅为补充，不能单独替代
 LICENSE/COPYING 全文；缺少完整许可文本仍须人工审核。
+
+### Mac OpenSSL 独立缺口（2026-10-31）
+
+真实 Mac 包的 Python 后端带 OpenSSL 3.0.16；此前 CPython LICENSE 不包含该组件
+全文，不能拿 Electron/BoringSSL notices 混同替代。固定版本官方 LICENSE、作者与
+致谢已放 `packaging/licenses/openssl-3.0.16/`。collector 在 Darwin 实际采集到
+同目录 libssl/libcrypto 对且版本标记严格匹配时才收集，记录签名前二进制 hash；
+应用重签改变二进制 hash 不等于许可文件损坏。最终保留文本仍由 manifest 哈希校验。
+其它 native 项继续待审。该补项不修复版本安全问题：3.0 公共支持已结束，具体官方
+公告与条件性风险见该目录 REVIEW.md，不代表已确认本项目可利用性。

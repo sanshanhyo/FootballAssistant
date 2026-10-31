@@ -88,6 +88,17 @@ jobs:
         run: npm run pack:${{ matrix.target }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Audit actual packaged notices and retained license hashes
+        shell: bash
+        run: node packaging/audit-notices.cjs "" "$RUNNER_TEMP/companion-notices.json"
+      - name: Upload package notice inventory (not legal approval)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-notices-${{ matrix.target }}
+          path: ${{ runner.temp }}/companion-notices.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Smoke distributed Windows portable EXE (cold start with embedded backend)
         if: runner.os == 'Windows'
         shell: powershell

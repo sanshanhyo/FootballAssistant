@@ -1,0 +1,32 @@
+{
+  "name": "OpenSSL",
+  "version": "3.0.16",
+  "upstream_ref": "openssl-3.0.16",
+  "upstream_tree_sha": "fa1e5dfb142bb1c26c3c38a10aafa7a095df52e5",
+  "license": "Apache-2.0",
+  "checked_on": "2026-10-31",
+  "root_NOTICE_file_present": false,
+  "files": [
+    {
+      "file": "LICENSE.txt",
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.16/LICENSE.txt"
+    },
+    {
+      "file": "AUTHORS.md",
+      "sha256": "5076ca441daef7fb35e904c2ac070880c7b3d58300a5a6aecac41e8f525f4412",
+      "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.16/AUTHORS.md"
+    },
+    {
+      "file": "ACKNOWLEDGEMENTS.md",
+      "sha256": "ab2e0973f82e48268f9918cb52d19efe43ff2e4549d40efaee365b2a95d7f91d",
+      "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.16/ACKNOWLEDGEMENTS.md"
+    },
+    {
+      "file": "README.md",
+      "sha256": "f8f614a6589d7c7ee2ba2bd5f3fd87afe3c89012fd79f31f82cb4e50edbaefe9",
+      "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.16/README.md"
+    }
+  ],
+  "scope": "Preserved upstream license and attribution; not a complete review of native dependencies, patches, build provenance or security."
+}

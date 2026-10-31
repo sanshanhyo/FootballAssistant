@@ -1,0 +1,16 @@
+{
+  "package": "lazy-val",
+  "version": "1.0.5",
+  "declared_license": "MIT",
+  "declared_author": "Vladimir Krivosheev",
+  "status": "upstream_declared_MIT_full_text_not_supplied",
+  "upstream_license_text_verified": false,
+  "checked_on": "2026-10-31",
+  "registry_url": "https://registry.npmjs.org/lazy-val/1.0.5",
+  "tarball_url": "https://registry.npmjs.org/lazy-val/-/lazy-val-1.0.5.tgz",
+  "tarball_sha256": "7d8602ad98db3d19fbd5b46fbf3831dd996197a013ef1ff7badc205e41435372",
+  "registry_integrity": "sha512-0/BnGCCfyUMkBpeDgWihanIAF9JmZhHBgUhEqzvf+adhNGLoP6TaiI5oF8oyb3I45P+PcnrqihSf01M0l0G5+Q==",
+  "git_head": "b69ad4119f1b19bdab13c61ee2fcc88d46b89071",
+  "repository_tree_truncated": false,
+  "package_metadata_sha256": "a5096f95098452cf6fe5c8ac9be8f13f59ab7c9f605ba5ef92c91b2c505744f0"
+}

@@ -73,6 +73,50 @@ def cpython_framework_metadata(name, path, kind):
     return path.is_file() and any(path == candidate.resolve() for candidate in candidates)
 
 
+def openssl_macos_notice(toc):
+    """Bind reviewed notices to actual macOS OpenSSL input bytes, without loading them.
+
+    The input hash is provenance before app code signing, not a hash assertion
+    about a subsequently signed dylib. Other native libraries remain open.
+    """
+    if sys.platform != "darwin":
+        return None
+    libraries = {}
+    for name, source, kind in toc:
+        if kind == "BINARY" and Path(source).name in {"libcrypto.3.dylib", "libssl.3.dylib"}:
+            path = Path(source).resolve()
+            previous = libraries.get(path.name)
+            if previous and previous != path:
+                raise ValueError("Multiple OpenSSL runtime sources require review")
+            libraries[path.name] = path
+    if not libraries:
+        return None
+    if set(libraries) != {"libcrypto.3.dylib", "libssl.3.dylib"}:
+        raise ValueError("Incomplete OpenSSL runtime pair requires review")
+    if len({p.parent for p in libraries.values()}) != 1:
+        raise ValueError("OpenSSL runtime libraries have different source directories")
+    crypto = libraries["libcrypto.3.dylib"].read_bytes()
+    versions = set(re.findall(rb"OpenSSL ([0-9]+\.[0-9]+\.[0-9]+[a-z]?) [^\x00]{1,40}", crypto))
+    if versions != {b"3.0.16"}:
+        raise ValueError(f"Unreviewed OpenSSL version markers: {versions!r}")
+    folder = ROOT / "packaging/licenses/openssl-3.0.16"
+    provenance = json.loads((folder / "provenance.json").read_text(encoding="utf-8"))
+    if provenance["version"] != "3.0.16" or provenance["license"] != "Apache-2.0":
+        raise ValueError("Unexpected OpenSSL notice provenance")
+    notices = []
+    for record in provenance["files"]:
+        notice = (folder / record["file"]).resolve()
+        if not notice.is_relative_to(folder.resolve()) or not notice.is_file() or digest(notice) != record["sha256"]:
+            raise ValueError("OpenSSL upstream notice hash mismatch")
+        notices.append(notice)
+    if not any(p.name == "LICENSE.txt" for p in notices):
+        raise ValueError("OpenSSL license text missing")
+    notices.extend([folder / "provenance.json", folder / "REVIEW.md"])
+    evidence = [{"name": name, "sha256": digest(path), "bytes": path.stat().st_size,
+                 "hash_stage": "build-input-before-app-signing"} for name, path in sorted(libraries.items())]
+    return notices, evidence
+
+
 def collect(analysis, destination):
     toc = list(entries(ast.literal_eval(analysis.read_text(encoding="utf-8"))))
     sources = {str(Path(source).resolve()) for _, source, _ in toc}
@@ -164,6 +208,12 @@ def collect(analysis, destination):
     if runtime_license is None:
         raise ValueError("CPython LICENSE.txt missing from build runtime; provide audited runtime")
     add("CPython", sys.version.split()[0], [runtime_license])
+    openssl = openssl_macos_notice(toc)
+    if openssl:
+        notices, evidence = openssl
+        add("OpenSSL", "3.0.16", notices, license_expression="Apache-2.0",
+            binary_evidence=evidence,
+            scope="Upstream notices retained; binary hashes precede app signing. Native review remains open.")
     native = sorted({Path(source).name for _, source, kind in toc if kind in {"BINARY", "EXTENSION"}
                      and str(Path(source).resolve()) not in claimed})
     manifest = {"schema_version": 1, "components": components,

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
-from collect_backend_licenses import collect, cpython_framework_metadata, digest, entries, verify
+from collect_backend_licenses import collect, cpython_framework_metadata, openssl_macos_notice, digest, entries, verify
 
 
 class LicenseInventoryTests(unittest.TestCase):
@@ -113,6 +113,26 @@ class LicenseInventoryTests(unittest.TestCase):
                 self.assertFalse(cpython_framework_metadata('Other.framework/Resources/Info.plist', source.resolve(), 'DATA'))
                 source.unlink()
                 self.assertFalse(cpython_framework_metadata(name, source.resolve(), 'DATA'))
+
+    def test_openssl_notice_version_and_source_hash_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            crypto, ssl = root / 'libcrypto.3.dylib', root / 'libssl.3.dylib'
+            crypto.write_bytes(b'fixture\0OpenSSL 3.0.16 11 Feb 2025\0')
+            ssl.write_bytes(b'fixture ssl')
+            toc = [(p.name, str(p), 'BINARY') for p in (crypto, ssl)]
+            with patch('collect_backend_licenses.sys.platform', 'darwin'):
+                notices, evidence = openssl_macos_notice(toc)
+                self.assertIn('LICENSE.txt', [p.name for p in notices])
+                self.assertEqual(evidence[0]['sha256'], digest(crypto))
+                self.assertEqual(evidence[0]['hash_stage'], 'build-input-before-app-signing')
+                with self.assertRaisesRegex(ValueError, 'Incomplete OpenSSL'):
+                    openssl_macos_notice(toc[:1])
+                crypto.write_bytes(b'OpenSSL 3.0.17 1 Jul 2025\0')
+                with self.assertRaisesRegex(ValueError, 'Unreviewed OpenSSL'):
+                    openssl_macos_notice(toc)
+            with patch('collect_backend_licenses.sys.platform', 'linux'):
+                self.assertIsNone(openssl_macos_notice(toc))
 
 
 if __name__ == '__main__':
