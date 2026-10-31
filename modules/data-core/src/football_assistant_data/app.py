@@ -192,6 +192,17 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     async def reader_profile():
         return project_display_profile(app.state.observations.reader_snapshot(0,MAX_FACTS))
 
+    @app.get("/v1/reader/schedule",dependencies=[Depends(authorized)])
+    async def reader_schedule():
+        # Read-only preview; no model configuration, budget or provider access.
+        from football_assistant_agent.ui_advice import prepare_ui_advice
+        prepared = prepare_ui_advice('schedule_analysis', app.state.observations.reader_snapshot(0, MAX_FACTS))
+        projection = prepared['schedule_projection']
+        return dict(status=projection['status'] if projection else 'unavailable',
+                    source='ui', partial=True, production_ready=False,
+                    schedule_projection=projection, provenance=prepared['provenance'],
+                    reasons=prepared['reasons'])
+
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
         try:

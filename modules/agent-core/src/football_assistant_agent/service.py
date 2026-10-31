@@ -68,16 +68,27 @@ class AgentService:
     async def ui_advice(self, message, conversation_id, capability, snapshot, *, refresh=None):
         prepared = prepare_ui_advice(capability, snapshot)
         def blocked(data):
-            return {**data, "status": "blocked", "evidence": [], "conversation_id": conversation_id,
+            return {**data, "status": "blocked", "evidence": [], "schedule_projection": None, "conversation_id": conversation_id,
                     "source_status": "ui_unavailable", "reply": "当前没有可用的新鲜 UI 文本。请打开相关游戏页面后重新提问。"}
         if prepared["status"] != "ready":
             return blocked(prepared)
+        if capability == "schedule_analysis" and (prepared.get("schedule_projection") or {}).get("status") != "experimental_ui_schedule":
+            return {**blocked(prepared), "reasons": ["schedule_profile_unavailable"],
+                    "reply": "当前采样不匹配已支持的中文赛程布局，未发送任何 UI 文本给模型。请打开赛程安排页后重新采样。"}
+        model_evidence = prepared
+        if (prepared.get("schedule_projection") or {}).get("status") == "experimental_ui_schedule":
+            # This schedule-only consent scope must not disclose unrelated UI texts.
+            model_evidence = {key: prepared[key] for key in (
+                "mode", "source", "partial", "production_ready", "capability",
+                "schedule_projection", "provenance", "limitations")}
         response = await self._chat(message, conversation_id,
-            {"source_status": "partial_ui_evidence", "ui_evidence": prepared}, ui=True)
+            {"source_status": "partial_ui_evidence", "ui_evidence": model_evidence}, ui=True)
         if refresh is not None:
             current = prepare_ui_advice(capability, refresh())
             if (current["status"] != "ready" or current["evidence"] != prepared["evidence"] or
                     current["capture_text_sha256"] != prepared["capture_text_sha256"] or
+                    (current.get("schedule_projection") or {}).get("projection_sha256") !=
+                    (prepared.get("schedule_projection") or {}).get("projection_sha256") or
                     current["provenance"]["session_id"] != prepared["provenance"]["session_id"]):
                 return blocked({**prepared, "reasons": ["ui_changed_or_expired_during_generation"]})
             prepared = current

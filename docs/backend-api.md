@@ -178,3 +178,34 @@ At most 16 sanitized `records` retain call sequence, nullable thread ID, nullabl
 `last_seen_at` is HTTP receipt time. `last_callback_at` is only a source-capture-minus-native-header-age approximation for the last observed header; empty polls keep the previous value or unknown, never replace it with receipt time. Counter growth without a header does not invent a timestamp. Callback evidence proves entry into the dispatch observer, not successful original-handler processing, payload decoding or understood football values. Overflow/contention/stopped counts can show observation gaps; `complete`, `field_values_known`, payload-decoded and lossless-capture claims stay false.
 
 Monitoring exposes `native_observer_summary` only for the matching selected runtime session/build/synthetic scope. No report is unknown/null, not a fabricated zero. After backend restart or stale/absent native updates, primary current-state installation flags become unknown while last-reported evidence remains attributable. History/samples are session-scoped and idempotent; ordinary event polling emits state/first-callback/gap edges rather than an event for every counter increment. This endpoint never marks the native export inventory verified-readable. Real FM installation/callback evidence must be validated separately; this diagnostic interface alone does not complete the full goal.
+
+### Experimental focused schedule UI association
+
+Authenticated `GET /v1/reader/schedule` returns a current-capture preview without
+model calls or unrelated raw UI evidence. It works in reader-only mode too.
+For `schedule_analysis`, `POST /v1/agent/ui-advice` now includes
+`schedule_projection` in its prepared result. This is **not** native business
+readiness: `production_ready=false`, partial and capture-local throughout.
+The alpha profile pins FM27 build `27.0.0+2486695`, runtime UI adapter `0.4.0`,
+macOS arm64, one explicit focus root, and the Chinese `赛程安排` title.
+It maps only complete observed rows at indices 0–9 to date display, opponent
+display, 主/客 display and competition display. Indices and paths are **not**
+fixture/team IDs. Each mapped field carries its exact path, profile, event,
+session, capture time, scope and full-capture fingerprint. Missing rows are not
+inferred from adjacent text. Unsupported profile, duplicate paths, invalid
+columns and unsupported markup yield no projected rows.
+
+Two-digit years retain their displayed spelling and numeric year/month/day
+components. Century, ISO date and kickoff remain unknown; this cannot support
+full schedule-congestion or precise cross-year rest calculations. Only the
+existing balanced, allowlisted TMP link/style/color markup is stripped; arbitrary
+HTML is rejected. Title matching does not independently verify visibility.
+
+When this profile matches, the model payload is narrowed to the structured
+four-field projection and its source/limitation metadata: unrelated raw UI text
+is **not** sent to the provider. Raw evidence remains local in the API result.
+The refresh fence also checks the projection fingerprint and clears projected
+rows on a changed/expired capture. Schedule requests that do not match the profile are blocked before any provider
+call; there is no raw-text fallback. Other capabilities retain their existing
+generic UI evidence behavior. No new model requests, model configuration,
+Mac deployment or production-native capability are enabled by this change.

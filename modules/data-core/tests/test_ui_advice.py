@@ -138,7 +138,7 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
     dense = dense_snapshot()
     changed_tail = deepcopy(dense)
     changed_tail['facts'][-1]['value'] = 'TEST changed omitted tail'
-    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', dense, refresh=lambda: changed_tail))
+    result = asyncio.run(agent.ui_advice('TEST', None, 'player_info', dense, refresh=lambda: changed_tail))
     assert result['status'] == 'blocked' and result['evidence'] == []
     assert 'TEST OMITTED TAIL' not in captured['message']
     assert '"evidence_truncated": true' in captured['message']
@@ -148,13 +148,13 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
         data['facts'].append(dict(entity_kind='ui_capture_diagnostic', entity_id='diagnostic/capture',
                                   field='capture_metrics', value=f'{{"elapsed_ms":{elapsed}}}'))
         data['facts_total'] = data['source_status']['facts_count'] = len(data['facts'])
-    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', dense, refresh=lambda: stable))
+    result = asyncio.run(agent.ui_advice('TEST', None, 'player_info', dense, refresh=lambda: stable))
     assert result['status'] == 'generated' and result['evidence_truncated'] is True
 
 
     from test_ui_capture_scope import scoped_snapshot
     focus_a, focus_b = scoped_snapshot('panel0/0/1'), scoped_snapshot('panel0/0/2')
-    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', focus_a, refresh=lambda: focus_b))
+    result = asyncio.run(agent.ui_advice('TEST', None, 'player_info', focus_a, refresh=lambda: focus_b))
     assert result['status'] == 'blocked' and result['evidence'] == []
     assert 'TEST NEVER FORWARD' not in captured['message']
     assert 'focus_relative' in captured['message'] and 'panel0/0/1' in captured['message']

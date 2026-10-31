@@ -5,6 +5,7 @@ import json
 
 from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, MAX_FACTS, MAX_UI_FACTS, MAX_DIAGNOSTIC_FACTS, _time
 from .business_advice import CAPABILITIES
+from football_assistant_data.schedule_projection import project_validated_schedule
 from football_assistant_data.ui_capture_scope import capture_path_scope, validate_evidence_path_scope
 
 MAX_EVIDENCE_CHARACTERS = 16_000  # Sum of literal path + text lengths, whole entries only.
@@ -21,6 +22,8 @@ UI_INSTRUCTIONS = """
 若 evidence_truncated=true，模型只收到采样前缀，遗漏部分未知，不得声称覆盖完整采样。
 若 path_scope=focus_relative，仅采样显式指定子树；focus 路径仅为本次采样坐标，不是稳定对象 ID 或页面身份。
 只能引用 ui_evidence 中的原始文本，称为“UI 采样文本”，不能称为已验证球员/球队事实。
+仅当 schedule_projection.status=experimental_ui_schedule 时，可引用其明确映射的日期显示、对手、主客、赛事四列和逐字段来源，称为“实验性 UI 赛程”。不得把其他相邻文本补成字段。
+此映射只覆盖输出行，不代表完整赛程；row_index 不是比赛或球队 ID。两位年份世纪与开球时间未知，不能补成 ISO 日期或声称完整拥挤程度/精确休息天数。
 页面名称未知；不能仅凭路径、相邻文本或标签数值顺序建立实体身份或属性关联。
 分别给出“UI 采样文本”“有条件的建议/推断”“缺少的信息”；引用来源、采样时间和 partial 限制。
 允许根据有证据的文本给出有条件建议，不得声称完整读取当前球队、未打开页面或后台字段。
@@ -35,7 +38,7 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
         raise ValueError('unsupported business capability')
     result = dict(status='blocked', mode='ui_evidence', source='ui', partial=True,
                   production_ready=False, capability=capability, evidence=[], evidence_truncated=False,
-                  evidence_budget=None, capture_text_sha256=None,
+                  evidence_budget=None, capture_text_sha256=None, schedule_projection=None,
                   page={'name': None, 'scope': 'current_ui_capture', 'verified': False, 'visibility': 'unknown', 'cached_elements_possible': True},
                   limitations=list(LIMITATIONS), reasons=[], provenance=None)
     try:
@@ -55,6 +58,10 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
                     adapter_version=ADAPTER_VERSION, freshness='live').items()), 'unsupported_ui_adapter')
         game = status.get('game') or {}
         require(bool(game.get('session_id')) and envelope.get('game') == game, 'session_mismatch')
+        later = snapshot.get('later_source_status')
+        require(later is None or (isinstance(later, dict) and all(later.get(k) == status.get(k) for k in
+                ('event_id', 'game', 'last_captured_at', 'observed_at', 'source', 'adapter_id',
+                 'availability', 'connection_state', 'data_freshness', 'synthetic', 'source_freshness'))), 'event_mismatch')
         event = status.get('event_id')
         require(bool(event) and event == snapshot.get('snapshot_event_id') == envelope.get('event_id'), 'event_mismatch')
         now = now or datetime.now(timezone.utc)
@@ -118,6 +125,10 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
             'source': 'ui', 'session_id': game['session_id'], 'event_id': event,
             'captured_at': envelope['captured_at'], 'observed_at': envelope['observed_at'],
             'adapter_id': source['adapter_id'], 'synthetic': False, **scope})
+        if capability == 'schedule_analysis':
+            result['schedule_projection'] = project_validated_schedule(
+                all_texts, game=game, source=source, provenance=result['provenance'],
+                capture_text_sha256=fingerprint)
     except (ValueError, TypeError, AttributeError) as error:
         result['reasons'] = [str(error) if isinstance(error, ValueError) else 'invalid_ui_snapshot']
     return result
