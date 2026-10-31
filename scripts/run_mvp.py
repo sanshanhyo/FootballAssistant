@@ -182,6 +182,18 @@ def launch_backend(url: str, environment: dict[str, str]) -> None:
     raise RuntimeError("The local backend did not become healthy within 30 seconds; it was not stopped.")
 
 
+def companion_environment(environment: dict[str, str]) -> dict[str, str]:
+    # Positive allowlist: never propagate provider keys, model configuration, uv dotenv
+    # settings, arbitrary inherited secrets, or private bridge controls into Electron.
+    ordinary = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
+        "LANG", "LC_ALL", "LC_CTYPE", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+        "XDG_CACHE_HOME", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "APPDATA",
+        "LOCALAPPDATA", "USERPROFILE", "ALLUSERSPROFILE", "__CF_USER_TEXT_ENCODING",
+        "FA_COMPANION_USER_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE"}
+    return {key: value for key, value in environment.items() if key in ordinary}
+
+
 def launch_companion(path: Path, environment: dict[str, str]) -> None:
     if sys.platform == "darwin":
         command = ["open", "-a", str(path), "--args", "--runtime-file", environment["FOOTBALL_ASSISTANT_RUNTIME_FILE"]]
@@ -190,7 +202,7 @@ def launch_companion(path: Path, environment: dict[str, str]) -> None:
     subprocess.Popen(
         command,
         cwd=str(ROOT),
-        env=environment,
+        env=companion_environment(environment),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -199,32 +211,52 @@ def launch_companion(path: Path, environment: dict[str, str]) -> None:
     print("Opened the FootballAssistant desktop companion.")
 
 
-def launch_environment(runtime_file: str | None = None, bridge_private_root: str | None = None) -> dict[str, str]:
-    # Match backend path precedence without importing model secrets from .env into Electron.
+def launch_environment(runtime_file: str | None = None, bridge_private_root: str | None = None,
+                       env_file: str | None = None, data_dir: str | None = None) -> dict[str, str]:
     from dotenv import dotenv_values
 
-    values = dotenv_values(ROOT / ".env")
+    configuration = Path(env_file).expanduser().absolute() if env_file else ROOT / ".env"
+    if env_file:
+        try:
+            if not configuration.is_file() or configuration.stat().st_size > 65_536:
+                raise OSError("invalid config")
+        except OSError:
+            raise RuntimeError("The explicitly selected dotenv file is missing, unreadable, or too large; no other configuration was searched.") from None
+    try:
+        values = dotenv_values(configuration)
+    except (OSError, UnicodeError):
+        raise RuntimeError("The selected dotenv file could not be read; no configuration values were printed.") from None
     environment = dict(os.environ)
-    for key in ("FOOTBALL_ASSISTANT_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE", "FOOTBALL_ASSISTANT_PORT", "FOOTBALL_ASSISTANT_PRIVATE_ROOT"):
+    if env_file:
+        environment["FOOTBALL_ASSISTANT_ENV_FILE"] = str(configuration)
+    config_keys = ("FOOTBALL_ASSISTANT_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE", "FOOTBALL_ASSISTANT_PORT", "FOOTBALL_ASSISTANT_PRIVATE_ROOT")
+    if env_file:
+        config_keys += ("FOOTBALL_ASSISTANT_BASE_URL", "FOOTBALL_ASSISTANT_MODEL", "FOOTBALL_ASSISTANT_API_KEY",
+            "FOOTBALL_ASSISTANT_TOKEN", "FOOTBALL_ASSISTANT_MODEL_TIMEOUT", "FOOTBALL_ASSISTANT_MAX_OUTPUT_TOKENS",
+            "FOOTBALL_ASSISTANT_MODEL_EXTRA_BODY", "FOOTBALL_ASSISTANT_MODEL_REQUEST_LIMIT", "FOOTBALL_ASSISTANT_MODEL_BUDGET_ID",
+            "FOOTBALL_ASSISTANT_RUNTIME_STALE_SECONDS", "FOOTBALL_ASSISTANT_RUNTIME_DISCONNECT_SECONDS")
+    for key in config_keys:
         if key not in environment and values.get(key) is not None:
             environment[key] = values[key]
+    # Explicit env files define the base of configuration-relative paths. CLI paths
+    # retain caller-cwd semantics; no config-file search or implicit database migration.
+    base = configuration.parent if env_file else ROOT
     def backend_path(value: str | Path) -> Path:
-        expanded = Path(value).expanduser()
-        return (ROOT / expanded).resolve()  # Child backend always runs with cwd=ROOT.
+        return (base / Path(value).expanduser()).resolve()
 
-    data_dir = backend_path(environment.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data"))
-    # CLI paths belong to the invoking shell; environment/.env paths belong to backend cwd.
-    selected = Path(runtime_file).expanduser().resolve() if runtime_file else backend_path(
-        environment.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json"))
+    selected_data = Path(data_dir).expanduser().resolve() if data_dir else backend_path(
+        environment.get("FOOTBALL_ASSISTANT_DATA_DIR", base / "local-data"))
+    selected_runtime = Path(runtime_file).expanduser().resolve() if runtime_file else backend_path(
+        environment.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", selected_data / "runtime.json"))
     configured_root = bridge_private_root or environment.get("FOOTBALL_ASSISTANT_PRIVATE_ROOT")
     if configured_root:
         # Preserve symlinks for the controller to reject; never resolve them away.
         candidate = Path(configured_root).expanduser()
         if not candidate.is_absolute():
-            candidate = (Path.cwd() if bridge_private_root else ROOT) / candidate
+            candidate = (Path.cwd() if bridge_private_root else base) / candidate
         environment["FOOTBALL_ASSISTANT_PRIVATE_ROOT"] = str(candidate.absolute())
-    return {**environment, "FOOTBALL_ASSISTANT_DATA_DIR": str(data_dir),
-            "FOOTBALL_ASSISTANT_RUNTIME_FILE": str(selected)}
+    return {**environment, "FOOTBALL_ASSISTANT_DATA_DIR": str(selected_data),
+            "FOOTBALL_ASSISTANT_RUNTIME_FILE": str(selected_runtime)}
 
 
 def main() -> int:
@@ -233,11 +265,13 @@ def main() -> int:
     parser.add_argument("--companion-path", type=Path, help="Explicit built .exe or .app (for example, dist-alpha/win-unpacked/FootballAssistant.exe).")
     parser.add_argument("--runtime-file", help="Explicit backend runtime file; otherwise use backend environment/.env configuration.")
     parser.add_argument("--bridge-private-root", help="Explicit existing private bridge directory; otherwise use FOOTBALL_ASSISTANT_PRIVATE_ROOT from environment/.env. Never auto-discovered.")
+    parser.add_argument("--env-file", help="Explicit existing local dotenv file for backend configuration; never copied into the package.")
+    parser.add_argument("--data-dir", help="Explicit backend data directory (relative to invoking cwd); no files are migrated.")
     args = parser.parse_args()
 
     try:
         app_path = args.companion_path.expanduser().resolve() if args.companion_path else companion_path()
-        environment = launch_environment(args.runtime_file, args.bridge_private_root)
+        environment = launch_environment(args.runtime_file, args.bridge_private_root, args.env_file, args.data_dir)
         url = backend_url(environment)
     except (RuntimeError, ValueError) as error:
         print(f"MVP check failed: {error}", file=sys.stderr)

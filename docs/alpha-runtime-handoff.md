@@ -25,7 +25,27 @@
 
 `uv` 是前置条件，首次运行可能需联网获取锁定依赖/Python；不是离线独立安装包。已有项目环境不需要新增依赖。Finder 启动器支持 PATH 中的 `uv` 或 `$HOME/.local/bin/uv`，缺少时明确退出，不自动安装工具。
 
-本机 `.env` 依照现有 `.env.example` 填写模型服务地址、模型名、API key，并配置 `FOOTBALL_ASSISTANT_PRIVATE_ROOT` 为**已准备好、用户拥有的私有桥接目录**。密钥只留本机。运行目录/runtime 路径须与现有桥接一致；不要复制其他机器的 `runtime.json`。
+本机配置依照现有 `.env.example` 填写模型服务地址、模型名、API key，并配置 `FOOTBALL_ASSISTANT_PRIVATE_ROOT` 为**已准备好、用户拥有的私有桥接目录**。密钥只留本机。运行目录/runtime 路径须与现有桥接一致；不要复制其他机器的 `runtime.json`。
+
+### 引用已配置 Mac 的外部配置（不复制密钥）
+
+候选目录不需要放 `.env`。首次从终端明确指定现有本机文件；`MVP.command` 原样透传参数：
+
+```sh
+"<候选根>/scripts/MVP.command" \
+  --env-file "<原配置目录>/.env" \
+  --data-dir "<原数据目录>" \
+  --runtime-file "<原数据目录>/runtime.json" \
+  --bridge-private-root "<已准备的私有桥接目录>"
+```
+
+`.app` 不在默认目录时再加 `--companion-path "<候选app路径>"`。可先加 `--check`，但它要求后端已经健康；不是启动命令。冷启动验收须先按原管理方式退出旧后端，再执行正常入口并确认候选代码实际启动，不误把复用当成候选后端启动。
+
+需要真正双击而不重复键入参数时，可由用户在**候选包之外**保留一份本机启动快捷方式，只写上述路径与参数、不写密钥；没有此快捷方式或候选本机配置时，直接双击不会自动搜寻原 `.env`。
+
+路径与优先级：CLI 路径参数优先；同名进程环境变量优先于 dotenv（这是原有约定，切换配置前须清掉冲突的 `FOOTBALL_ASSISTANT_*` 环境变量）。显式 dotenv 内及相关环境中的相对数据/runtime/bridge 路径以该文件所在目录为基准；不指定显式文件时仍以项目根为基准。`--data-dir`、`--runtime-file`、`--bridge-private-root` 的相对路径以调用工作目录为基准。Finder wrapper 会先进入候选根，直接命令行执行 `run_mvp.py` 则使用调用者目录。`--data-dir` 不覆盖另行明确配置的 runtime 文件；两者必须按原桥接路径对应指定。没有数据目录配置时，显式外部文件默认使用其同目录的 `local-data`，不偷偷改成候选目录数据库。不会迁移数据或复制配置。
+
+显式配置缺失、不可读或过大立即报错，不搜索别的目录。后端读取该文件而非再回退候选 `.env`；Electron只收到必要系统环境和runtime路径，不继承provider/model配置、任意密钥变量或dotenv选择器。启动日志不打印配置值。已有健康后端仍复用；传入新配置不会悄悄重启它。
 
 用户步骤：
 

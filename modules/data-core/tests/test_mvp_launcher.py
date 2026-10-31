@@ -42,7 +42,7 @@ def test_packaged_windows_receives_explicit_runtime(clean_env, monkeypatch, tmp_
     executable = tmp_path / "dist-alpha" / "win-unpacked" / "FootballAssistant.exe"
     launcher.launch_companion(executable, environment)
     assert calls[0][0] == [str(executable)]
-    assert calls[0][1]["env"] == environment
+    assert calls[0][1]["env"] == launcher.companion_environment(environment)
     assert calls[0][1]["cwd"] == str(ROOT)
 
 

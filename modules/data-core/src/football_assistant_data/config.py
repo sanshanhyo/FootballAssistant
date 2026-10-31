@@ -39,7 +39,11 @@ class Settings:
     @classmethod
     def from_env(cls, *, reader_only: bool = False) -> "Settings":
         if not reader_only:
-            load_dotenv(ROOT / ".env", override=False)
+            explicit_env = os.environ.get("FOOTBALL_ASSISTANT_ENV_FILE")
+            selected_env = Path(explicit_env).expanduser() if explicit_env else ROOT / ".env"
+            if explicit_env and not selected_env.is_file():
+                raise ValueError("The explicitly selected backend dotenv file is missing; no fallback was loaded.")
+            load_dotenv(selected_env, override=False)
         data_dir = Path(os.environ.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data")).expanduser().resolve()
         runtime_file = Path(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json")).expanduser().resolve()
         configured_root = os.environ.get('FOOTBALL_ASSISTANT_PRIVATE_ROOT')
