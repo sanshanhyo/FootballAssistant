@@ -47,9 +47,14 @@ jobs:
           Copy-Item modules/game-bridge/windows-ui-smoke-draft/README.md build/windows-ui-candidate/
           New-Item -ItemType Directory build/windows-ui-candidate/source | Out-Null
           New-Item -ItemType Directory build/windows-ui-candidate/source/modules/game-bridge -Force | Out-Null
-          foreach ($folder in @('windows-ui-smoke-draft', 'windows-smoke-draft', 'src')) {
-            Copy-Item "modules/game-bridge/$folder" build/windows-ui-candidate/source/modules/game-bridge/ -Recurse -Exclude bin,obj
+          $sources = git ls-files -- modules/game-bridge/windows-ui-smoke-draft modules/game-bridge/windows-smoke-draft modules/game-bridge/src
+          if ($LASTEXITCODE -ne 0 -or -not $sources) { throw 'Tracked candidate sources unavailable.' }
+          foreach ($file in $sources) {
+            $destination = Join-Path build/windows-ui-candidate/source $file
+            New-Item -ItemType Directory (Split-Path $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $file -Destination $destination
           }
+          if (Get-ChildItem build/windows-ui-candidate/source -Directory -Recurse | Where-Object { $_.Name -in @('bin', 'obj') }) { throw 'Generated build files must not enter source bundle.' }
           Copy-Item LICENSE build/windows-ui-candidate/source/
           git rev-parse HEAD | Out-File build/windows-ui-candidate/source-commit.txt -Encoding utf8
           Get-FileHash build/windows-ui-candidate/*.dll -Algorithm SHA256 | Format-List | Out-File build/windows-ui-candidate/SHA256.txt -Encoding utf8
@@ -59,4 +64,5 @@ jobs:
         with:
           name: WindowsUi-EXPERIMENTAL-NOT-INSTALLED
           path: build/windows-ui-candidate/
+          if-no-files-found: error
           retention-days: 7
