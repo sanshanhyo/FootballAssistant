@@ -14,8 +14,8 @@ from .display_profile import GAME_BUILD, _require
 PROFILE_ID = 'fm27-27.0.0+2486695-zh-panel-tactics-alpha-v1'
 PANEL_ROOT = 'panel0/0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0'
 TITLE_PATH = PANEL_ROOT + '/0/0/0/0/1/0/0/1/0'
-STYLE_PATH = PANEL_ROOT + '/0/0/0/1/0/0/0/0/0'
-MENTALITY_PATH = PANEL_ROOT + '/0/0/0/2/0/0/1/0/1'
+STYLE_PATH = PANEL_ROOT + '/0/0/1/0/0/0/0/0/0'
+MENTALITY_PATH = PANEL_ROOT + '/0/0/2/0/0/1/0/1'
 LABEL_PATH = PANEL_ROOT + '/2/0/0/0/0/0'
 DISPLAY_FIELDS = ('formation_display', 'style_display', 'mentality_display')
 LIMITATIONS = [

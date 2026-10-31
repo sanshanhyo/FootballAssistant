@@ -25,7 +25,9 @@ def tactics_snapshot():
     data = snapshot()
     template = deepcopy(data['facts'][0])
     values = {TITLE_PATH: '积极进取4-3-3 后腰 拉边 - 控制球权',
-              STYLE_PATH: '控制球权', MENTALITY_PATH: '积极进取', LABEL_PATH: '队形',
+              # Literal observed suffixes keep fixtures independent of selector constants.
+              PANEL_ROOT + '/0/0/1/0/0/0/0/0/0': '控制球权',
+              PANEL_ROOT + '/0/0/2/0/0/1/0/1': '积极进取', LABEL_PATH: '队形',
               'panel0/99': 'TEST UNRELATED PRIVATE UI'}
     data['facts'] = [{**deepcopy(template), 'entity_id': path, 'value': value}
                      for path, value in values.items()]
@@ -258,3 +260,22 @@ def test_other_invisibles_markup_and_whitespace_are_not_silently_normalized(path
     data = tactics_snapshot(); edit(data, path, value)
     result = projection(data)
     assert result is None or result['status'] == 'unavailable'
+
+
+def test_style_and_mentality_selectors_match_observed_panel_suffixes():
+    assert STYLE_PATH == PANEL_ROOT + '/0/0/1/0/0/0/0/0/0'
+    assert MENTALITY_PATH == PANEL_ROOT + '/0/0/2/0/0/1/0/1'
+    assert projection()['status'] == 'experimental_ui_tactics'
+
+
+@pytest.mark.parametrize('current,old_suffix', [
+    (STYLE_PATH, '/0/0/0/1/0/0/0/0/0'),
+    (MENTALITY_PATH, '/0/0/0/2/0/0/1/0/1'),
+])
+def test_old_incorrect_selector_paths_cannot_supply_required_fields(current, old_suffix):
+    data = tactics_snapshot()
+    next(f for f in data['facts'] if f['entity_id'] == current)['entity_id'] = PANEL_ROOT + old_suffix
+    result = projection(data)
+    assert result['status'] == 'unavailable'
+    assert result['reason'] == 'missing_tactics_field'
+    assert all(result[field] is None for field in DISPLAY_FIELDS)
