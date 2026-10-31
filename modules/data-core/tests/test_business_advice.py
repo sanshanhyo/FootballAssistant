@@ -114,6 +114,8 @@ def test_business_model_path_omits_history_and_memories_using_only_stubs(monkeyp
     agent = service.AgentService(settings, Store())
     asyncio.run(agent._chat('test', 'test-conversation', {'source_status': 'TEST'}, business=True))
     assert captured['message_history'] == []
+    assert '你是埃克拉（Eckera）' in captured['prompt']
+    assert '小北' not in captured['prompt']
     assert '已读取事实' in captured['prompt'] and '建议/推断' in captured['prompt']
     assert '"explicit_memories": []' in captured['prompt']
 

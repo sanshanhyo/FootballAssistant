@@ -322,7 +322,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
-                return await app.state.agent.chat(body.message,body.conversation_id,app.state.observations.context())
+                return await app.state.agent.chat(body.message,body.conversation_id)
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:

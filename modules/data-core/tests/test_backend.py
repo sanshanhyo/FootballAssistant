@@ -94,8 +94,14 @@ def test_real_sdk_wiring_and_history_with_local_provider_fixture(tmp_path):
             second = client.post("/v1/chat",headers=AUTH,json={"message":"第二轮接口测试","conversation_id":conversation})
             assert second.status_code == 200, second.text
             assert client.get("/v1/status",headers=AUTH).json()["memory"]["messages"] == 4
-        assert any(message.get("content") == "第一轮接口测试" for message in captured[-1]["messages"])
-        assert any(message.get("content") == "测试服务回复，仅验证接口。" for message in captured[-1]["messages"])
+        messages = captured[-1]["messages"]
+        assert all(message["role"] != "assistant" for message in messages)
+        payload = json.loads(next(message["content"] for message in messages if message["role"] == "user"))
+        history = payload["untrusted_companionship"]["historical_conversation"]
+        assert history == [
+            {"role": "user", "content": "第一轮接口测试"},
+            {"role": "assistant", "content": "测试服务回复，仅验证接口。"},
+        ]
     finally:
         server.shutdown()
         server.server_close()
