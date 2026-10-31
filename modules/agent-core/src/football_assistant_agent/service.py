@@ -16,6 +16,28 @@ from .storage import CompanionStore
 from .ui_advice import UI_INSTRUCTIONS, prepare_ui_advice
 from .business_advice import BUSINESS_INSTRUCTIONS, prepare_business_advice
 
+def _projected_display_fence(prepared):
+    """Compare only validated, model-visible facts; capture IDs are not semantic changes."""
+    projection = prepared.get("schedule_projection") or prepared.get("tactics_projection") or {}
+    status = projection.get("status")
+    profile = projection.get("profile_id")
+    if not isinstance(profile, str) or not profile:
+        return None
+    if status == "experimental_ui_next_match":
+        display = {key: projection[key] for key in ("date_display", "opponent_display", "competition_display")}
+    elif status == "experimental_ui_schedule":
+        display = [{key: row[key] for key in ("date_display", "opponent_display", "home_away_display", "competition_display")}
+                   for row in projection["rows"]]
+    elif status == "experimental_ui_tactics":
+        display = {key: projection[key] for key in DISPLAY_FIELDS}
+    else:
+        return None
+    provenance = prepared.get("provenance") or {}
+    scope = {key: provenance.get(key) for key in ("session_id", "source", "adapter_id", "synthetic",
+             "path_scope", "focus_root_path", "identity_scope")}
+    return {"status": status, "profile": profile, "scope": scope, "display": display}
+
+
 COACH_STYLE = """说话像埃克拉这位坐在教练身边的助教：自然短句，先说有用的判断，再说还缺什么，少用套话和长篇分点。
 不要用“作为 AI”“我看不到”反复解释能力边界。缺少足球依据时，用“这场我拿不准，得连后面几场一起算”这类诚实表达；措辞必须对应真实缺项，不能假装已经分析或计算。
 你可以有主见、嘴硬一点，凭足球经验给判断，甚至判断错；主观建议自然用“我押”“我猜”“照经验”表达，不必每句加免责声明。信息不全也可以给条件化的足球常识或战术想法，不要一概拒绝。
@@ -121,13 +143,21 @@ class AgentService:
             {"source_status": "partial_ui_evidence", "ui_evidence": model_evidence}, ui=True)
         if refresh is not None:
             current = prepare_ui_advice(capability, refresh())
-            if (current["status"] != "ready" or current["evidence"] != prepared["evidence"] or
+            expected_display = _projected_display_fence(prepared)
+            # Freshness/provenance validation above is never bypassed. Only strict projections
+            # have a reduced outbound payload; raw UI retains its original full-evidence fence.
+            changed = current["status"] != "ready"
+            if not changed and expected_display is not None:
+                changed = _projected_display_fence(current) != expected_display
+            elif not changed:
+                changed = (current["evidence"] != prepared["evidence"] or
                     current["capture_text_sha256"] != prepared["capture_text_sha256"] or
                     (current.get("schedule_projection") or {}).get("projection_sha256") !=
                     (prepared.get("schedule_projection") or {}).get("projection_sha256") or
                     (current.get("tactics_projection") or {}).get("projection_sha256") !=
                     (prepared.get("tactics_projection") or {}).get("projection_sha256") or
-                    current["provenance"]["session_id"] != prepared["provenance"]["session_id"]):
+                    current["provenance"]["session_id"] != prepared["provenance"]["session_id"])
+            if changed:
                 return blocked({**prepared, "reasons": ["ui_changed_or_expired_during_generation"]})
             prepared = current
         response["reply"] = "【Alpha · UI 采样建议 · 部分信息】\n采样时间：" + prepared["provenance"]["captured_at"] + "\n页面名称与可见性未验证；不是后台全量数据。\n" + response["reply"]
