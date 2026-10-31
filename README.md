@@ -21,13 +21,9 @@
 
 请前往 [Releases](https://github.com/sanshanhyo/FootballAssistant/releases) 下载对应平台的 Alpha 版本。尚未发布的测试构建可在 [GitHub Actions](https://github.com/sanshanhyo/FootballAssistant/actions/workflows/desktop.yml) 中选择 `integration/alpha-reader-ui` 分支的成功构建下载（下载 artifact 可能需要登录 GitHub）。
 
-- Windows x64：安装版运行文件名含 `Setup-x64.exe` 的安装程序；免安装版运行文件名含 `Portable-x64.exe` 的程序，选择其中一种即可。Actions 中对应 `companion-windows-setup-x64` 和 `companion-windows-portable-x64`。
-- macOS Apple Silicon：解压后启动 `FootballAssistant.app`。Actions 中对应 `companion-macos-arm64`，需解开 ZIP 和其中的 tar.gz。
-- 首次启动会自动生成配置文件，可在设置中填写模型服务地址、模型名称和 API Key，无需自行安装 Python 或 Node.js。
+- 首次启动会自动生成配置文件，可在设置中填写模型服务地址、模型名称和 API Key。
 
 **⚠️⚠️目前 Football Assistant 处于 Alpha 测试阶段，各项功能仍不稳定，同时正在快速更新中，请做好存档备份⚠️⚠️**
-
-平台支持与游戏桥接配置请以对应版本说明为准。当前游戏数据读取在 macOS ARM64 环境完成验证，Windows 桌宠可运行，但游戏数据读取尚未打通；仅安装桌宠不会自动完成游戏桥接配置。
 
 若遇到 BUG，可以在 [Issues](https://github.com/sanshanhyo/FootballAssistant/issues) 中或加入 QQ 群反馈。如果你有好点子，也欢迎提出；能提供实现的 Fork 或提交 PR 就更好了！
 
@@ -35,7 +31,7 @@
 
 - [X] 允许玩家在游戏中与桌宠进行文字聊天。
 - [X] 第三方模型 API 接入，可在设置中配置。
-- [X] 读取已支持页面中的球员属性、战术摘要、赛程及下一场比赛信息（目前限已验证的 macOS 游戏桥接环境）。
+- [X] 读取已支持页面中的球员属性、战术摘要、赛程及下一场比赛信息。
 - [X] 根据已读取的数据回复玩家，并对已支持的数据变化提供基础主动提示。
 - [X] 分段短句回复，可编辑 `persona.md` 调整人设。
 
@@ -66,6 +62,4 @@ FootballAssistant 的实现离不开以下优秀的开源项目与社区资源�
 
 FootballAssistant 是独立开发的非官方辅助项目，与 Football Manager 27 的开发商、发行商不存在官方隶属、合作或背书关系；游戏名称、商标及相关内容的权利归各自权利人所有。本项目不提供游戏本体、破解或授权绕过功能，请使用合法取得的游戏，并遵守适用的游戏许可协议及法律法规。
 
-数据读取与 AI 建议可能存在遗漏、延迟或错误，游戏更新也可能导致兼容性问题。使用前请备份存档，并自行判断是否采纳建议。本项目不承诺覆盖全部游戏数据、保证比赛结果或完全避免运行异常；本声明不排除或限制适用法律规定不得排除或限制的责任。
-
-本项目代码基于 [GNU General Public License v3.0](LICENSE) 开源。第三方代码与字体分别遵循其各自许可；角色及其他美术资源的授权另行说明。
+本项目基于 [GNU General Public License v3.0](LICENSE) 开源。第三方代码与资源分别遵循其各自许可。
