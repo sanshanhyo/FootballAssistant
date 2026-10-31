@@ -132,7 +132,7 @@ Assert(UiFocusPath.TryParse("panel0", out var panelFocusTest) && panelFocusTest!
     _ => throw new Exception("Root-only focus unexpectedly descends"), _ => 0, (_, _) => 0, () => { }, out focusRoot, out focusReason)
     && focusRoot == 1, "explicit panel-root focus is supported without implicit default");
 var focusedCapture = new UiCapture { FocusRequested = true, FocusResolved = true, FocusRootPath = "panel0/0/1", FocusDescentNodes = 2 };
-focusedCapture.Add(new UiText("panel0/0/1/0", "TEST focused text"));
+focusedCapture.Add(new UiText("focus/0", "TEST focused text"));
 using (var focusedPage = JsonDocument.Parse(ObservationFactory.Create(focusedCapture, null, "offline-focus-test")))
 {
     var focusedFacts = focusedPage.RootElement.GetProperty("payload").GetProperty("facts");
@@ -140,8 +140,20 @@ using (var focusedPage = JsonDocument.Parse(ObservationFactory.Create(focusedCap
     Assert(focusMetrics.RootElement.GetProperty("focus_requested").GetBoolean() && focusMetrics.RootElement.GetProperty("focus_resolved").GetBoolean(), "focus state explicit in diagnostics");
     Assert(focusMetrics.RootElement.GetProperty("focus_root_path").GetString() == "panel0/0/1", "focus is a literal path, not a page identity");
     Assert(focusMetrics.RootElement.GetProperty("depth_scope").GetString() == "relative_to_requested_focus_root", "focused depth scope explicit");
-    Assert(focusedFacts[1].GetProperty("entity_id").GetString() == "panel0/0/1/0", "emitted paths preserve full ancestor prefix");
+    Assert(focusedFacts[1].GetProperty("entity_id").GetString() == "focus/0", "focused paths are capture-local and relative");
+    Assert(focusMetrics.RootElement.GetProperty("path_scope").GetString() == "focus_relative", "relative scope explicit");
+    Assert(focusMetrics.RootElement.GetProperty("identity_scope").GetString() == "capture_local_ui_path", "never claims stable entity IDs");
 }
+
+Assert(UiTraversalBounds.CaptureRootPath(3, null) == "panel3", "normal absolute root paths unchanged");
+Assert(UiTraversalBounds.CaptureRootPath(0, focusTest) == "focus", "focused traversal uses a scoped relative root");
+var relativeDiagnostics = new UiPanelDiagnostics();
+var absolutePrefix = "panel0" + string.Concat(Enumerable.Repeat("/511", 30));
+Assert(!UiTraversalBounds.TryChildPath(absolutePrefix, 0, 511, relativeDiagnostics, out _), "old full descendant would exceed contract limit");
+Assert(UiTraversalBounds.TryChildPath(UiTraversalBounds.CaptureRootPath(0, focusTest), 0, 511, relativeDiagnostics, out var relativeChild)
+    && relativeChild == "focus/511", "bounded relative path admits same child without contracting root metadata");
+var relativeBoundary = "focus" + string.Concat(Enumerable.Repeat("/511", 30)) + "/10";
+Assert(relativeBoundary.Length == 128 && !UiTraversalBounds.TryChildPath(relativeBoundary, 31, 0, relativeDiagnostics, out _), "relative paths retain 128-character hard cap");
 
 // Synthetic deep single-child trees exercise the exact admission helper used by
 // native traversal, without loading game objects or invoking native getters.

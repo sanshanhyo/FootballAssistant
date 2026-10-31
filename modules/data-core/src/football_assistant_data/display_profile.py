@@ -9,6 +9,8 @@ import math
 import re
 import unicodedata
 
+from .ui_capture_scope import capture_path_scope
+
 ADAPTER_ID = "footballassistant.runtime-ui-tree"
 ADAPTER_VERSION = "0.4.0"
 GAME_BUILD = "27.0.0+2486695"
@@ -141,6 +143,8 @@ def project_display_profile(snapshot, *, now=None, max_age_seconds=MAX_AGE_SECON
                      and isinstance(diagnostic.get("entity_id"), str)
                      and diagnostic["entity_id"].startswith("diagnostic/")
                      and isinstance(diagnostic.get("value"), str), "invalid_fact")
+        scope = capture_path_scope(diagnostics)
+        _require(scope['path_scope'] != 'focus_relative', 'unsupported_layout')
         facts = [fact for fact in facts if fact not in diagnostics]
         _require(len(facts) <= MAX_UI_FACTS, "incomplete_snapshot")
         paths = {}

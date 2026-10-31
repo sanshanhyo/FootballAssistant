@@ -5,6 +5,7 @@ import json
 
 from football_assistant_data.display_profile import ADAPTER_ID, ADAPTER_VERSION, MAX_FACTS, MAX_UI_FACTS, MAX_DIAGNOSTIC_FACTS, _time
 from .business_advice import CAPABILITIES
+from football_assistant_data.ui_capture_scope import capture_path_scope, validate_evidence_path_scope
 
 MAX_EVIDENCE_CHARACTERS = 16_000  # Sum of literal path + text lengths, whole entries only.
 
@@ -18,6 +19,7 @@ UI_INSTRUCTIONS = """
 新事件/新采样不证明每条文本当前可见；旧页面缓存的预算、日期等不得当作当前页面事实。
 没有明确实体与字段关联证据时，不给具体金额、日期、首发或轮换结论，只给条件式分析并请用户确认。
 若 evidence_truncated=true，模型只收到采样前缀，遗漏部分未知，不得声称覆盖完整采样。
+若 path_scope=focus_relative，仅采样显式指定子树；focus 路径仅为本次采样坐标，不是稳定对象 ID 或页面身份。
 只能引用 ui_evidence 中的原始文本，称为“UI 采样文本”，不能称为已验证球员/球队事实。
 页面名称未知；不能仅凭路径、相邻文本或标签数值顺序建立实体身份或属性关联。
 分别给出“UI 采样文本”“有条件的建议/推断”“缺少的信息”；引用来源、采样时间和 partial 限制。
@@ -71,9 +73,15 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
                     and isinstance(diagnostic.get('entity_id'), str)
                     and diagnostic['entity_id'].startswith('diagnostic/')
                     and isinstance(diagnostic.get('value'), str), 'invalid_ui_diagnostic')
+            for key, expected in (('game', game), ('source', source), ('source_event_id', event),
+                                  ('captured_at', envelope['captured_at'])):
+                require(key not in diagnostic or diagnostic[key] == expected, 'fact_provenance_mismatch')
+        scope = capture_path_scope(diagnostics)
+        if scope['path_scope'] == 'focus_relative':
+            result['limitations'].append('本次仅采样显式指定的 UI 子树；相对路径是采样局部坐标，不是稳定实体 ID。')
         facts = [fact for fact in facts if fact not in diagnostics]
         require(0 < len(facts) <= MAX_UI_FACTS, 'ui_page_missing_or_incomplete')
-        # Diagnostic strings are deliberately never parsed into or sent as evidence.
+        # Only validated numeric path scope is retained; raw diagnostic strings never enter evidence.
         evidence = []
         all_texts = []
         evidence_characters = 0
@@ -84,6 +92,7 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
             path, value = fact.get('entity_id'), fact.get('value')
             require(isinstance(path, str) and 0 < len(path) <= 512 and
                     isinstance(value, str) and 0 < len(value.strip()) <= 1024, 'invalid_ui_text')
+            validate_evidence_path_scope(path, scope)
             for key, expected in (('game', game), ('source', source), ('source_event_id', event),
                                   ('captured_at', envelope['captured_at'])):
                 require(key not in fact or fact[key] == expected, 'fact_provenance_mismatch')
@@ -96,7 +105,7 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
             else:
                 budget_exhausted = True
         # Content-change fence only; never an entity ID or an association between texts.
-        fingerprint = hashlib.sha256(json.dumps(all_texts, ensure_ascii=True,
+        fingerprint = hashlib.sha256(json.dumps(dict(scope=scope, texts=all_texts), ensure_ascii=True,
                                                 separators=(',', ':')).encode('utf-8')).hexdigest()
         result.update(evidence_truncated=budget_exhausted, capture_text_sha256=fingerprint,
                       evidence_budget=dict(max_characters=MAX_EVIDENCE_CHARACTERS,
@@ -108,7 +117,7 @@ def prepare_ui_advice(capability, snapshot, *, now=None):
         result.update(status='ready', evidence=evidence, provenance={
             'source': 'ui', 'session_id': game['session_id'], 'event_id': event,
             'captured_at': envelope['captured_at'], 'observed_at': envelope['observed_at'],
-            'adapter_id': source['adapter_id'], 'synthetic': False})
+            'adapter_id': source['adapter_id'], 'synthetic': False, **scope})
     except (ValueError, TypeError, AttributeError) as error:
         result['reasons'] = [str(error) if isinstance(error, ValueError) else 'invalid_ui_snapshot']
     return result

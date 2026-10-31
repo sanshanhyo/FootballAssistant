@@ -152,6 +152,14 @@ def test_service_prompt_isolation_and_refresh_fence(monkeypatch):
     assert result['status'] == 'generated' and result['evidence_truncated'] is True
 
 
+    from test_ui_capture_scope import scoped_snapshot
+    focus_a, focus_b = scoped_snapshot('panel0/0/1'), scoped_snapshot('panel0/0/2')
+    result = asyncio.run(agent.ui_advice('TEST', None, 'schedule_analysis', focus_a, refresh=lambda: focus_b))
+    assert result['status'] == 'blocked' and result['evidence'] == []
+    assert 'TEST NEVER FORWARD' not in captured['message']
+    assert 'focus_relative' in captured['message'] and 'panel0/0/1' in captured['message']
+
+
 def test_capture_diagnostics_are_excluded_from_evidence_and_keep_text_bound():
     data = snapshot()
     for index in range(240 - len(data['facts'])):

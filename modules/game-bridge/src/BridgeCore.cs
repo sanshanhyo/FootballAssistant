@@ -51,6 +51,8 @@ internal static class UiTraversalBounds
     public const int MaximumDepth = 48;
     public const int MaximumPathLength = 128;
 
+    public static string CaptureRootPath(int panelIndex, UiFocusPath? focus) => focus is null ? $"panel{panelIndex}" : "focus";
+
     // Reject before fetching the child object. A skipped root may have descendants;
     // counters count skipped roots, not an estimated number of missing text values.
     public static bool TryChildPath(string parentPath, int parentDepth, int childIndex,
@@ -161,6 +163,8 @@ public static class ObservationFactory
                 max_depth = UiTraversalBounds.MaximumDepth, max_path_length = UiTraversalBounds.MaximumPathLength,
                 focus_requested = capture.FocusRequested, focus_resolved = capture.FocusResolved,
                 focus_root_path = capture.FocusRootPath, focus_descent_nodes = capture.FocusDescentNodes,
+                path_scope = capture.FocusRequested ? "focus_relative" : "panel_absolute",
+                identity_scope = "capture_local_ui_path",
                 depth_scope = capture.FocusRequested ? "relative_to_requested_focus_root" : "relative_to_panel_root",
                 supported_text_type = "UnityEngine.UIElements.TextElement (including subclasses)",
                 visibility_test = "get_visible_and_positive_finite_worldBound_not_pixel_visibility"

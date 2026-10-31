@@ -174,7 +174,7 @@ internal sealed partial class NativeUiReader : IDisposable
             }
             if (root == 0) { diagnostics.stop_reason = "root_unavailable"; diagnostics.elapsed_ms = budget.Elapsed.TotalMilliseconds - panelStart; continue; }
             var stack = new Stack<(nint Element, string Path, int Depth)>();
-            stack.Push((root, focus?.Path ?? $"panel{panelIndex}", 0));
+            stack.Push((root, UiTraversalBounds.CaptureRootPath(panelIndex, focus), 0));
             while (stack.Count > 0)
             {
                 limit = Limit();
