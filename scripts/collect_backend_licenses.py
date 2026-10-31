@@ -53,6 +53,26 @@ def verify(destination):
     return data
 
 
+def cpython_framework_metadata(name, path, kind):
+    """Recognize only the running interpreter's macOS framework Info.plist.
+
+    PyInstaller collects this outside stdlib alongside the Python framework
+    binary. Wheel metadata cannot own it. Never accept a basename/path suffix
+    alone: bind both destination and resolved source to this interpreter.
+    """
+    if kind != "DATA" or sys.platform != "darwin" or sysconfig.get_config_var("PYTHONFRAMEWORK") != "Python":
+        return False
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    expected_name = f"Python.framework/Versions/{version}/Resources/Info.plist"
+    if name != expected_name:
+        return False
+    candidates = [Path(sys.base_prefix) / "Resources/Info.plist"]
+    framework_prefix = sysconfig.get_config_var("PYTHONFRAMEWORKPREFIX")
+    if framework_prefix:
+        candidates.append(Path(framework_prefix) / expected_name)
+    return path.is_file() and any(path == candidate.resolve() for candidate in candidates)
+
+
 def collect(analysis, destination):
     toc = list(entries(ast.literal_eval(analysis.read_text(encoding="utf-8"))))
     sources = {str(Path(source).resolve()) for _, source, _ in toc}
@@ -120,6 +140,8 @@ def collect(analysis, destination):
         elif any(path.is_relative_to(p) for p in stdlib_roots) and not any(
                 part in {"site-packages", "dist-packages"} for part in path.parts):
             category = "cpython-stdlib"
+        elif cpython_framework_metadata(name, path, kind):
+            category = "cpython-framework-metadata"
         elif kind == "DATA" and name == "base_library.zip" and path == (analysis.parent / "base_library.zip").resolve():
             category = "pyinstaller-generated-stdlib-archive"
         elif kind in {"BINARY", "EXTENSION"}:

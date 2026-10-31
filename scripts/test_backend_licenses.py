@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
-from collect_backend_licenses import collect, digest, entries, verify
+from collect_backend_licenses import collect, cpython_framework_metadata, digest, entries, verify
 
 
 class LicenseInventoryTests(unittest.TestCase):
@@ -90,6 +90,29 @@ class LicenseInventoryTests(unittest.TestCase):
             (root / 'output/coverage.json').write_text('{}')
             with self.assertRaisesRegex(ValueError, 'coverage inventory'):
                 verify(root / 'output')
+
+    def test_cpython_framework_metadata_exact_interpreter_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / 'Python.framework/Versions/3.12'
+            source = prefix / 'Resources/Info.plist'
+            source.parent.mkdir(parents=True)
+            source.write_text('<plist/>')
+            name = 'Python.framework/Versions/3.12/Resources/Info.plist'
+            config = {'PYTHONFRAMEWORK': 'Python', 'PYTHONFRAMEWORKPREFIX': str(root)}
+            with patch('collect_backend_licenses.sys.platform', 'darwin'), \
+                 patch('collect_backend_licenses.sys.base_prefix', str(prefix)), \
+                 patch('collect_backend_licenses.sys.version_info', SimpleNamespace(major=3, minor=12)), \
+                 patch('collect_backend_licenses.sysconfig.get_config_var', side_effect=config.get):
+                self.assertTrue(cpython_framework_metadata(name, source.resolve(), 'DATA'))
+                self.assertFalse(cpython_framework_metadata(name.replace('3.12', '3.11'), source.resolve(), 'DATA'))
+                self.assertFalse(cpython_framework_metadata(name, source.resolve(), 'PYMODULE'))
+                outsider = root / 'unrelated/Info.plist'
+                outsider.parent.mkdir(); outsider.write_text('<plist/>')
+                self.assertFalse(cpython_framework_metadata(name, outsider.resolve(), 'DATA'))
+                self.assertFalse(cpython_framework_metadata('Other.framework/Resources/Info.plist', source.resolve(), 'DATA'))
+                source.unlink()
+                self.assertFalse(cpython_framework_metadata(name, source.resolve(), 'DATA'))
 
 
 if __name__ == '__main__':
