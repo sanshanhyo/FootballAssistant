@@ -5,3 +5,6 @@
 @media (max-width: 600px) { #model-config-form input { width: 100%; } }
 
 #persona-path { overflow-wrap: anywhere; white-space: pre-wrap; }
+
+#bridge-plan-fields dd, #bridge-result { overflow-wrap: anywhere; }
+#bridge-setup-card .row-actions { flex-wrap: wrap; }

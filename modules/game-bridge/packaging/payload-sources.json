@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "target": "darwin-arm64",
+  "entryMode": "direct",
+  "reviewed": false,
+  "reason": "New direct net10.0 build and .NET 10.0.14 require isolated FM validation before deployment",
+  "doorstop": {
+    "version": "4.6.0",
+    "url": "https://github.com/NeighTools/UnityDoorstop/releases/download/v4.6.0/doorstop_macos_debug_4.6.0.zip",
+    "sha256": "04d89d6cba16680429c401c1696c3205541665ad6ed53a55b32bc65a97c1005a",
+    "librarySha256": "04c5f13bc38172c176c88c5b868afe000625c114cfeada9e0080da908349b77c",
+    "license": "LGPL-2.1",
+    "sourceCommit": "1c3ece1f1e6c20f4aa74d5402baabf8a0098d282",
+    "sourceUrl": "https://codeload.github.com/NeighTools/UnityDoorstop/tar.gz/1c3ece1f1e6c20f4aa74d5402baabf8a0098d282",
+    "sourceSha256": "ba5bc290e6145e0b33e1b3cfd4de18698144f6dbe031a2278996cfc73036a3e6"
+  },
+  "runtime": {
+    "version": "10.0.14",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-osx-arm64.tar.gz",
+    "sha512": "19c5781dc2f87600865886b8774a4c5851caf1f5cf3f591185b922b0e51dea6b8c0ed0bf80ae4d3be2e083db662124258743e779fab6885322d641eff52b0382",
+    "license": "MIT plus bundled ThirdPartyNotices.txt",
+    "metadataUrl": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json"
+  }
+}

@@ -27,7 +27,21 @@
       <section id="page-connection" class="settings-page" aria-labelledby="page-title">
         <section class="card connection-card"><div class="card-heading"><h2>当前连接</h2><span id="mode-badge" class="badge synthetic">模拟模式</span></div><p id="connection-label" class="connection-label">正在读取状态…</p><p id="connection-reason" class="muted">不会自动连接游戏或调用模型。</p><div class="setting-row"><div><label for="mode">数据模式</label><p>本机真实服务与模拟演示明确分开。</p></div><select id="mode"><option value="mock">模拟演示</option><option value="real">真实后端</option></select></div><dl class="key-values"><dt>当前会话</dt><dd id="session-id" class="mono">未知</dd><dt>来源</dt><dd id="backend-id">未知</dd><dt>服务能力</dt><dd id="reader-capabilities">未知</dd></dl><ul id="connection-limitations" class="limitations"></ul></section>
         <section class="card"><div class="card-heading"><h2>本机启动诊断</h2><button id="bootstrap-refresh" class="secondary-button">重新检测</button></div><p id="bootstrap-status" class="service-note" role="status">正在检测…</p><p id="bootstrap-reader" class="muted"></p></section>
-        <section class="card"><h2>Alpha 更新</h2><p id="update-status" class="service-note" role="status">正在读取更新状态…</p><p class="muted">当前 Alpha 使用手动安装；更新不会覆盖本机模型配置。完成当前对话后退出应用，再安装新版本。</p><div class="row-actions"><button id="update-check" class="secondary-button" disabled>检查更新</button><button id="update-open-release" class="secondary-button">打开官方下载页</button><button id="update-download" class="secondary-button" disabled>下载已验证更新</button></div></section>
+        <section class="card" id="bridge-setup-card"><div class="card-heading"><h2>游戏桥接部署</h2><button id="bridge-refresh" class="secondary-button">刷新状态</button></div>
+          <p class="muted">先选择本机游戏并验证版本与架构，再查看部署计划。只处理独立私有副本，不修改 Steam 原始游戏；不会自动启动或结束 FM。部署成功不等于已读取游戏数据。</p>
+          <p id="bridge-status" class="service-note" role="status">正在读取部署能力…</p><ul id="bridge-candidates" class="limitations"></ul>
+          <div class="row-actions"><button id="bridge-select" class="secondary-button" disabled>选择游戏 App…</button></div>
+          <section id="bridge-plan" hidden><h3>确认部署计划</h3><dl id="bridge-plan-fields" class="key-values"></dl><ul id="bridge-plan-changes" class="limitations"></ul>
+            <p class="notice">以下权限仅针对计划所示的私有副本。ad-hoc 重新签名会替换该副本的原签名；JIT 权限会放宽该副本的代码执行限制。只有你明确勾选并点击启用后才执行。</p>
+            <label class="switch-row"><span>我确认部署位置与改动，同意创建独立私有副本。</span><input id="bridge-consent-copy" type="checkbox"></label>
+            <label class="switch-row"><span>我同意对该私有副本进行 ad-hoc 重新签名。</span><input id="bridge-consent-signing" type="checkbox"></label>
+            <label class="switch-row"><span>我同意仅为该私有副本添加计划列出的 JIT 权限。</span><input id="bridge-consent-jit" type="checkbox"></label>
+            <button id="bridge-enable" class="primary-button" disabled>按此计划启用桥接</button>
+          </section>
+          <p id="bridge-result" class="muted"></p>
+          <div id="bridge-rollback-section" hidden><label class="switch-row"><span>我确认撤销本应用部署的桥接；仅处理部署收据记录的私有副本，不改原始游戏。</span><input id="bridge-consent-rollback" type="checkbox"></label><button id="bridge-rollback" class="text-button danger" disabled>撤销桥接部署</button></div>
+        </section>
+        <section class="card"><h2>Alpha 更新</h2><p id="update-status" class="service-note" role="status">正在读取更新状态…</p><p id="update-mode-note" class="muted">正在确认安装模式；不会为更新强退游戏或中断当前对话。</p><div class="row-actions"><button id="update-check" class="secondary-button" disabled>检查更新</button><button id="update-open-release" class="secondary-button">打开官方下载页</button><button id="update-download" class="secondary-button" disabled>下载已验证更新</button></div></section>
         <section class="card"><h2>首次模型配置</h2><p class="muted">无需编辑 .env。只保存你在这里输入的配置，不自动导入密钥；保存不会调用模型。API Key 不会回显。服务地址由你确认，请仅填写可信的服务商 HTTPS API 地址。</p>
           <form id="model-config-form" autocomplete="off">
             <div class="setting-row"><label for="model-provider">服务商</label><select id="model-provider"><option value="opencode-go">OpenCode Go</option><option value="openai-compatible">其他 OpenAI 兼容服务</option></select></div>
@@ -66,6 +80,7 @@
     </main>
   </div>
   <script src="ui-state.js"></script>
+  <script src="bridge-settings.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

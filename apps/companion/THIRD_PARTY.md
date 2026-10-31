@@ -15,3 +15,26 @@ Dialogue text uses the unmodified **851 GBai Marker** font (851 GBai 记号笔),
 Electron and electron-builder are locked in `package-lock.json`. Their distributions contain separate third-party notices that remain in built artifacts. This file does not replace those notices.
 
 The installed Windows update adapter depends on **electron-updater 6.6.2** (MIT), pinned in `package-lock.json`. Its upstream LICENSE and dependency notices remain in the packaged production modules. It is dormant until release trust is explicitly configured.
+
+## License scope and retained author terms
+
+Third-party code and fonts retain their original licenses; the project's root
+license does not relicense them. In particular, 851 GBai Marker is **not**
+GPL-licensed. The unchanged original author's complete terms are retained in
+`src/assets/fonts/851-original-author-terms.html` (retrieved 2026-10-31 from
+https://pm85122.onamae.jp/851fontTerm.html), alongside the Chinese release notice
+and source record. These terms permit software/game embedding and redistribution,
+but restrict standalone font sales and sales of modified font files. Do not
+replace them with a blanket "all assets GPL" statement. The project's character
+and bubble assets have the provenance described above; their public resource
+licensing is to be specified separately (角色资源授权另行说明).
+
+The bundled backend carries `third-party-licenses/manifest.json` and hashed notice
+files, collected from its actual PyInstaller analysis. This includes the CPython
+runtime license and notices for bundled Python distributions, not only direct
+dependencies. A missing notice fails backend building. The manifest separately
+lists native runtime files for release review: collecting notices does not itself
+verify every native-library obligation or satisfy all corresponding-source duties.
+Electron/Chromium/Node notices and production npm module licenses must additionally
+be checked in the final target-platform application; this document cannot replace
+them. No Doorstop, CoreCLR, BepInEx or Dobby binary is included by this configuration.

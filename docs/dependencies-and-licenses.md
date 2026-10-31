@@ -32,3 +32,31 @@
 | [DadMych/fm26-player-export-macos](https://github.com/DadMych/fm26-player-export-macos/tree/463074f78ed86779cd5c72b5b3708fd1277ddbca) | 根 MIT 文本不替代其 NOTICE 中被捆绑第三方组件的许可。只提取兼容层外部编译引用，没有运行安装脚本或移植导出插件。 | FM26 社区 beta 的重签名和 shadow 启动路线不是 FM27 验证；私有 shadow 尚未创建。 |
 
 保留的许可证边界：dsh-pet 代码的 MIT 许可不延伸到其声明非商用的素材；BepInEx/Il2CppInterop 各自许可证不可互相替代；没有主项目许可证的 FM 导出工具仅作参考。逐项证据及可复用细节见[参考实现评估](reference-assessment.md)。
+
+## 发布包许可证收集（2026-10-31）
+
+`scripts/collect_backend_licenses.py` 从 PyInstaller `Analysis-00.toc` 的实际
+文件映射到构建环境发行包，收集其许可证、COPYING、NOTICE 和作者声明，并收集
+CPython 原始 LICENSE。输出位于 backend 的 `third-party-licenses/`，manifest
+记录版本、文件 SHA-256、实际分析条目及待独立审查的原生库。缺少许可证直接令
+构建失败；不联网补包、不以 SPDX 标签替代许可全文。
+
+`jsonschema[format]` 的传递依赖并非全为 MIT：当前分析包含 GPL-3.0-or-later
+的单文件 `rfc3987`，收集器保留该源文件完整内容和项目随附 GPL 文本。
+`logfire-api` 5.4.0 wheel 缺少 MIT 原文，固定版本官方副本及来源见
+`packaging/licenses/README.md`。这不是完整对应源码归档：二进制发行前仍须
+准备项目及适用第三方组件的对应源码、构建资料和适用 notices。
+
+851 字体按作者独立条款随附，不重许可为 GPL；完整原作者条款已保存到字体目录。
+角色资源授权另行说明。dsh-pet 未采用的限制性素材不会因根 GPL 自动获得授权。
+
+本地 Linux 后端清单不替代 macOS/Windows 成品审查；发布前还应确认 Electron、
+Chromium、Node 和生产 npm 依赖 notices 均留在成品，并复核 manifest 列出的原生
+运行库。`python scripts/collect_backend_licenses.py --check --destination
+<backend>/third-party-licenses` 可检查已收集 notices 是否缺失或被改动。
+
+收集器另外输出并哈希绑定 `coverage.json`：发行包、标准库、本项目源码、
+PyInstaller 无实体文件的 namespace 标记及其生成的标准库归档分别分类。
+未认领的 Python 模块或 DATA 条目列入 unresolved 并阻断构建，不能因为 wheel
+缺 RECORD 就静默跳过。AUTHORS/NOTICE 和 SPDX 标签仅为补充，不能单独替代
+LICENSE/COPYING 全文；缺少完整许可文本仍须人工审核。

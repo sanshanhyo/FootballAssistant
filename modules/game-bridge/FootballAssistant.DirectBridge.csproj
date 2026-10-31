@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>FootballAssistant.GameBridge</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Same direct Doorstop/CF entry and readers; omit optional BepInEx Plugin. -->
+    <Compile Include="src/*.cs" Exclude="src/Plugin.cs" />
+  </ItemGroup>
+</Project>

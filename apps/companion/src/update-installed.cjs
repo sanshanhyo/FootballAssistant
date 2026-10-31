@@ -30,15 +30,25 @@ function createInstalledUpdater(options) {
     const { NsisUpdater } = require('electron-updater');
     const [owner, repo] = REPOSITORY.split('/');
     return new NsisUpdater({ provider: 'github', owner, repo });
-  }, verifySignature = verifyWindowsSignature, isSafeToInstall = () => false, onStatus = () => {} } = options;
+  }, verifySignature = verifyWindowsSignature, isSafeToInstall = () => false, beforeInstall = async () => {}, onInstallFailure = async () => {}, onStatus = () => {} } = options;
   const thumbprints = productionTrust?.certificateThumbprints;
-  const enabled = options.platform === 'win32' && options.distribution === 'nsis' && typeof productionTrust?.publicKey === 'string' && Array.isArray(thumbprints) && thumbprints.length > 0 && thumbprints.every(x => typeof x === 'string' && /^[A-Fa-f0-9]{40}$/.test(x));
-  let native = null, ready = null, operation = null, disposed = false;
-  let status = { state: 'manual_required', automaticInstallEnabled: Boolean(enabled), distribution: options.distribution || 'unknown', reason: enabled ? 'Trusted NSIS path configured; waiting for a signed compatible release' : 'Automatic installation requires an installed NSIS build, pinned release key and trusted Windows signing certificate; current updates remain manual' };
+  const trustPolicy = productionTrust?.trustPolicy || 'authenticode-and-ed25519';
+  const publisherTrust = trustPolicy === 'ed25519-pinned' || (trustPolicy === 'authenticode-and-ed25519' && Array.isArray(thumbprints) && thumbprints.length > 0 && thumbprints.every(x => typeof x === 'string' && /^[A-Fa-f0-9]{40}$/.test(x)));
+  const enabled = options.platform === 'win32' && options.distribution === 'nsis' && typeof productionTrust?.publicKey === 'string' && publisherTrust;
+  let native = null, ready = null, operation = null, disposed = false, preparationStarted = false;
+  let status = { state: 'manual_required', automaticInstallEnabled: Boolean(enabled), distribution: options.distribution || 'unknown', trustPolicy, publisherVerificationRequired: trustPolicy === 'authenticode-and-ed25519', reason: enabled ? 'Trusted NSIS path configured; waiting for a signed compatible release' : 'Automatic installation requires an installed NSIS build, pinned release key and trusted Windows signing certificate; current updates remain manual' };
   function publish(patch) { status = { ...status, ...patch }; try { onStatus(structuredClone(status)); } catch {} return structuredClone(status); }
+  async function failed(error) {
+    ready = null; publish({ state: 'blocked', reason: error.message });
+    if (preparationStarted) {
+      preparationStarted = false;
+      try { await onInstallFailure(error); } catch { publish({ state: 'blocked', reason: `${error.message}; application recovery requires attention` }); }
+    }
+    return structuredClone(status);
+  }
   function run(task) {
     if (operation) return operation;
-    operation = Promise.resolve().then(task).catch(error => { ready = null; return publish({ state: 'blocked', reason: error.message }); }).finally(() => { operation = null; });
+    operation = Promise.resolve().then(task).catch(failed).finally(() => { operation = null; });
     return operation;
   }
   function getNative() {
@@ -46,13 +56,14 @@ function createInstalledUpdater(options) {
       native = nativeFactory();
       // Do not let any native default quit hook bypass our safety/verification gate.
       native.autoDownload = false;
+      native.disableWebInstaller = true;
       native.autoInstallOnAppQuit = false;
       native.allowDowngrade = false;
       native.allowPrerelease = true;
       native.channel = 'alpha';
       // Setting channel may change downgrade defaults; reassert after it.
       native.allowDowngrade = false;
-      native.on('error', error => { ready = null; publish({ state: 'blocked', reason: error.message }); });
+      native.on('error', error => { void failed(error); });
     }
     return native;
   }
@@ -71,9 +82,10 @@ function createInstalledUpdater(options) {
     // No nsis-web/package payloads: the approved installer must be one whole EXE.
     if (!Array.isArray(files) || files.length !== 1 || typeof files[0] !== 'string') throw new Error('Expected exactly one full NSIS installer');
     await verifyInstaller(files[0], candidate.artifact);
-    await verifySignature(files[0], thumbprints.map(x => x.toUpperCase()));
+    if (trustPolicy === 'authenticode-and-ed25519') await verifySignature(files[0], thumbprints.map(x => x.toUpperCase()));
     if (disposed) throw new Error('Updater stopped');
     ready = { candidate, file: files[0] };
+    if (updater.installerPath !== files[0]) throw new Error('Native installer path does not match verified file');
     return publish({ state: 'ready_for_safe_exit', availableVersion: candidate.version, reason: 'Verified installer staged; waiting for normal idle exit, never a forced restart' });
   }); }
   function applyOnSafeExit({ normalQuit = false, sessionEnding = true } = {}) { return run(async () => {
@@ -83,11 +95,21 @@ function createInstalledUpdater(options) {
     if (Date.parse(staged.candidate.expiresAt) <= Date.now()) throw new Error('Signed release expired; recheck before installation');
     // Recheck cached bytes/signature immediately before native installer dispatch.
     await verifyInstaller(staged.file, staged.candidate.artifact);
-    await verifySignature(staged.file, thumbprints.map(x => x.toUpperCase()));
+    if (trustPolicy === 'authenticode-and-ed25519') await verifySignature(staged.file, thumbprints.map(x => x.toUpperCase()));
     if (disposed || ready !== staged || isSafeToInstall() !== true) return publish({ state: 'deferred' });
+    preparationStarted = true;
+    await beforeInstall({ targetVersion: staged.candidate.version });
+    // Preparation can await backups and process shutdown. Revalidate AFTER it;
+    // never dispatch bytes/path that changed while the application was quiescing.
+    if (native.installerPath !== staged.file) throw new Error('Native installer path changed before dispatch');
+    await verifyInstaller(staged.file, staged.candidate.artifact);
+    if (trustPolicy === 'authenticode-and-ed25519') await verifySignature(staged.file, thumbprints.map(x => x.toUpperCase()));
+    if (native.installerPath !== staged.file) throw new Error('Native installer path changed during final verification');
+    if (Date.parse(staged.candidate.expiresAt) <= Date.now()) throw new Error('Signed release expired before dispatch');
+    if (disposed || ready !== staged || isSafeToInstall() !== true) throw new Error('Safe installation window closed after preparation');
     ready = null;
     publish({ state: 'installing', reason: 'Applying verified update on safe normal exit' });
-    native.quitAndInstall(true, false);
+    native.quitAndInstall(true, true);
     return structuredClone(status);
   }); }
   function stop() { disposed = true; ready = null; if (native) { native.autoInstallOnAppQuit = false; } }

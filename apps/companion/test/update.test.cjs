@@ -87,3 +87,27 @@ test('background public check runs without signing configuration and never fetch
   controller.start(); await done; controller.stop();
   assert.equal(calls, 1); assert.equal(controller.status.state, 'update_available');
 });
+test('signed controller delegates to installed gate rather than manual artifact download', async () => {
+  let staged = null, requests = 0;
+  const envelope = sign(manifest());
+  const controller = createUpdateController({ ...context, publicKey: pem, feedUrl: `${root}alpha-update.json`,
+    installedUpdater: { status: { automaticInstallEnabled: true }, stage: async value => { staged = value; return { state: 'ready_for_safe_exit', reason: 'staged' }; } },
+    fetchImpl: async () => { requests++; return Response.json(envelope); } });
+  assert.equal(controller.status.automaticInstallEnabled, true);
+  assert.equal(controller.status.installMode, 'idle-restart');
+  await controller.check(); assert.equal((await controller.download()).state, 'ready_for_safe_exit');
+  assert.deepEqual(staged, envelope); assert.equal(requests, 1);
+});
+test('unpublished signed channel reports no_release, never silently downloads unsigned assets', async () => {
+  let calls = 0;
+  const controller = createUpdateController({ ...context, publicKey: pem, feedUrl: `${root}alpha-update.json`, fetchImpl: async () => { calls++; return new Response('', { status: 404 }); } });
+  assert.equal((await controller.check()).state, 'no_release'); assert.equal(calls, 1);
+});
+test('production contains only approved public Ed25519 trust and a fixed official feed', () => {
+  const trust = require('../src/update-trust.cjs');
+  const key = crypto.createPublicKey(trust.productionTrust.publicKey);
+  assert.equal(key.asymmetricKeyType, 'ed25519');
+  assert.equal(crypto.createHash('sha256').update(key.export({ type: 'spki', format: 'der' })).digest('hex'), '9e686e777a355634920d5dbf6e63bc282dfc8622ff480a75803b9040538bccfb');
+  assert.equal(trust.productionTrust.trustPolicy, 'ed25519-pinned');
+  assert.equal(trustedReleaseUrl(trust.feedUrl), 'https://github.com/sanshanhyo/FootballAssistant/releases/download/alpha-channel/alpha-update.json');
+});

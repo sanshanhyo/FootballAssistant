@@ -17,10 +17,10 @@ async function fixture(t, overrides = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'installed-update-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'setup.exe'); await fs.writeFile(file, content);
   let installs = 0, downloads = 0, signatures = 0, safe = true;
-  const native = new EventEmitter();
+  const native = new EventEmitter(); native.installerPath = file;
   native.checkForUpdates = async () => ({ updateInfo: { version: payload.version } });
   native.downloadUpdate = async () => { downloads++; return [file]; };
-  native.quitAndInstall = (silent, restart) => { assert.equal(silent, true); assert.equal(restart, false); installs++; };
+  native.quitAndInstall = (silent, restart) => { assert.equal(silent, true); assert.equal(restart, true); installs++; };
   const updater = createInstalledUpdater({ ...context, productionTrust: { publicKey: pem, certificateThumbprints: ['A'.repeat(40)] }, nativeFactory: () => native, verifySignature: async () => { signatures++; }, isSafeToInstall: () => safe, ...overrides });
   return { updater, native, file, setSafe: x => { safe = x; }, counts: () => ({ installs, downloads, signatures }) };
 }
@@ -44,7 +44,7 @@ test('matching signed installer stages; no auto quit hook; safe normal exit inst
   f.setSafe(true);
   assert.equal((await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false })).state, 'installing');
   await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false });
-  assert.deepEqual(f.counts(), { installs: 1, downloads: 1, signatures: 2 });
+  assert.deepEqual(f.counts(), { installs: 1, downloads: 1, signatures: 3 });
 });
 test('metadata mismatch and non-NSIS signed artifact block before download', async t => {
   const f = await fixture(t); f.native.checkForUpdates = async () => ({ updateInfo: { version: '9.0.0' } });
@@ -65,4 +65,37 @@ test('stop and active work detected after verification prevent dispatch', async 
   let count = 0;
   const race = await fixture(t, { isSafeToInstall: () => ++count === 1 }); await race.updater.stage(signed());
   assert.equal((await race.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false })).state, 'deferred'); assert.equal(race.counts().installs, 0);
+});
+test('explicit Ed25519-only policy still requires manifest and package integrity', async t => {
+  let authenticodeCalled = false, checkpoint = false;
+  const f = await fixture(t, { productionTrust: { publicKey: pem, trustPolicy: 'ed25519-pinned' }, verifySignature: async () => { authenticodeCalled = true; }, beforeInstall: async ({ targetVersion }) => { assert.equal(targetVersion, payload.version); checkpoint = true; } });
+  assert.equal(f.updater.status.trustPolicy, 'ed25519-pinned');
+  assert.equal(f.updater.status.publisherVerificationRequired, false);
+  assert.equal((await f.updater.stage({ ...signed(), signature: 'wrong' })).state, 'blocked');
+  assert.equal(f.counts().downloads, 0);
+  assert.equal((await f.updater.stage(signed())).state, 'ready_for_safe_exit');
+  await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false });
+  assert.equal(checkpoint, true); assert.equal(authenticodeCalled, false); assert.equal(f.counts().installs, 1);
+});
+test('failed recovery checkpoint blocks installation', async t => {
+  const f = await fixture(t, { beforeInstall: async () => { throw Error('checkpoint failed'); } });
+  await f.updater.stage(signed());
+  assert.equal((await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false })).state, 'blocked');
+  assert.equal(f.counts().installs, 0);
+});
+test('beforeInstall cached-byte tampering is rejected and recovery callback runs', async t => {
+  let recoveries = 0, file;
+  const f = await fixture(t, { beforeInstall: async () => fs.writeFile(file, Buffer.alloc(content.length)), onInstallFailure: async () => { recoveries++; } }); file = f.file;
+  await f.updater.stage(signed());
+  const result = await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false });
+  assert.equal(result.state, 'blocked'); assert.match(result.reason, /signed manifest/);
+  assert.equal(f.counts().installs, 0); assert.equal(recoveries, 1);
+});
+test('beforeInstall native installer-path switch is rejected and backend recovery requested', async t => {
+  let native, recoveries = 0;
+  const f = await fixture(t, { beforeInstall: async () => { native.installerPath += '.other.exe'; }, onInstallFailure: async () => { recoveries++; } }); native = f.native;
+  await f.updater.stage(signed());
+  const result = await f.updater.applyOnSafeExit({ normalQuit: true, sessionEnding: false });
+  assert.equal(result.state, 'blocked'); assert.match(result.reason, /path changed/);
+  assert.equal(f.counts().installs, 0); assert.equal(recoveries, 1);
 });

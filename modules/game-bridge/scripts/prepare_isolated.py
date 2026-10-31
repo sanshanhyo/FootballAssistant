@@ -42,20 +42,32 @@ def copy_new(source: Path, target: Path) -> None:
     target.chmod(stat.S_IMODE(source.stat().st_mode))
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    global PRIVATE, GAME
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--compat-dir", type=Path, required=True, help="Already extracted, fixed-commit compatibility source; never executes its scripts")
+    parser.add_argument("--compat-dir", type=Path, help="Already extracted, fixed-commit compatibility source; never executes its scripts")
     parser.add_argument("--runtime-dir", type=Path, required=True, help="Existing arm64 Microsoft.NETCore.App runtime directory")
     parser.add_argument("--doorstop-path", type=Path, required=True, help="Verified UnityDoorstop 4.6+ macOS library (Unity 6.3 chained fixups support)")
+    parser.add_argument("--direct-host", action="store_true", help="Use our direct Doorstop entry without optional BepInEx compatibility core")
     parser.add_argument("--apply", action="store_true", help="Prepare and sign private shadow only after explicit user approval; never launches")
-    args = parser.parse_args()
+    parser.add_argument("--game-path", type=Path, default=GAME)
+    parser.add_argument("--private-root", type=Path, default=PRIVATE)
+    parser.add_argument("--plugin-path", type=Path)
+    parser.add_argument("--allow-shadow-signing", action="store_true", help="Explicit consent to ad-hoc sign only the new independent shadow executable")
+    args = parser.parse_args(argv)
+    GAME = args.game_path.expanduser().absolute()
+    PRIVATE = args.private_root.expanduser().absolute()
+    if args.apply and not args.allow_shadow_signing:
+        raise ValueError("Explicit consent to private-shadow signing is required; no files changed")
     if sys.platform != "darwin":
         raise ValueError("This preparation path is macOS only")
     if PRIVATE.exists() or PRIVATE.is_symlink():
         raise ValueError("Private root already exists; refusing to overwrite or remove it")
     if PRIVATE.absolute() != PRIVATE.resolve() or REPO.absolute() != REPO.resolve():
         raise ValueError("Private root ancestors must not be symbolic links")
-    compat = args.compat_dir.resolve(strict=True)
+    if not args.direct_host and not args.compat_dir:
+        raise ValueError("Compatibility source is required for the optional BepInEx route")
+    compat = args.compat_dir.resolve(strict=True) if args.compat_dir else None
     runtime = args.runtime_dir.resolve(strict=True)
     info = plistlib.loads(regular(GAME / "Contents/Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != "com.SportsInteractive.FootballManager27" or info.get("CFBundleShortVersionString") != "27.0.0.2486716":
@@ -63,22 +75,23 @@ def main() -> None:
     executable = regular(GAME / "Contents/MacOS" / info["CFBundleExecutable"])
     if digest(executable) != "1c478ecc9a3d984c649a22289ce74cf403d86af7629318177fdc80c7f252c1e5":
         raise ValueError("Original executable fingerprint changed")
-    core_source = compat / "dist/bepinex-core"
-    for name, expected in CORE_HASHES.items():
-        if digest(regular(core_source / name)) != expected:
-            raise ValueError("Compatibility core does not match reviewed build")
+    core_source = compat / "dist/bepinex-core" if compat else None
+    if not args.direct_host:
+        for name, expected in CORE_HASHES.items():
+            if digest(regular(core_source / name)) != expected:
+                raise ValueError("Compatibility core does not match reviewed build")
     doorstop = regular(args.doorstop_path.resolve(strict=True))
     regular(runtime / "libcoreclr.dylib")
-    for source in core_source.iterdir():
+    for source in ([] if args.direct_host else core_source.iterdir()):
         regular(source)
-    for source in (compat / "dist/dotnet-extras").iterdir():
+    for source in ([] if args.direct_host else (compat / "dist/dotnet-extras").iterdir()):
         regular(source)
         if (runtime / source.name).exists():
             raise ValueError("Runtime/helper filename collision; review the exact runtime before preparing")
     for source in runtime.iterdir():
         if source.suffix in (".dll", ".dylib"):
             regular(source)
-    plugin = regular(REPO / "modules/game-bridge/bin/Debug/net6.0/FootballAssistant.GameBridge.dll")
+    plugin = regular(args.plugin_path or REPO / "modules/game-bridge/bin/Debug/net6.0/FootballAssistant.GameBridge.dll")
     architecture = subprocess.run(["/usr/bin/file", str(runtime / "libcoreclr.dylib")], capture_output=True, text=True, check=True).stdout
     if "arm64" not in architecture:
         raise ValueError("CoreCLR runtime is not arm64")
@@ -90,6 +103,7 @@ def main() -> None:
         "native_api_only": True,
         "interop_generation": False,
         "loader_network_downloads": False,
+        "entry_mode": "direct" if args.direct_host else "bepinex-compatible",
         "launches_game": False,
         "writes_original_or_steam": False,
         "runtime": str(runtime),
@@ -119,12 +133,12 @@ def main() -> None:
     core = bepinex / "core"
     for directory in (core, bepinex / "config", bepinex / "plugins", bepinex / "patchers", bepinex / "cache", PRIVATE / "generated/interop", PRIVATE / "generated/unity-libs", PRIVATE / "tmp", PRIVATE / "logs", PRIVATE / "diagnostics", PRIVATE / "control", PRIVATE / "dotnet_arm64"):
         directory.mkdir(parents=True, exist_ok=True)
-    for source in sorted(core_source.iterdir()):
+    for source in ([] if args.direct_host else sorted(core_source.iterdir())):
         copy_new(source, core / source.name)
     for source in sorted(runtime.iterdir()):
         if source.suffix in (".dll", ".dylib"):
             copy_new(source, PRIVATE / "dotnet_arm64" / source.name)
-    for source in sorted((compat / "dist/dotnet-extras").iterdir()):
+    for source in ([] if args.direct_host else sorted((compat / "dist/dotnet-extras").iterdir())):
         copy_new(source, PRIVATE / "dotnet_arm64" / source.name)
     copy_new(doorstop, PRIVATE / "libdoorstop.dylib")
     copy_new(plugin, bepinex / "plugins/FootballAssistant.GameBridge.dll")

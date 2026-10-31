@@ -1,10 +1,15 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences, dialog, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences, dialog, safeStorage, shell, powerMonitor } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { createCredentialConfig } = require('./credentials.cjs');
+const { createBridgeSetup } = require('./bridge-setup.cjs');
+const { createBridgeDeployment } = require('./bridge-ipc.cjs');
+const { createUpdateRecovery } = require('./update-recovery.cjs');
+const { createUpdateLifecycle } = require('./update-lifecycle.cjs');
+const updateTrust = require('./update-trust.cjs');
 const { createInstalledUpdater } = require('./update-installed.cjs');
 const { distribution } = require('./distribution.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
@@ -31,9 +36,17 @@ let backendSupervisor;
 let backendOptions;
 let credentials;
 let personaAccess;
+let bridgeDeployment;
 let savingModel = false;
 let updateController;
 let installedUpdates;
+let updateRecovery;
+let updateLifecycle;
+let updateQuiescing = false;
+let updateSessionEnding = false;
+let lastGameClearAt = 0;
+let activeIpc = 0;
+let speechPlaying = false;
 let bootstrapStatus;
 let win;
 let settingsWindow;
@@ -56,7 +69,7 @@ function emit(value) {
   }
 }
 function emitPet(value) { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('companion:event', value); }
-const speech = createSpeechService({ onState: state => emit({ type: 'speech', state }) });
+const speech = createSpeechService({ onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
 function senderRole(event, method) {
   for (const [role, window, url] of [['pet', win, pageUrl], ['settings', settingsWindow, settingsPageUrl]]) {
     if (!window || window.isDestroyed() || event.sender !== window.webContents) continue;
@@ -70,8 +83,11 @@ function handle(name, action, { withSender = false } = {}) {
   ipcMain.handle(`companion:${name}`, async (event, ...args) => {
     const role = senderRole(event, name);
     if (!role) return { ok: false, error: '无效的窗口请求。' };
+    if (updateQuiescing) return { ok: false, error: '已验证更新正在安全重启，请稍候。' };
+    activeIpc++;
     try { return { ok: true, value: await (withSender ? action({ role }, ...args) : action(...args)) }; }
     catch (error) { return { ok: false, error: error.message || '请求失败。', ...(error.code ? { code: error.code } : {}) }; }
+    finally { activeIpc--; }
   });
 }
 function visibleBounds(bounds) {
@@ -147,6 +163,7 @@ function trayImage() {
   return image;
 }
 function registerIpc() {
+  bridgeDeployment.register(handle);
   handle('persona-status', () => personaAccess.status());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
@@ -158,7 +175,7 @@ function registerIpc() {
   });
   handle('model-config-get', () => credentials.getPublicConfig());
   handle('model-config-save', async input => {
-    if (savingModel || quitting) throw new Error('配置正在应用，请稍后再试。');
+    if (savingModel || quitting || bridgeDeployment?.busy) throw new Error('配置正在应用，请稍后再试。');
     savingModel = true;
     try {
       let saved;
@@ -172,7 +189,7 @@ function registerIpc() {
     } finally { savingModel = false; }
   });
   handle('update-open-release', async () => { await shell.openExternal('https://github.com/sanshanhyo/FootballAssistant/releases'); return { opened: true }; });
-  handle('update-status', () => ({ ...updateController.status, installation: installedUpdates.status }));
+  handle('update-status', () => ({ ...updateController.status, installation: installedUpdates.status, recovery: updateRecovery.status }));
   handle('update-check', () => updateController.check());
   handle('update-download', () => updateController.download());
   handle('get-state', () => runtime.state());
@@ -244,6 +261,8 @@ async function buildWindow() {
     alwaysOnTop: true, skipTaskbar: true, show: false, hasShadow: false, title: 'FootballAssistant',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: ['--companion-window=pet'], contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
+  win.on('query-session-end', () => { updateSessionEnding = true; updateLifecycle?.stop(); });
+  win.on('session-end', () => { updateSessionEnding = true; updateLifecycle?.stop(); });
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -259,7 +278,7 @@ async function buildWindow() {
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
-      runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status },
+      runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status, recovery: updateRecovery.status },
       renderer: await win.webContents.executeJavaScript('({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet"))})'),
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
@@ -268,7 +287,61 @@ async function buildWindow() {
     if (process.env.FOOTBALL_ASSISTANT_SMOKE_EXIT === '1') setTimeout(() => app.quit(), 300);
   }
 }
+function updateSafeNow() {
+  return !updateSessionEnding && (!quitting || updateQuiescing) && Boolean(runtime) && activeIpc === 0 && !savingModel && !bridgeDeployment?.busy && !speechPlaying && !win?.webContents.isCurrentlyAudible() && !drag
+    && (updateQuiescing || (!win?.isFocused() && !settingsWindow?.isVisible())) && runtime.pending.size === 0 && !runtime.captureController
+    && Date.now() - lastGameClearAt < 60000 && updateRecovery?.status.state !== 'recovery_required'
+    && (updateQuiescing || powerMonitor.getSystemIdleTime() >= 60);
+}
+async function inspectUpdateActivity() {
+  if (!runtime || quitting || updateSessionEnding || !updateSafeNowExceptGame()) return 'busy';
+  const game = await detectGame();
+  if (game.state !== 'not_detected') { lastGameClearAt = 0; return 'busy'; }
+  // Unsaved draft/active microphone makes restarting unsafe even in background.
+  const uiIdle = await win.webContents.executeJavaScript(`Boolean(document.getElementById('message')) && !document.getElementById('message').value && !document.hasFocus() && !['listening','transcribing','speaking','thinking'].includes(document.getElementById('pet')?.dataset.expression)`).catch(() => false);
+  if (!uiIdle) return 'busy';
+  lastGameClearAt = Date.now();
+  return updateSafeNow() ? 'idle' : 'busy';
+}
+function updateSafeNowExceptGame() {
+  return activeIpc === 0 && !savingModel && !bridgeDeployment?.busy && !speechPlaying && !win?.webContents.isCurrentlyAudible() && !drag && !win?.isFocused() && !settingsWindow?.isVisible()
+    && runtime.pending.size === 0 && !runtime.captureController && powerMonitor.getSystemIdleTime() >= 60
+    && updateRecovery?.status.state !== 'recovery_required';
+}
+async function prepareUpdateRestart({ targetVersion }) {
+  // Re-check the actual process list; never stop Football Manager for an update.
+  const game = await detectGame();
+  if (game.state !== 'not_detected' || !updateSafeNow()) throw new Error('Update postponed: application/game became active');
+  lastGameClearAt = Date.now();
+  updateQuiescing = true;
+  const recovery = await updateRecovery.prepare({ targetVersion });
+  if (recovery.state !== 'prepared') { updateQuiescing = false; throw new Error('Update recovery checkpoint could not be saved'); }
+  await runtime.persist();
+  if (runtime.storageWarning) { updateQuiescing = false; throw new Error('Conversation state could not be saved before update'); }
+  await backendSupervisor.stop(); // Only the helper this app owns, never FM/external services.
+  if ((await detectGame()).state !== 'not_detected' || updateSessionEnding) throw new Error('Update postponed: game started or Windows session is ending');
+  lastGameClearAt = Date.now();
+}
+async function recoverFailedUpdate(error) {
+  updateLifecycle?.stop(); updateController?.stop();
+  try {
+    await updateRecovery.fail(`Update installation blocked: ${error.message}`);
+    // A final verification failure must not leave the chat backend silently stopped.
+    // Recreate only our own supervisor; external services are never killed/replaced.
+    if (!quitting && !updateSessionEnding) {
+      backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+      bootstrapStatus.backend = await backendSupervisor.start();
+    }
+  } catch {
+    bootstrapStatus.backend = { state: 'failed', owned: false, message: '更新已中止；本机后端恢复失败，请重启应用。配置备份已保留。' };
+  } finally {
+    updateQuiescing = false;
+    emit({ type: 'update-status', state: { ...updateController.status, state: 'recovery_required', installation: installedUpdates.status, recovery: updateRecovery.status } });
+  }
+}
 async function main() {
+  updateRecovery = createUpdateRecovery({ userData: app.getPath('userData'), currentVersion: app.getVersion() });
+  await updateRecovery.beginLaunch(); // Before configuration migration or app startup writes.
   const settings = await loadSettings(app.getPath('userData'));
   const external = Boolean(process.env.FOOTBALL_ASSISTANT_RUNTIME_FILE || process.argv.includes('--runtime-file'));
   const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
@@ -278,13 +351,39 @@ async function main() {
   installedUpdates = createInstalledUpdater({ platform: process.platform,
     distribution: distribution({ packaged: app.isPackaged, executable: app.getPath('exe') }),
     currentVersion: app.getVersion(), arch: process.arch, configSchema: 1, backendProtocol: 1, bridgeProtocol: 1,
-    productionTrust: undefined }); // No production key/certificate is provisioned by this build.
+    productionTrust: updateTrust.productionTrust,
+    isSafeToInstall: updateSafeNow, beforeInstall: prepareUpdateRestart, onInstallFailure: recoverFailedUpdate,
+    onStatus: state => { emit({ type: 'update-status', state: { ...updateController?.status, installation: state, recovery: updateRecovery.status } });
+    } });
   updateController = createUpdateController({ currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
     configSchema: 1, backendProtocol: 1, bridgeProtocol: 1, cacheDir: path.join(app.getPath('userData'), 'updates'),
-    feedUrl: undefined, publicKey: undefined, onStatus: state => emit({ type: 'update-status', state }) }); // Signed downloads need a reviewed feed/key; public GitHub checks remain read-only.
-  if (app.isPackaged) updateController.start();
+    feedUrl: process.platform === 'win32' ? updateTrust.feedUrl : undefined, publicKey: process.platform === 'win32' ? updateTrust.productionTrust?.publicKey : undefined, installedUpdater: installedUpdates, onStatus: state => emit({ type: 'update-status', state: { ...state, installation: installedUpdates.status, recovery: updateRecovery.status } }) }); // Signed downloads need a reviewed feed/key; public GitHub checks remain read-only.
+  // Start updates only after initial backend and renderer health is established.
   bootstrapStatus = { backend: await backendSupervisor.start(), game: await detectGame(), readerPlatformSupported: process.platform === 'darwin', bridgeConfigured: external || settings.backendEnvFile || !backendSupervisor.status.owned ? null : Boolean(settings.bridgePrivateRoot) };
   if (app.isPackaged && bootstrapStatus.backend.state !== 'ready') dialog.showErrorBox('FootballAssistant 后端未连接', bootstrapStatus.backend.message);
+
+  bridgeDeployment = createBridgeDeployment({
+    setup: createBridgeSetup({ userData: app.getPath('userData'), resourcesPath: process.resourcesPath, isPackaged: app.isPackaged,
+      requestHealth: () => request(runtimeFile, '/v1/status'),
+      onConfigured: async privateRoot => {
+        backendOptions.settings = await loadSettings(app.getPath('userData'));
+        bootstrapStatus.bridgeConfigured = Boolean(privateRoot);
+        bootstrapStatus.bridgeRestartRequired = true;
+        if (backendSupervisor.status.owned) {
+          try {
+            await backendSupervisor.stop();
+            backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+            bootstrapStatus.backend = await backendSupervisor.start();
+            bootstrapStatus.bridgeRestartRequired = bootstrapStatus.backend.state !== 'ready';
+          } catch { bootstrapStatus.bridgeRestartRequired = true; }
+        }
+        return { restartRequired: bootstrapStatus.bridgeRestartRequired };
+      } }),
+    chooseGame: async () => {
+      const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name: 'Game App', extensions: ['app'] }] });
+      return result.canceled ? null : result.filePaths[0];
+    }, canMutate: () => !quitting && !updateQuiescing && !savingModel
+  });
 
   personaAccess = createPersonaAccess({ userData: app.getPath('userData'),
     isManaged: () => app.isPackaged && !backendSupervisor.external && backendSupervisor.status.owned === true && backendSupervisor.status.state === 'ready',
@@ -302,12 +401,18 @@ async function main() {
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
   app.on('activate', showPet);
+  const rendererHealthy = await win.webContents.executeJavaScript("document.readyState === 'complete' && Boolean(window.companion) && Boolean(document.getElementById('pet'))").catch(() => false);
+  if (bootstrapStatus.backend.state === 'ready' && rendererHealthy && !runtime.storageWarning) await updateRecovery.acknowledgeHealthy();
+  else if (updateRecovery.status.state === 'awaiting_health') await updateRecovery.fail('Updated app backend or local state failed initial health check');
+  updateLifecycle = createUpdateLifecycle({ installedUpdater: installedUpdates, inspectActivity: inspectUpdateActivity });
+  if (app.isPackaged && updateRecovery.status.state !== 'recovery_required') { updateController.start(); updateLifecycle.start(); }
 }
-if (primaryInstance) app.whenReady().then(main).catch(async () => { dialog.showErrorBox('FootballAssistant 无法启动', '本机配置或启动失败；请检查用户数据目录中的 settings.json。不会覆盖现有配置。'); await backendSupervisor?.stop(); app.exit(1); });
+if (primaryInstance) app.whenReady().then(main).catch(async () => { await updateRecovery?.fail('Application failed to start after update'); dialog.showErrorBox('FootballAssistant 无法启动', '本机配置或启动失败；请检查用户数据目录中的 settings.json。不会覆盖现有配置。'); await backendSupervisor?.stop(); app.exit(1); });
+app.on('before-quit-for-update', () => { /* Native updater still uses our before-quit cleanup. */ });
 app.on('window-all-closed', () => { /* The tray owns application lifetime. */ });
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault(); quitting = true;
-  clearInterval(pointerTimer); updateController?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
+  clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
   Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });

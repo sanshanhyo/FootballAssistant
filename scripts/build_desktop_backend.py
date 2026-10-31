@@ -30,9 +30,16 @@ command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--one
     "--recursive-copy-metadata", "pydantic-ai-slim", "--collect-all", "genai_prices",
     "--collect-all", "uvicorn", "--collect-all", "jsonschema_specifications",
     "--add-data", str(ROOT / "modules/game-bridge/scripts/wire_decoder.py") + ":game-bridge-scripts",
+    "--add-data", str(ROOT / "modules/game-bridge/scripts/prepare_isolated.py") + ":game-bridge-scripts",
+    "--add-data", str(ROOT / "modules/game-bridge/scripts/launch_isolated.py") + ":game-bridge-scripts",
     "--add-data", str(ROOT / "modules/game-bridge/scripts/decode_native_packet.py") + ":game-bridge-scripts",
     "--copy-metadata", "football-assistant", str(ROOT / "scripts" / "desktop_backend.py")]
 persona_resources = STAGING / "football_assistant_agent/resources"
 if persona_resources.is_dir():
     command.extend(["--add-data", str(persona_resources) + ":football_assistant_agent/resources"])
 subprocess.run(command, cwd=ROOT, check=True, env={**os.environ, "PYINSTALLER_CONFIG_DIR": str(ROOT / "build/pyinstaller-cache")})
+# Collect from the build's actual module/binary inventory, not only direct deps.
+subprocess.run([sys.executable, str(ROOT / "scripts/collect_backend_licenses.py"),
+    "--analysis", str(ROOT / "build/pyinstaller/football-assistant-backend/Analysis-00.toc"),
+    "--destination", str(ROOT / "build/desktop-backend/football-assistant-backend/third-party-licenses")],
+    cwd=ROOT, check=True)

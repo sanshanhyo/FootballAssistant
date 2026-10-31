@@ -10,8 +10,9 @@ const { trustedReleaseUrl, verifyManifest } = require('./update-security.cjs');
 function createUpdateController(options) {
   const { feedUrl, publicKey, cacheDir, onStatus = () => {}, fetchImpl = globalThis.fetch } = options;
   const signedMode = Boolean(feedUrl && publicKey);
-  let status = { state: 'idle', currentVersion: options.currentVersion, installMode: 'manual', source: signedMode ? 'signed-manifest' : 'github-releases', signedDownloadAvailable: signedMode, reason: signedMode ? null : 'Public Alpha release checks enabled; signed automatic downloads are not configured' };
-  let candidate = null, operation = null, timer = null, aborter = null, stopped = false;
+  const automaticInstallEnabled = Boolean(signedMode && options.installedUpdater?.status.automaticInstallEnabled);
+  let status = { state: 'idle', currentVersion: options.currentVersion, automaticInstallEnabled, installMode: automaticInstallEnabled ? 'idle-restart' : 'manual', source: signedMode ? 'signed-manifest' : 'github-releases', signedDownloadAvailable: signedMode, reason: signedMode ? null : 'Public Alpha release checks enabled; signed automatic downloads are not configured' };
+  let candidate = null, signedEnvelope = null, operation = null, timer = null, aborter = null, stopped = false;
   const snapshot = () => structuredClone(status);
   function publish(patch) { status = { ...status, ...patch }; try { onStatus(snapshot()); } catch {} return snapshot(); }
   function run(task) {
@@ -37,7 +38,7 @@ function createUpdateController(options) {
         current = next.href;
         await response.body?.cancel();
       }
-      if (!response.ok || !response.body) throw new Error(`Update download failed (${response.status})`);
+      if (!response.ok || !response.body) { const error = new Error(`Update download failed (${response.status})`); error.httpStatus = response.status; throw error; }
       let size = 0;
       for await (const chunk of response.body) {
         size += chunk.length;
@@ -50,7 +51,7 @@ function createUpdateController(options) {
   function check() { return run(async () => {
     // Keep an already verified download ready until the user installs it.
     if (status.state === 'downloaded') return snapshot();
-    candidate = null;
+    candidate = null; signedEnvelope = null;
     publish({ state: 'checking', reason: null, availableVersion: null, downloadedPath: null, releaseUrl: null });
     if (!signedMode) {
       aborter = new AbortController();
@@ -59,16 +60,22 @@ function createUpdateController(options) {
       finally { clearTimeout(timeout); }
     }
     const chunks = [];
-    await request(feedUrl, 256 * 1024, chunk => chunks.push(Buffer.from(chunk)));
+    try { await request(feedUrl, 256 * 1024, chunk => chunks.push(Buffer.from(chunk))); }
+    catch (error) { if (error.httpStatus === 404) return publish({ state: 'no_release', reason: 'No signed Alpha update channel has been published yet; no package was downloaded or installed' }); throw error; }
     const envelope = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     // Equal/older feeds are not executable update candidates; never download them.
     candidate = verifyManifest(envelope, publicKey, options);
+    signedEnvelope = envelope;
     if (candidate.isCurrent) { candidate = null; return publish({ state: 'up_to_date', reason: null }); }
-    return publish({ state: 'update_available', availableVersion: candidate.version, releaseUrl: candidate.releaseUrl, reason: 'Verified update available; manual installation required' });
+    return publish({ state: 'update_available', availableVersion: candidate.version, releaseUrl: candidate.releaseUrl, reason: automaticInstallEnabled ? 'Verified update available; background download and idle restart enabled' : 'Verified update available; manual installation required' });
   }); }
   function download() { return run(async () => {
     if (!signedMode) return publish({ state: 'manual_required', reason: 'No signed download feed configured. Review the official release page and install manually; the app will not download or execute this package.' });
     if (!candidate) throw new Error('Check for a compatible update first');
+    if (options.installedUpdater?.status.automaticInstallEnabled) {
+      const installed = await options.installedUpdater.stage(signedEnvelope);
+      return publish({ state: installed.state, reason: installed.reason, installation: installed });
+    }
     if (Date.parse(candidate.expiresAt) <= Date.now()) throw new Error('Update manifest expired; check again');
     if (!cacheDir) throw new Error('Update cache directory is not configured');
     const { artifact } = candidate;

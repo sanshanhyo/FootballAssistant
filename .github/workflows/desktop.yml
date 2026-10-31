@@ -114,6 +114,55 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: ./test/nsis-smoke.ps1
+      - name: Verify real two-version NSIS automatic upgrade (disposable fixture)
+        if: runner.os == 'Windows'
+        run: node test/update-native-fixture.cjs
+      - name: Prepare signed Alpha manifest without publishing
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/alpha-reader-ui'
+        run: node packaging/sign-alpha-update.cjs
+        env:
+          FA_ALPHA_UPDATE_SIGNING_KEY: ${{ secrets.FA_ALPHA_UPDATE_SIGNING_KEY }}
+      - name: Verify macOS bundle signature integrity (not notarization)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP="dist/mac-arm64/FootballAssistant.app"
+          codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/companion-mac-signature-info.txt" 2>&1 || true
+          set +e
+          codesign --verify --deep --strict --verbose=2 "$APP" > "$RUNNER_TEMP/companion-mac-signature-verify.txt" 2>&1
+          STATUS=$?
+          set -e
+          cat "$RUNNER_TEMP/companion-mac-signature-info.txt"
+          cat "$RUNNER_TEMP/companion-mac-signature-verify.txt"
+          printf '{"signatureIntegrityPassed":%s,"exitCode":%s,"notarizationVerified":false}\n' "$([ "$STATUS" -eq 0 ] && echo true || echo false)" "$STATUS" > "$RUNNER_TEMP/companion-mac-signature.json"
+          exit "$STATUS"
+      - name: Smoke ad-hoc-signed macOS App with embedded backend
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python - <<'PYSMOKE'
+          import json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          report = root / 'companion-mac-smoke.json'
+          env = dict(os.environ, FOOTBALL_ASSISTANT_SMOKE_REPORT=str(report), FOOTBALL_ASSISTANT_SMOKE_EXIT='1', FA_COMPANION_USER_DATA_DIR=str(root / 'mac-clean-profile'))
+          result = subprocess.run(['dist/mac-arm64/FootballAssistant.app/Contents/MacOS/FootballAssistant'], env=env, timeout=120, capture_output=True, text=True)
+          (root / 'companion-mac-smoke-launch.txt').write_text(result.stdout + result.stderr)
+          if result.returncode: raise RuntimeError(f'Mac App cold start failed: {result.returncode}')
+          data = json.loads(report.read_text())
+          assert data['platform'] == 'darwin' and data['arch'] == 'arm64'
+          assert data['bootstrap']['backend']['state'] == 'ready', 'Embedded backend not ready'
+          assert data['renderer']['bridge'] and not data['renderer']['nodeExposed'], 'Renderer isolation failed'
+          PYSMOKE
+      - name: Upload macOS signature diagnostics
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-macos-signature-diagnostics
+          path: |
+            ${{ runner.temp }}/companion-mac-signature*
+            ${{ runner.temp }}/companion-mac-smoke*
+          if-no-files-found: warn
+          retention-days: 7
       - name: Archive macOS application preserving executable permissions
         if: runner.os == 'macOS'
         run: tar -czf dist/FootballAssistant-macos-arm64.tar.gz -C dist/mac-arm64 FootballAssistant.app
@@ -149,6 +198,7 @@ jobs:
           path: |
             apps/companion/dist/*.blockmap
             apps/companion/dist/*.yml
+            apps/companion/dist/alpha-update.json
           if-no-files-found: error
           retention-days: 7
       - name: Upload Windows smoke diagnostics

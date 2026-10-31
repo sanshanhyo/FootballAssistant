@@ -1,0 +1,15 @@
+'use strict';
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs/promises');const os=require('node:os');const path=require('node:path');
+const {createBridgeSetup}=require('../src/bridge-setup.cjs');
+const id='a'.repeat(32);
+async function fixture(t, options={}) {const userData=await fs.mkdtemp(path.join(os.tmpdir(),'fa-bridge-'));t.after(()=>fs.rm(userData,{recursive:true,force:true}));return {userData,manager:createBridgeSetup({userData,resourcesPath:'/resources',isPackaged:true,platform:'darwin',...options})};}
+test('Windows bridge setup remains unsupported without running or configuring anything',async t=>{const {manager}=await fixture(t,{platform:'win32',run:()=>{throw Error('not allowed');}});assert.equal((await manager.inspect()).state,'unsupported_platform');});
+test('independent copy/signing/JIT consent is required before deploy',async t=>{let calls=0;const {manager}=await fixture(t,{run:()=>{calls++;}});await assert.rejects(manager.deploy({planId:id,enable:true,allowShadowSigning:true}));assert.equal(calls,0);});
+test('successful fixture deployment configures only managed root and does not claim game data',async t=>{
+ let changed,called;const {userData,manager}=await fixture(t,{onConfigured:async root=>{changed=root;},requestHealth:async()=>({modelConfigured:false}),run:async(binary,args,opts)=>{called={binary,args,opts};return {stdout:JSON.stringify({state:'deployed',privateRoot:path.join(userData,'bridge','instances',id)})};}});
+ const result=await manager.deploy({planId:id,enable:true,allowShadowSigning:true,allowJit:true});assert.equal(result.dataConnected,false);assert.equal(result.health.backendReady,true);assert.equal(result.health.dataConnected,false);
+ assert.equal(changed,path.join(userData,'bridge','instances',id));assert.equal(JSON.parse(await fs.readFile(path.join(userData,'settings.json'),'utf8')).bridgePrivateRoot,changed);
+ assert.equal(called.args[0],'--bridge-setup');assert.equal(called.opts.env.FOOTBALL_ASSISTANT_API_KEY,undefined);assert(!called.args.includes('--launch'));
+});
+test('unexpected deployment path cannot alter settings',async t=>{const {userData,manager}=await fixture(t,{run:async()=>({stdout:JSON.stringify({state:'deployed',privateRoot:'/outside'})})});await assert.rejects(manager.deploy({planId:id,enable:true,allowShadowSigning:true,allowJit:true}));await assert.rejects(fs.access(path.join(userData,'settings.json')));});
+test('payload unavailable remains non-mutating and subprocess failures are sanitized',async t=>{const {userData,manager}=await fixture(t,{run:async()=>({stdout:JSON.stringify({state:'payload_unavailable',canEnable:false})})});assert.equal((await manager.inspect()).canEnable,false);await assert.rejects(fs.access(path.join(userData,'settings.json')));const fail=createBridgeSetup({userData,resourcesPath:'/resources',isPackaged:true,platform:'darwin',run:async()=>{throw Error('private detail');}});await assert.rejects(fail.inspect(),e=>!e.message.includes('private detail'));});

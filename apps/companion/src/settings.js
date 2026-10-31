@@ -347,7 +347,7 @@
   }
   function onEvent(event) {
     if (!event || stopped) return;
-    if (event.type === 'update') { renderUpdate(event.status || event.state); return; }
+    if (event.type === 'update' || event.type === 'update-status') { renderUpdate(event.status || event.state); return; }
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') {
       const value = event.state || {};
@@ -389,10 +389,13 @@
   }
   function renderUpdate(value) {
     if (!value) return;
-    const labels = { disabled: '尚未配置可信 Alpha 更新源', idle: '等待检查官方 Release', up_to_date: '当前已是最新版本', update_available: '发现官方新版本（需手动安装，安装包尚未验签）', manual_required: '请前往官方 Release 手动下载与安装', no_release: '官方尚未发布可用版本', network_error: '无法连接官方更新源，可重试', checking: '正在检查', available: '有已验证的新版本', downloading: '正在下载', downloaded: '已验证安装包已下载，请退出后手动安装', 'up-to-date': '当前已是最新版本', error: '更新失败，可重试' };
-    $('update-status').textContent = `当前版本 ${value.currentVersion || '未知'} · ${labels[value.state] || '状态未知'}${value.availableVersion ? ' · ' + value.availableVersion : ''}`;
-    $('update-check').disabled = ['disabled', 'checking', 'downloading'].includes(value.state);
-    $('update-download').disabled = value.state !== 'available' || value.signedDownloadAvailable === false;
+    const labels = { ready_for_safe_exit: '已验证更新就绪，等待正常安全退出', deferred: '更新等待中，当前有游戏或交互任务，不会强制安装', installing: '正在正常退出并安装已验证更新', recovery_required: '更新后健康检查未通过，已暂停自动更新，请检查恢复信息', blocked: '更新校验或安全条件未满足，未安装', disabled: '尚未配置可信 Alpha 更新源', idle: '等待检查官方 Release', up_to_date: '当前已是最新版本', update_available: '发现官方新版本', manual_required: '请前往官方 Release 手动下载与安装', no_release: '官方尚未发布可用版本', network_error: '无法连接官方更新源，可重试', checking: '正在检查', available: '有已验证的新版本', downloading: '正在下载', downloaded: '已验证安装包已下载，请退出后手动安装', 'up-to-date': '当前已是最新版本', error: '更新失败，可重试' };
+    const installation = value.installation || {};
+    const displayState = value.recovery?.state === 'recovery_required' ? 'recovery_required' : ['ready_for_safe_exit', 'deferred', 'installing', 'blocked'].includes(installation.state) ? installation.state : value.state;
+    $('update-mode-note').textContent = value.automaticInstallEnabled === true ? '可信自动安装通道已启用：后台下载并验证，FM 未运行且对话、录音、设置及后台任务均空闲时自动安装并重启；不会强退游戏。系统可能仍显示确认提示。配置保留，异常时暂停后续更新。' : '此安装包当前使用手动安装。自动安装信任配置尚未启用；可查看官方下载页。不会为更新结束游戏或覆盖本机模型配置。';
+    $('update-status').textContent = `当前版本 ${value.currentVersion || '未知'} · ${labels[displayState] || '状态未知'}${value.availableVersion ? ' · ' + value.availableVersion : ''}`;
+    $('update-check').disabled = ['disabled', 'checking', 'downloading', 'installing'].includes(displayState);
+    $('update-download').disabled = !['available', 'update_available'].includes(value.state) || value.signedDownloadAvailable !== true || ['installing', 'recovery_required', 'blocked'].includes(displayState);
   }
   function renderModelConfig(value) {
     if (!value) return;
@@ -458,6 +461,7 @@
 
   if (!api || !UI) { showError('设置桥接未就绪，请从桌宠菜单打开设置。'); return; }
   bind();
+  window.CompanionBridgeSettings?.mountBridgeSettings({ document, api }).refresh();
   unsubscribe = api.subscribe(onEvent);
   perform(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeech();

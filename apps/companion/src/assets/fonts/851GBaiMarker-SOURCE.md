@@ -12,3 +12,9 @@
 The release states that the font was supplied to Maoken by its author. The release and original author terms permit commercial/noncommercial use, redistribution and software/game embedding. Do not claim authorship or sell the font by itself. The archive’s original permission notice is preserved in `851GBaiMarker-LICENSE.txt`.
 
 The application bundles the unmodified font locally; no runtime font CDN or system-font installation is required.
+
+The complete original author's HTML terms are preserved without modification in
+`851-original-author-terms.html`, retrieved from the above official URL on
+2026-10-31. The font remains under its own author terms, not the project's GPL.
+The Chinese extension release notice is retained separately; it is not a claim
+that the original author's terms have been replaced by a standard open-source license.
