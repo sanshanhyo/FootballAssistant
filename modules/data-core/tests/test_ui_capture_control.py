@@ -346,10 +346,10 @@ def test_posix_first_lock_creation_contention(tmp_path, capsys):
     """
     from football_assistant_data.ui_capture_control import PosixCaptureFiles
     files = PosixCaptureFiles()
-    legacy_errors, fixed_errors = [], []
+    legacy_errors, fixed_errors, production_errors = [], [], []
     with ThreadPoolExecutor(max_workers=8) as pool:
         for iteration in range(30):
-            for mode in ('legacy', 'exclusive'):
+            for mode in ('legacy', 'exclusive', 'production'):
                 folder = tmp_path / f'{mode}-{iteration}'
                 folder.mkdir()
                 barrier = Barrier(8)
@@ -361,7 +361,7 @@ def test_posix_first_lock_creation_contention(tmp_path, capsys):
                                 # Exact old syscall pattern, isolated diagnostic fixture.
                                 fd = os.open('.ui-capture.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
                                 os.close(fd)
-                            else:
+                            elif mode == 'exclusive':
                                 # Independent proposed syscall pattern, not production.
                                 flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
                                 try:
@@ -369,13 +369,66 @@ def test_posix_first_lock_creation_contention(tmp_path, capsys):
                                 except FileExistsError:
                                     fd = os.open('.ui-capture.lock', flags, dir_fd=directory)
                                 os.close(fd)
+                            else:
+                                with files.locked(directory):
+                                    pass
                             return None
                         except OSError as error:
-                            return dict(stage='lock_open_before_flock' if mode == 'legacy' else 'exclusive_lock',
+                            return dict(stage='lock_open_before_flock' if mode == 'legacy' else mode + '_lock',
                                         error=type(error).__name__, errno=error.errno)
                     errors = [result for result in pool.map(acquire, range(8)) if result]
-                    (legacy_errors if mode == 'legacy' else fixed_errors).extend(errors)
-    summary = dict(rounds=30, workers=8, legacy_errors=legacy_errors, exclusive_errors=fixed_errors)
+                    {'legacy': legacy_errors, 'exclusive': fixed_errors, 'production': production_errors}[mode].extend(errors)
+    summary = dict(rounds=30, workers=8, legacy_errors=legacy_errors, exclusive_errors=fixed_errors, production_errors=production_errors)
     with capsys.disabled():
         print('POSIX_LOCK_CREATION_COMPARISON=' + json.dumps(summary, separators=(',', ':')))
-    assert not fixed_errors, summary
+    assert not fixed_errors and not production_errors, summary
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX lock-creation flags regression')
+def test_posix_lock_uses_exclusive_create_then_existing_open_only(tmp_path, monkeypatch):
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    real_open, seen = os.open, []
+    def checked_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == '.ui-capture.lock':
+            seen.append(flags)
+            assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
+            assert not flags & os.O_CREAT or flags & os.O_EXCL, 'never use racing create-or-open'
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+    files = PosixCaptureFiles()
+    with files.directory(tmp_path) as directory:
+        monkeypatch.setattr(os, 'open', checked_open)
+        with files.locked(directory):
+            pass
+        with files.locked(directory):
+            pass
+    assert len(seen) == 3
+    assert seen[0] & os.O_EXCL and seen[1] & os.O_EXCL
+    assert not seen[2] & os.O_CREAT
+    assert (tmp_path / '.ui-capture.lock').stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX disappeared/replaced lock regression')
+@pytest.mark.parametrize('replacement', ['removed', 'symlink', 'hardlink'])
+def test_posix_existing_lock_replacement_is_not_retried_or_followed(tmp_path, monkeypatch, replacement):
+    from football_assistant_data.ui_capture_control import PosixCaptureFiles
+    lock = tmp_path / '.ui-capture.lock'
+    lock.write_bytes(b'')
+    victim = tmp_path / 'victim'
+    victim.write_bytes(b'TEST_KEEP')
+    real_open, seen = os.open, []
+    def raced_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == '.ui-capture.lock':
+            seen.append(flags)
+            if flags & os.O_EXCL:
+                lock.unlink()
+                if replacement == 'symlink': lock.symlink_to(victim)
+                if replacement == 'hardlink': os.link(victim, lock)
+                raise FileExistsError(17, 'fixture concurrent create winner', path)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+    files = PosixCaptureFiles()
+    with files.directory(tmp_path) as directory:
+        monkeypatch.setattr(os, 'open', raced_open)
+        with pytest.raises((OSError, ValueError)):
+            with files.locked(directory):
+                pytest.fail('replaced lock must not be accepted')
+    assert len(seen) == 2, 'no retries or new lock identity after a missing/replaced winner'
+    assert not seen[1] & os.O_CREAT
+    assert victim.read_bytes() == b'TEST_KEEP'
