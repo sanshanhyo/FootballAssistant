@@ -25,10 +25,10 @@ test('stable display changes require two fresh distinct captures, never model or
     const notice = f.observe('b');
     assert.ok(notice && typeof notice.text === 'string');
     assert.deepEqual(notice.cards, []);
-    assert.match(notice.text, /显示|UI|采样/);
+    assert.match(notice.text, /显示|这页/);
     if (kind === 'current_page_attributes') {
-      assert.match(notice.text, /当前显示的属性数据已更新/);
-      assert.match(notice.text, /身份.*未知|身份.*未|未.*身份/);
+      assert.match(notice.text, /这页显示的属性变了/);
+      assert.match(notice.text, /还没弄清是谁的/);
       assert.doesNotMatch(notice.text, /球员能力变化|能力提升|能力下降/);
     }
     assert.equal(f.observe('b'), null);
@@ -126,4 +126,20 @@ test('duplicate suppression retains only a bounded recent fingerprint history', 
     assert.equal(f.observe('a', patch), null); assert.ok(f.observe('a', patch));
   }
   assert.ok(f.tracker.seen.length <= 32);
+});
+
+test('pet notices use short assistant-coach language without hiding uncertainty or inventing analysis', () => {
+  for (const kind of ['schedule', 'tactics', 'current_page_attributes']) {
+    const f = trackerFixture(kind); f.baseline(); f.observe('b');
+    const notice = f.observe('b');
+    assert.ok(notice.text.length < 70);
+    assert.doesNotMatch(notice.text, /我看不到|作为.*AI|接口|采样|UI|数据已更新|已计算|已算出/);
+    assert.match(notice.text, /还拿不准|还没弄清/);
+    // Technical limitations stay inspectable in Settings, not disguised as character knowledge.
+    assert.match(notice.metadata.limitations.join(), /无模型/);
+    assert.equal(notice.metadata.identity, null);
+    assert.equal(notice.metadata.individualAdviceAllowed, false);
+    if (kind === 'schedule') assert.match(notice.text, /换了页面/);
+    if (kind === 'current_page_attributes') assert.match(notice.text, /不能当成同一个球员的变化/);
+  }
 });

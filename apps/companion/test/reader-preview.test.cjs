@@ -109,3 +109,38 @@ test('repeated refresh does not overlap and mute fences a late changed frame', a
   replies[1]([]); await tick();
   assert.deepEqual(runtime.state().messages, []); await runtime.close();
 });
+
+test('service disconnect clears previews and connection, then recovery restores both without model calls', async () => {
+  let offline = false;
+  const calls = [];
+  const client = new RealReaderClient({ request: async (url, body) => {
+    calls.push([url, body]);
+    if (offline) throw new Error('TEST backend stopped');
+    if (url.endsWith('/business/status')) return { production_ready: false, reasons: [] };
+    if (url.endsWith('/ui-change-preview')) return { status: 'unavailable' };
+    const spec = PREVIEWS.find(item => url.endsWith(`/${item.id}`));
+    return envelope(spec);
+  } });
+  const runtime = new CompanionRuntime({ realClient: client }); runtime.setMode('real'); await tick();
+  assert.equal(runtime.state().connection.state, 'connected');
+  assert.equal(runtime.state().connection.backendId, 'local-service');
+  assert.ok(runtime.state().readerPreviews.every(card => card.status === 'available'));
+  offline = true; await runtime.refreshReaderPreviews();
+  assert.equal(runtime.state().connection.state, 'unavailable');
+  assert.match(runtime.state().connection.reason, /backend stopped/);
+  assert.ok(runtime.state().readerPreviews.every(card => card.statusReason === 'connection_failed' && !card.fields.length));
+  offline = false; await runtime.refreshReaderPreviews();
+  assert.equal(runtime.state().connection.state, 'connected');
+  assert.ok(runtime.state().readerPreviews.every(card => card.status === 'available'));
+  assert.ok(calls.every(([url, body]) => url.startsWith('/v1/reader/') && body === undefined));
+  await runtime.close();
+});
+
+test('unsupported endpoint is reachable service, not a network failure or unsupported page', async () => {
+  const client = new RealReaderClient({ request: async () => { throw Object.assign(new Error('old backend'), { code: 'unsupported' }); } });
+  const cards = await client.previews();
+  assert.ok(cards.every(card => card.transport === 'connected' && card.statusReason === 'endpoint_unavailable'));
+  const spec = PREVIEWS[0];
+  const unsupportedPage = new RealReaderClient({ request: async () => envelope(spec, { status: 'unavailable' }) });
+  assert.ok((await unsupportedPage.previews()).every(card => card.transport === 'connected' && card.statusReason === 'projection_unavailable'));
+});

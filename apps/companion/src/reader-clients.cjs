@@ -87,11 +87,20 @@ function businessMetadata(envelope = {}) {
     provenance: source, readiness: envelope,
   };
 }
+function asksManagedTeam(message) {
+  if (typeof message !== 'string') return false;
+  const value = message.replace(/\s+/g, '');
+  if (/适合|推荐|选择|挑选|该选|想去|开始执教/.test(value) || /\b(?:should|could|would|recommend)\b/i.test(message)) return false;
+  const chinese = /我(?:们)?(?:现在|目前|当前|这会儿|正在|在|是|到底|究竟|已经|还|刚|正|的){0,4}(?:执掌|执教|带队|管理|主教练|教练)|我(?:们)?(?:现在|目前|当前)?(?:在|是)?哪|我(?:们)?的(?:球队|队|俱乐部)/.test(value) &&
+    /球队|俱乐部|哪(?:一|个|支)?队|什么队|哪个队|我的队|我们的队/.test(value) && /哪(?:一|个|支|家)?(?:球队|俱乐部|队)|(?:球队|俱乐部|队)(?:叫|是什么|是谁|是哪|的?名字|名)|队名/.test(value);
+  return chinese || /\b(?:which|what)\s+(?:team|club)\b.*\b(?:i|we)\b.*\b(?:manag\w*|coach\w*)\b|\b(?:which|what)\s+is\s+(?:my|our)\s+(?:team|club)\b/i.test(message);
+}
 function adviceCapability(message, explicit) {
   if (explicit !== undefined) {
     if (!BUSINESS_CAPABILITIES.includes(explicit)) throw new Error('不支持的业务建议能力。');
     return explicit;
   }
+  if (asksManagedTeam(message)) return 'player_info';
   if (!/我的|当前(?:存档|球队|阵容|球员|赛程|战术|页面|界面)|这(?:个球员|个页面|一页|页)|(?:看看|查看|分析)球队|给我引援建议|my (?:team|squad|save)|current save/i.test(message)) return null;
   if (/赛程|轮换|schedule|fixture|congestion/i.test(message)) return 'schedule_analysis';
   if (/转会|引援|预算|transfer|signing/i.test(message)) return 'transfer_analysis';
@@ -169,10 +178,17 @@ class RealReaderClient {
   }
   async previews({ signal } = {}) {
     return Promise.all(PREVIEWS.map(async spec => {
-      try { return previewCard(spec, await this.request(`/v1/reader/${spec.id}`, undefined, { signal })); }
+      try {
+        const card = previewCard(spec, await this.request(`/v1/reader/${spec.id}`, undefined, { signal }));
+        return { ...card, transport: 'connected', statusReason: card.status === 'unknown' ? 'projection_unavailable' : null };
+      }
       catch (error) {
         if (signal?.aborted) throw error;
-        const card = previewCard(spec); card.metadata.limitations.push(error.message); return card;
+        const card = previewCard(spec);
+        card.transport = error.code === 'unsupported' ? 'connected' : 'unavailable';
+        card.statusReason = error.code === 'unsupported' ? 'endpoint_unavailable' : 'connection_failed';
+        card.error = error.message;
+        card.metadata.limitations.push(error.message); return card;
       }
     }));
   }

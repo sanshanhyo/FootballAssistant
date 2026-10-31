@@ -109,6 +109,14 @@ class CompanionRuntime extends EventEmitter {
       ]);
       if (!controller.signal.aborted && !this.closed && epoch === this.epoch) {
         this.readerPreviews = cards;
+        // Service reachability is independent of supported page projections and model configuration.
+        if (cards.some(card => card.transport === 'connected')) {
+          this.connectionController?.abort();
+          this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: null, readiness: this.realConnection?.readiness };
+        } else if (cards.length && cards.every(card => card.transport === 'unavailable')) {
+          this.connectionController?.abort(); this.uiChanges.reset();
+          this.realConnection = { state: 'unavailable', label: '真实模式 · 服务连接失败', reason: cards[0].error || '无法读取本机服务，请检查服务是否仍在运行。' };
+        }
         clearTimeout(this.previewExpiryTimer);
         const expiry = Math.min(...cards.filter(card => card.status === 'available').map(card => Date.parse(card.metadata?.sampledAt) + 15_001));
         if (Number.isFinite(expiry)) {
@@ -120,8 +128,11 @@ class CompanionRuntime extends EventEmitter {
           createdAt: new Date().toISOString(), sessionId: this.sessionId, epoch: this.epoch });
         this.changed();
       }
-    } catch {
-      if (!controller.signal.aborted && epoch === this.epoch) { this.readerPreviews = []; this.uiChanges.reset(); this.changed(); }
+    } catch (error) {
+      if (!controller.signal.aborted && epoch === this.epoch) {
+        this.readerPreviews = []; this.uiChanges.reset(); this.connectionController?.abort();
+        this.realConnection = { state: 'unavailable', label: '真实模式 · 服务连接失败', reason: error.message || '无法读取本机服务。' }; this.changed();
+      }
     } finally {
       if (this.previewController === controller) {
         this.previewController = null;
@@ -154,7 +165,7 @@ class CompanionRuntime extends EventEmitter {
   setMode(input) {
     const mode = typeof input === 'string' ? input : input?.mode;
     if (!['mock', 'real'].includes(mode)) throw new Error('模式无效。');
-    const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'unconfigured';
+    const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'local-service';
     this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
     return this.state();
   }

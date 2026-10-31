@@ -3,9 +3,9 @@
 // Pure, local-only display-change detector. No timers, requests, provider or game actions.
 // Scope hashes identify a capture layout, never a verified page/player/team identity.
 const TEXT = Object.freeze({
-  schedule: '当前显示的赛程数据已更新。请先核对当前页面；这不表示新增比赛或游戏日期推进。需要建议时，可以输入“看看我的赛程”。',
-  tactics: '当前显示的战术数据已更新。可以先核对阵型、风格和心态，再输入“分析我的战术”。这只是 UI 显示变化，不代表已确认的比赛事件。',
-  current_page_attributes: '当前显示的属性数据已更新。球员身份未知，不能判断是否为同一球员，也不表示球员能力发生变化。请先核对当前页面。',
+  schedule: '赛程这页和刚才不一样了。我还拿不准是换了页面，还是赛程真有调整。要一起看看接下来的安排吗？',
+  tactics: '战术这页和刚才不一样了。先核对一下阵型、风格和心态？光凭这页，我还拿不准场上会怎么踢。',
+  current_page_attributes: '这页显示的属性变了。不过我还没弄清是谁的，不能当成同一个球员的变化。',
 });
 const LIMITATIONS = Object.freeze([
   '本地、无模型的 UI 显示更新提示；不是比赛、伤病、转会或球员能力事件。',

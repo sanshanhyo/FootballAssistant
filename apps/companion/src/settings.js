@@ -134,7 +134,7 @@
     $('connection-reason').textContent = state.connection?.reason || (synthetic ? '所有游戏信息和回复均为模拟，未连接游戏或模型。' : '本机服务连接状态见上方；不会自动切换到模拟。');
     $('mode').value = state.mode;
     $('session-id').textContent = state.sessionId;
-    $('backend-id').textContent = state.connection?.backendId || '未知';
+    $('backend-id').textContent = synthetic ? '模拟适配器' : (!state.connection?.backendId || ['unconfigured', 'local-service'].includes(state.connection.backendId)) ? '本机服务（runtime 连接；非模型配置状态）' : state.connection.backendId;
     const capabilities = Array.isArray(state.capabilities) ? state.capabilities : [];
     $('reader-capabilities').textContent = capabilities.length ? capabilities.map(item => `${item.id || '未知能力'}${item.available === true ? item.synthetic ? '（模拟）' : '（可用）' : '（待确认）'}`).join(' · ') : '能力尚未确认';
     const limitations = $('connection-limitations'); limitations.replaceChildren();
@@ -147,6 +147,13 @@
     for (const card of state.readerPreviews || []) {
       const element = cardView(card);
       element.prepend(node('span', `badge ${card.status === 'stale' ? 'stale' : card.status === 'available' ? '' : 'unknown'}`, ({ available: '可用 · 部分 UI', stale: '过期 · 已隐藏旧值', unknown: '未知 / 当前页面不支持' })[card.status] || '未知'));
+      if (card.statusReason === 'connection_failed') {
+        element.firstChild.textContent = '未知 · 服务连接失败';
+        element.append(node('p', 'muted', card.error || '请检查本机服务是否仍在运行。'));
+      } else if (card.statusReason === 'endpoint_unavailable') {
+        element.firstChild.textContent = '未知 · 服务版本不支持此预览接口';
+        element.append(node('p', 'muted', card.error || '请更新本机服务。'));
+      }
       previews.append(element);
     }
     renderModeAvailability();
