@@ -144,7 +144,9 @@
     $('refresh-reader').disabled = synthetic;
     const previews = $('reader-previews'); previews.replaceChildren();
     if (!state.readerPreviews?.length) previews.append(node('p', 'empty', synthetic ? '模拟模式不读取真实页面。' : '未知 · 正在等待读取，或当前 Reader 不可用。'));
-    for (const card of state.readerPreviews || []) {
+    const previewSpecs = [{ id: 'schedule', title: '实验性 UI 赛程', profile: 'schedule' }, { id: 'tactics', title: '实验性 UI 战术', profile: 'tactics' }, { id: 'current-page-attributes', title: '当前页面属性 · 身份未知', profile: 'current_page_attributes' }];
+    for (const spec of previewSpecs) {
+      const card = (state.readerPreviews || []).find(item => item.id === spec.id) || { ...spec, status: 'unknown', fields: [], metadata: { partial: true, freshness: 'unknown' } };
       const element = cardView(card);
       element.prepend(node('span', `badge ${card.status === 'stale' ? 'stale' : card.status === 'available' ? '' : 'unknown'}`, ({ available: '可用 · 部分 UI', stale: '过期 · 已隐藏旧值', unknown: '未知 / 当前页面不支持' })[card.status] || '未知'));
       if (card.statusReason === 'connection_failed') {
@@ -153,6 +155,17 @@
       } else if (card.statusReason === 'endpoint_unavailable') {
         element.firstChild.textContent = '未知 · 服务版本不支持此预览接口';
         element.append(node('p', 'muted', card.error || '请更新本机服务。'));
+      }
+      const read = node('button', 'secondary-button', '读取当前页');
+      read.dataset.captureProfile = spec.profile;
+      const request = state.captureRequest;
+      read.disabled = synthetic || request?.status === 'requesting' || (request?.profile === spec.profile && ['pending', 'applied'].includes(request.status));
+      read.addEventListener('click', () => perform(() => api.setCaptureProfile(spec.profile)));
+      element.append(read);
+      if (request?.profile === spec.profile) {
+        const label = { requesting: '正在提交读取请求…', pending: '请求已提交，等待采样范围应用…', applied: '采样范围已应用，等待当前页的新鲜内容…', ready: '已确认：采样范围已应用，当前页内容新鲜。', failed: '读取请求失败；未确认生效。', unavailable: '读取暂不可用；未确认生效。', not_configured: '本机 Reader 控制未配置；未确认生效。' }[request.status] || '读取状态未知';
+        const feedback = node('p', 'muted', request.reason ? `${label} ${request.reason}` : label);
+        feedback.setAttribute('role', 'status'); element.append(feedback);
       }
       previews.append(element);
     }

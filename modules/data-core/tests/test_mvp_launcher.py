@@ -148,3 +148,17 @@ def test_matching_runtime_requires_authenticated_read_only_status(clean_env, mon
     monkeypatch.setattr(ReaderClient, "get", rejected)
     with pytest.raises(RuntimeError, match="cannot authenticate"):
         launcher.verify_runtime("http://127.0.0.1:17827/health", environment)
+
+
+def test_bridge_root_is_explicit_and_can_be_persisted_in_env_config(clean_env, monkeypatch, tmp_path):
+    import dotenv
+    monkeypatch.delenv('FOOTBALL_ASSISTANT_PRIVATE_ROOT', raising=False)
+    assert 'FOOTBALL_ASSISTANT_PRIVATE_ROOT' not in launcher.launch_environment()
+    configured = tmp_path / 'private bridge'
+    monkeypatch.setattr(dotenv, 'dotenv_values', lambda *args, **kwargs: {'FOOTBALL_ASSISTANT_PRIVATE_ROOT': str(configured)})
+    assert launcher.launch_environment()['FOOTBALL_ASSISTANT_PRIVATE_ROOT'] == str(configured)
+    selected = tmp_path / 'explicit'
+    assert launcher.launch_environment(bridge_private_root=str(selected))['FOOTBALL_ASSISTANT_PRIVATE_ROOT'] == str(selected)
+    link = tmp_path / 'linked'
+    link.symlink_to(configured)
+    assert launcher.launch_environment(bridge_private_root=str(link))['FOOTBALL_ASSISTANT_PRIVATE_ROOT'] == str(link)

@@ -5,6 +5,7 @@ const isSettings = process.argv.includes('--companion-window=settings');
 const common = {
   getState: () => invoke('get-state'),
   refreshReaderPreviews: () => invoke('refresh-reader-previews'),
+  setCaptureProfile: profile => invoke('set-capture-profile', profile),
   setMode: mode => invoke('set-mode', mode),
   cancelRequest: id => invoke('cancel-request', id),
   newConversation: () => invoke('new-conversation'),

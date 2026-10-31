@@ -44,14 +44,20 @@ def project_validated_tactics(texts, *, game, source, provenance, capture_text_s
     try:
         _require(game.get('product') == 'FM27' and game.get('build') == GAME_BUILD, 'unsupported_build')
         _require(source.get('platform') == 'macos-arm64', 'unsupported_platform')
-        _require(provenance.get('path_scope') == 'panel_absolute'
-                 and provenance.get('focus_root_path') is None
-                 and provenance.get('identity_scope') == 'capture_local_ui_path', 'unsupported_layout')
+        focused = (provenance.get('path_scope') == 'focus_relative'
+                   and provenance.get('focus_root_path') == PANEL_ROOT)
+        absolute = (provenance.get('path_scope') == 'panel_absolute'
+                    and provenance.get('focus_root_path') is None)
+        _require((focused or absolute) and provenance.get('identity_scope') == 'capture_local_ui_path',
+                 'unsupported_layout')
         paths = {}
         for item in texts:
             _require(item['path'] not in paths, 'duplicate_path')
             paths[item['path']] = item['text']
         refs = dict(title=TITLE_PATH, style_display=STYLE_PATH, mentality_display=MENTALITY_PATH, label=LABEL_PATH)
+        if focused:
+            result['profile_id'] = PROFILE_ID + '-focused'
+            refs = {key: 'focus' + path[len(PANEL_ROOT):] for key, path in refs.items()}
         _require(all(path in paths for path in refs.values()), 'missing_tactics_field')
         values = {key: _display(paths[path]) for key, path in refs.items()}
         _require(values['label'] == '队形', 'unsupported_title_or_locale')
@@ -70,13 +76,13 @@ def project_validated_tactics(texts, *, game, source, provenance, capture_text_s
             _require(descriptor[0].isalnum() and descriptor[-1].isalnum()
                      and any(unicodedata.category(c).startswith('L') for c in descriptor),
                      'invalid_formation_display')
-        field_refs = dict(formation_display=TITLE_PATH, style_display=STYLE_PATH, mentality_display=MENTALITY_PATH)
-        field_provenance = {key: {**provenance, 'ui_path': path, 'title_path': TITLE_PATH,
-                                 'profile_id': PROFILE_ID, 'game_build': GAME_BUILD,
+        field_refs = dict(formation_display=refs['title'], style_display=refs['style_display'], mentality_display=refs['mentality_display'])
+        field_provenance = {key: {**provenance, 'ui_path': path, 'title_path': refs['title'],
+                                 'profile_id': result['profile_id'], 'game_build': GAME_BUILD,
                                  'adapter_version': source['adapter_version'],
                                  'capture_text_sha256': capture_text_sha256}
                             for key, path in field_refs.items()}
-        fingerprint = hashlib.sha256(json.dumps(dict(profile=PROFILE_ID, game=game, source=source,
+        fingerprint = hashlib.sha256(json.dumps(dict(profile=result['profile_id'], game=game, source=source,
                     capture_text_sha256=capture_text_sha256), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         result.update(status='experimental_ui_tactics', reason='matched_pinned_layout',
                       formation_display=formation, style_display=style, mentality_display=mentality,

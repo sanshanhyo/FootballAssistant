@@ -173,6 +173,13 @@ class RealReaderClient {
     }
     return { metadata: meta, readiness: envelope, cards: fields.length ? [{ id: snapshot.snapshot_id, title: '已读取业务事实', metadata: meta, fields }] : [] };
   }
+  async setCaptureProfile(profile, { signal } = {}) {
+    if (!['schedule', 'current_page_attributes', 'tactics'].includes(profile)) throw new Error('不支持的页面读取类型。');
+    return this.request('/v1/reader/capture-profile', { profile }, { signal, timeoutMs: 5_000 });
+  }
+  async captureProfileStatus({ signal } = {}) {
+    return this.request('/v1/reader/capture-profile', undefined, { signal });
+  }
   async uiChangePreview({ signal } = {}) {
     return this.request('/v1/reader/ui-change-preview', undefined, { signal });
   }

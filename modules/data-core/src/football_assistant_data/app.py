@@ -28,6 +28,11 @@ from .registries import ProbeRequest, RegistryBatch, RegistryStore
 from .native_observers import NativeObserverReport, NativeObserverStore
 
 
+class CaptureProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    profile: Literal["schedule", "tactics", "current_page_attributes"]
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
@@ -118,6 +123,8 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
         app.state.business_snapshots = BusinessSnapshotStore()
+        from .ui_capture_control import UiCaptureController
+        app.state.ui_capture_control = UiCaptureController(settings.bridge_private_root)
         companion = None
         if enable_agent:
             companion = CompanionStore(settings.data_dir / "companion.sqlite")
@@ -191,6 +198,24 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     @app.get("/v1/reader/profile",dependencies=[Depends(authorized)])
     async def reader_profile():
         return project_display_profile(app.state.observations.reader_snapshot(0,MAX_FACTS))
+
+    @app.post("/v1/reader/capture-profile", dependencies=[Depends(authorized)])
+    async def request_capture_profile(request: Request):
+        from .ui_capture_control import _unique
+        from starlette.concurrency import run_in_threadpool
+        try:
+            raw = await request.body()
+            if len(raw) > 2048:
+                raise ValueError('request_too_large')
+            body = CaptureProfileRequest.model_validate(json.loads(raw, object_pairs_hook=_unique))
+        except (ValueError, TypeError):
+            raise HTTPException(422, detail={'code': 'invalid_capture_profile'}) from None
+        return await run_in_threadpool(app.state.ui_capture_control.access,
+            app.state.observations.reader_snapshot(0, MAX_FACTS), body.profile)
+
+    @app.get("/v1/reader/capture-profile", dependencies=[Depends(authorized)])
+    def capture_profile_status():
+        return app.state.ui_capture_control.access(app.state.observations.reader_snapshot(0, MAX_FACTS))
 
     @app.get("/v1/reader/schedule",dependencies=[Depends(authorized)])
     async def reader_schedule():

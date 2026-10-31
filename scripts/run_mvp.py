@@ -197,13 +197,13 @@ def launch_companion(path: Path, environment: dict[str, str]) -> None:
     print("Opened the FootballAssistant desktop companion.")
 
 
-def launch_environment(runtime_file: str | None = None) -> dict[str, str]:
+def launch_environment(runtime_file: str | None = None, bridge_private_root: str | None = None) -> dict[str, str]:
     # Match backend path precedence without importing model secrets from .env into Electron.
     from dotenv import dotenv_values
 
     values = dotenv_values(ROOT / ".env")
     environment = dict(os.environ)
-    for key in ("FOOTBALL_ASSISTANT_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE", "FOOTBALL_ASSISTANT_PORT"):
+    for key in ("FOOTBALL_ASSISTANT_DATA_DIR", "FOOTBALL_ASSISTANT_RUNTIME_FILE", "FOOTBALL_ASSISTANT_PORT", "FOOTBALL_ASSISTANT_PRIVATE_ROOT"):
         if key not in environment and values.get(key) is not None:
             environment[key] = values[key]
     def backend_path(value: str | Path) -> Path:
@@ -214,6 +214,13 @@ def launch_environment(runtime_file: str | None = None) -> dict[str, str]:
     # CLI paths belong to the invoking shell; environment/.env paths belong to backend cwd.
     selected = Path(runtime_file).expanduser().resolve() if runtime_file else backend_path(
         environment.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json"))
+    configured_root = bridge_private_root or environment.get("FOOTBALL_ASSISTANT_PRIVATE_ROOT")
+    if configured_root:
+        # Preserve symlinks for the controller to reject; never resolve them away.
+        candidate = Path(configured_root).expanduser()
+        if not candidate.is_absolute():
+            candidate = (Path.cwd() if bridge_private_root else ROOT) / candidate
+        environment["FOOTBALL_ASSISTANT_PRIVATE_ROOT"] = str(candidate.absolute())
     return {**environment, "FOOTBALL_ASSISTANT_DATA_DIR": str(data_dir),
             "FOOTBALL_ASSISTANT_RUNTIME_FILE": str(selected)}
 
@@ -223,11 +230,12 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Check the package, uv, and backend without starting anything.")
     parser.add_argument("--companion-path", type=Path, help="Explicit built .exe or .app (for example, dist-alpha/win-unpacked/FootballAssistant.exe).")
     parser.add_argument("--runtime-file", help="Explicit backend runtime file; otherwise use backend environment/.env configuration.")
+    parser.add_argument("--bridge-private-root", help="Explicit existing private bridge directory; otherwise use FOOTBALL_ASSISTANT_PRIVATE_ROOT from environment/.env. Never auto-discovered.")
     args = parser.parse_args()
 
     try:
         app_path = args.companion_path.expanduser().resolve() if args.companion_path else companion_path()
-        environment = launch_environment(args.runtime_file)
+        environment = launch_environment(args.runtime_file, args.bridge_private_root)
         url = backend_url(environment)
     except (RuntimeError, ValueError) as error:
         print(f"MVP check failed: {error}", file=sys.stderr)

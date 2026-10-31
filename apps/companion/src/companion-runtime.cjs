@@ -24,6 +24,7 @@ class CompanionRuntime extends EventEmitter {
     this.file = options.file;
     this.mockClient = options.mockClient || new MockReaderClient();
     this.realClient = options.realClient || new DisconnectedReaderClient();
+    this.captureRequest = null; this.captureController = null;
     this.uiChanges = new UiChangeTracker();
     this.readerPreviews = []; this.previewController = null; this.previewTimer = null; this.previewExpiryTimer = null;
     this.realConnection = null; this.connectionController = null;
@@ -71,6 +72,7 @@ class CompanionRuntime extends EventEmitter {
       preferences: { ...this.preferences },
       character: characterPresentation(this.characterId),
       connection: !mock && this.realConnection ? { ...this.realConnection, backendId: this.backendId } : { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
+      captureRequest: mock ? null : this.captureRequest,
       readerPreviews: mock ? [] : this.readerPreviews.map(card => card.status === 'available' && Date.now() - Date.parse(card.metadata?.sampledAt) > 15_000
         ? { ...card, status: 'stale', fields: [], metadata: { ...card.metadata, freshness: 'stale' } } : card),
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(this.realConnection?.readiness), synthetic: mock,
@@ -95,13 +97,50 @@ class CompanionRuntime extends EventEmitter {
     return this.writeQueue;
   }
   cancelAll() { for (const id of [...this.pending.keys()]) this.cancelRequest(id); }
+  async setCaptureProfile(profile) {
+    if (!['schedule', 'current_page_attributes', 'tactics'].includes(profile)) throw new Error('不支持的页面读取类型。');
+    if (this.mode !== 'real' || typeof this.realClient.setCaptureProfile !== 'function') throw new Error('请先连接真实本机服务。');
+    if (this.captureController) return this.state(); // One write at a time; repeated clicks do not queue.
+    this.previewController?.abort(); this.previewController = null;
+    clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer);
+    this.readerPreviews = []; this.uiChanges.reset();
+    const controller = this.captureController = new AbortController();
+    const epoch = this.epoch;
+    this.captureRequest = { profile, status: 'requesting', sequence: null, reason: null }; this.changed();
+    try {
+      const result = await this.realClient.setCaptureProfile(profile, { signal: controller.signal });
+      if (controller.signal.aborted || epoch !== this.epoch || this.closed) return this.state();
+      if (!result || !['pending', 'applied', 'unavailable', 'not_configured'].includes(result.status) || (result.profile !== profile && !(['unavailable', 'not_configured'].includes(result.status) && result.profile === null))) throw new Error('读取请求响应不匹配，尚未确认生效。');
+      if (['pending', 'applied'].includes(result.status) && !Number.isSafeInteger(result.sequence)) throw new Error('读取请求缺少确认序号，尚未确认生效。');
+      this.captureRequest = { profile, status: result.status, sequence: result.sequence, reason: result.reason || null };
+    } catch (error) {
+      if (!controller.signal.aborted && epoch === this.epoch && !this.closed) this.captureRequest = { profile, status: 'failed', sequence: null, reason: error.message };
+    } finally {
+      if (this.captureController === controller) {
+        this.captureController = null; this.changed(); this.refreshReaderPreviews();
+      }
+    }
+    return this.state();
+  }
   async refreshReaderPreviews() {
-    if (this.mode !== 'real' || typeof this.realClient.previews !== 'function' || this.closed) return this.state();
+    if (this.mode !== 'real' || typeof this.realClient.previews !== 'function' || this.closed || this.captureController) return this.state();
     if (this.previewController) return this.state();
     clearTimeout(this.previewTimer);
     const controller = this.previewController = new AbortController();
     const epoch = this.epoch;
     try {
+      if (this.captureRequest && ['pending', 'applied'].includes(this.captureRequest.status)) {
+        const expected = this.captureRequest;
+        const result = await this.realClient.captureProfileStatus({ signal: controller.signal });
+        if (controller.signal.aborted || epoch !== this.epoch || this.closed || expected !== this.captureRequest) return this.state();
+        if (result?.profile === null && result.sequence === null && ['unavailable', 'not_configured'].includes(result.status)) {
+          this.captureRequest = { ...expected, status: result.status, reason: result.reason || null };
+        } else if (result?.profile === expected.profile && result.sequence === expected.sequence && ['pending', 'applied', 'ready', 'unavailable', 'not_configured'].includes(result.status)) {
+          this.captureRequest = { ...expected, status: result.status, reason: result.reason || null };
+        }
+        if (this.captureRequest.status !== 'ready') { this.readerPreviews = []; this.changed(); return this.state(); }
+        // Fetch previews only AFTER applied + fresh-scope confirmation, never from a pre-switch parallel response.
+      }
       const [cards, change] = await Promise.all([
         this.realClient.previews({ signal: controller.signal }),
         typeof this.realClient.uiChangePreview === 'function' && this.proactivity > 0
@@ -131,6 +170,7 @@ class CompanionRuntime extends EventEmitter {
     } catch (error) {
       if (!controller.signal.aborted && epoch === this.epoch) {
         this.readerPreviews = []; this.uiChanges.reset(); this.connectionController?.abort();
+        if (this.captureRequest && ['pending', 'applied'].includes(this.captureRequest.status)) this.captureRequest = { ...this.captureRequest, status: 'failed', reason: error.message };
         this.realConnection = { state: 'unavailable', label: '真实模式 · 服务连接失败', reason: error.message || '无法读取本机服务。' }; this.changed();
       }
     } finally {
@@ -142,6 +182,7 @@ class CompanionRuntime extends EventEmitter {
     return this.state();
   }
   refreshConnection() {
+    this.captureController?.abort(); this.captureController = null; this.captureRequest = null;
     this.previewController?.abort(); this.previewController = null;
     clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.readerPreviews = []; this.uiChanges.reset();
     this.refreshReaderPreviews();
@@ -288,7 +329,7 @@ class CompanionRuntime extends EventEmitter {
     const before = this.memories.length; this.memories = this.memories.filter(item => item.id !== id);
     await this.persist(); this.changed(); return { deleted: before !== this.memories.length };
   }
-  async close() { clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.previewController?.abort(); this.closed = true; this.connectionController?.abort(); this.cancelAll(); await this.writeQueue; this.removeAllListeners(); }
+  async close() { this.captureController?.abort(); this.captureController = null; clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.previewController?.abort(); this.closed = true; this.connectionController?.abort(); this.cancelAll(); await this.writeQueue; this.removeAllListeners(); }
 }
 
 module.exports = { CompanionRuntime };

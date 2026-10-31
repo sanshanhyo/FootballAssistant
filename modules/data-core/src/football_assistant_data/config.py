@@ -30,6 +30,7 @@ class Settings:
     runtime_disconnect_seconds: float = 30
     stale_seconds: int = 300
     max_request_bytes: int = 131072
+    bridge_private_root: Path | None = None
 
     @property
     def model_configured(self) -> bool:
@@ -41,17 +42,19 @@ class Settings:
             load_dotenv(ROOT / ".env", override=False)
         data_dir = Path(os.environ.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data")).expanduser().resolve()
         runtime_file = Path(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json")).expanduser().resolve()
+        configured_root = os.environ.get('FOOTBALL_ASSISTANT_PRIVATE_ROOT')
+        bridge_private_root = Path(configured_root).expanduser().absolute() if configured_root else None
         port = int(os.environ.get("FOOTBALL_ASSISTANT_PORT", "17827"))
         if not 1 <= port <= 65535:
             raise ValueError("FOOTBALL_ASSISTANT_PORT must be 1..65535")
         if reader_only:
             # Independent reader needs no .env or model configuration.
-            return cls(data_dir=data_dir,runtime_file=runtime_file,port=port,
+            return cls(data_dir=data_dir,runtime_file=runtime_file,port=port,bridge_private_root=bridge_private_root,
                        token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
                        runtime_stale_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_STALE_SECONDS","10")),
                        runtime_disconnect_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_DISCONNECT_SECONDS","30")))
         return cls(
-            data_dir=data_dir, runtime_file=runtime_file, port=port,
+            data_dir=data_dir, runtime_file=runtime_file, port=port, bridge_private_root=bridge_private_root,
             token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
             base_url=os.environ.get("FOOTBALL_ASSISTANT_BASE_URL", "").strip(),
             model=os.environ.get("FOOTBALL_ASSISTANT_MODEL", "").strip(),
