@@ -23,6 +23,7 @@ async function loadSettings(userData) {
   return validateSettings(JSON.parse(await fs.readFile(file, 'utf8')));
 }
 async function detectGame(platform = process.platform, run = promisify(execFile)) {
+  if (!['darwin', 'win32'].includes(platform)) return { state: 'unknown', dataConnected: false, note: '当前平台不支持游戏进程检测。' };
   try {
     const result = platform === 'win32'
       ? await run('tasklist.exe', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 3000, maxBuffer: 1048576 })

@@ -3,3 +3,5 @@
 #model-config-form input { width: min(100%, 330px); min-width: 0; background: #181a1e; border: 1px solid #3b414a; color: #e2e6ec; border-radius: 8px; padding: 9px 11px; }
 #model-config-form .row-actions { flex-wrap: wrap; }
 @media (max-width: 600px) { #model-config-form input { width: 100%; } }
+
+#persona-path { overflow-wrap: anywhere; white-space: pre-wrap; }

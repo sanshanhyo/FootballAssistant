@@ -342,6 +342,7 @@
     $('page-title').textContent = PAGES[page][0]; $('page-description').textContent = PAGES[page][1];
     if (page === 'records') { refreshHistory(); refreshMemories(); }
     if (page === 'voice') refreshSpeech();
+    if (page === 'companion') refreshPersona();
     window.scrollTo({ top: 0 });
   }
   function onEvent(event) {
@@ -363,12 +364,28 @@
       if (activePage === 'records') { historyLoad += 1; scheduleRecords(); }
     }
   }
+  function renderPersona(value) {
+    if (!value) return;
+    const ready = value.status === 'ready';
+    $('persona-status').textContent = ready ? value.created ? '已首次创建人设文件。' : '人设文件可用；编辑保存后下次请求生效。' : '自定义人设不可用，当前使用默认人设。';
+    $('persona-path').textContent = typeof value.path === 'string' ? value.path : '尚无可用路径';
+    $('persona-note').textContent = value.external ? '外部服务模式：路径由已认证后端提供，应用无法确认本机安全位置，不自动打开。请在该后端所在机器编辑。' : !ready ? `请检查文件状态（${value.reason || '未知原因'}）；原文件不会被覆盖。` : value.canOpen ? '将在系统默认文本编辑器或文件管理器中打开。' : '当前文件位置无法安全确认，暂不自动打开。';
+    $('persona-open-file').disabled = !ready || value.canOpen !== true;
+    $('persona-open-folder').disabled = !ready || value.canOpen !== true;
+  }
+  async function refreshPersona() {
+    $('persona-open-file').disabled = true;
+    $('persona-open-folder').disabled = true;
+    const value = await perform(() => api.personaStatus(), { button: $('persona-refresh') });
+    if (value) renderPersona(value);
+    else { $('persona-status').textContent = '无法读取人设状态，请确认本机后台已连接后重试。'; $('persona-path').textContent = ''; $('persona-note').textContent = ''; }
+  }
   function renderBootstrap(value) {
     if (!value) return;
     const backend = { ready: '已连接', starting: '正在启动', stopped: '已停止', unavailable: '不可用', error: '启动失败' }[value.backend?.state] || '待确认';
     const game = { running: '检测到游戏进程', not_detected: '未检测到游戏进程', unknown: '游戏进程状态未知' }[value.game?.state] || '游戏进程状态未知';
     $('bootstrap-status').textContent = `后台服务：${backend}（${value.backend?.owned ? '由应用管理' : '外部或尚未启动'}） · ${game}。进程检测不代表数据已连接。`;
-    $('bootstrap-reader').textContent = value.readerPlatformSupported === false ? '此平台当前尚不支持真实游戏页面读取；可使用桌宠与模拟演示。' : value.bridgeConfigured ? 'Reader 已配置，真实页面读取结果请以当前页面预览为准。' : '尚未配置本机 Reader bridge；检测到游戏进程也不能读取页面。';
+    $('bootstrap-reader').textContent = value.readerPlatformSupported === false ? '此平台当前尚不支持真实游戏页面读取；可使用桌宠与模拟演示。' : value.bridgeConfigured === null ? '外部后端的 Reader 配置请以页面预览为准。' : value.bridgeConfigured ? 'Reader 已配置，真实页面读取结果请以当前页面预览为准。' : '尚未配置本机 Reader bridge；检测到游戏进程也不能读取页面。';
   }
   function renderUpdate(value) {
     if (!value) return;
@@ -426,6 +443,10 @@
       const result = await perform(() => api.saveMemory({ text }), { button: $('save-memory'), success: '已明确保存这条记忆。' });
       if (result !== undefined) { if (input.value.trim() === text) input.value = ''; refreshMemories(); }
     });
+    $('persona-refresh').addEventListener('click', refreshPersona);
+    $('persona-open-file').addEventListener('click', () => perform(() => api.openPersonaFile(), { button: $('persona-open-file') }));
+    $('persona-open-folder').addEventListener('click', () => perform(() => api.openPersonaFolder(), { button: $('persona-open-folder') }));
+    $('update-open-release').addEventListener('click', () => perform(() => api.openUpdateRelease(), { button: $('update-open-release') }));
     $('bootstrap-refresh').addEventListener('click', async () => renderBootstrap(await perform(() => api.bootstrapStatus(), { button: $('bootstrap-refresh') })));
     $('update-check').addEventListener('click', async () => renderUpdate(await perform(() => api.checkUpdate(), { button: $('update-check') })));
     $('update-download').addEventListener('click', async () => renderUpdate(await perform(() => api.downloadUpdate(), { button: $('update-download') })));
@@ -443,4 +464,5 @@
   perform(() => api.getModelConfig()).then(renderModelConfig);
   perform(() => api.updateStatus()).then(renderUpdate);
   perform(() => api.bootstrapStatus()).then(renderBootstrap);
+  refreshPersona();
 })();

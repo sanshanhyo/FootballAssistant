@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPref
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createPersonaAccess } = require('./persona-access.cjs');
 const { createCredentialConfig } = require('./credentials.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
 const { loadSettings, detectGame, BackendSupervisor } = require('./bootstrap.cjs');
@@ -27,6 +28,7 @@ app.on('second-instance', () => showPet());
 let backendSupervisor;
 let backendOptions;
 let credentials;
+let personaAccess;
 let savingModel = false;
 let updateController;
 let bootstrapStatus;
@@ -142,6 +144,10 @@ function trayImage() {
   return image;
 }
 function registerIpc() {
+  handle('persona-status', () => personaAccess.status());
+  handle('persona-open-file', () => personaAccess.open('file'));
+  handle('persona-open-folder', () => personaAccess.open('folder'));
+  handle('game-status', () => detectGame());
   handle('bootstrap-status', async () => {
     const backend = { ...backendSupervisor.status };
     if (backend.state === 'ready' && !(await backendSupervisor.healthy())) { backend.state = 'unavailable'; backend.message = '本机后端当前不可连接。'; }
@@ -273,6 +279,9 @@ async function main() {
   bootstrapStatus = { backend: await backendSupervisor.start(), game: await detectGame(), readerPlatformSupported: process.platform === 'darwin', bridgeConfigured: external || settings.backendEnvFile || !backendSupervisor.status.owned ? null : Boolean(settings.bridgePrivateRoot) };
   if (app.isPackaged && bootstrapStatus.backend.state !== 'ready') dialog.showErrorBox('FootballAssistant 后端未连接', bootstrapStatus.backend.message);
 
+  personaAccess = createPersonaAccess({ userData: app.getPath('userData'),
+    isManaged: () => app.isPackaged && !backendSupervisor.external && backendSupervisor.status.owned === true && backendSupervisor.status.state === 'ready',
+    getMetadata: () => request(runtimeFile, '/v1/agent/persona'), openPath: target => shell.openPath(target) });
   runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await runtime.init(); runtime.on('event', emit);
   registerIpc();

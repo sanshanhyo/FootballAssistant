@@ -1,14 +1,14 @@
 'use strict';
 
 const SHARED_IPC = [
-  'get-state', 'refresh-reader-previews', 'set-capture-profile', 'set-mode', 'cancel-request', 'new-conversation', 'set-proactivity', 'set-preferences',
+  'get-state', 'game-status', 'refresh-reader-previews', 'set-capture-profile', 'set-mode', 'cancel-request', 'new-conversation', 'set-proactivity', 'set-preferences',
   'simulate-event', 'get-history', 'clear-history', 'set-history-enabled', 'get-memories',
   'save-memory', 'delete-memory', 'open-settings', 'speech-capabilities', 'stop-speech', 'quit',
 ];
 const WINDOW_IPC = Object.freeze({
   pet: new Set([...SHARED_IPC, 'send-message', 'context-menu', 'transcribe', 'speak',
     'cancel-speech-operation', 'microphone-permission', 'drag-start', 'drag-move', 'drag-end', 'input-rects']),
-  settings: new Set([...SHARED_IPC, 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
+  settings: new Set([...SHARED_IPC, 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release', 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
 });
 
 function allowsWindowIpc({ role, trustedMainFrame, currentUrl, pageUrl }, method) {

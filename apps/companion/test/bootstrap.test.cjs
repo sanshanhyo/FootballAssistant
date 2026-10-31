@@ -48,3 +48,14 @@ test('failed readiness terminates only the launched child and never reports read
   const supervisor=new BackendSupervisor({userData:dir,resourcesPath:dir,packaged:true,runtimeFile:path.join(dir,'runtime.json'),settings:{backend:{port:17827}},timeoutMs:1,probe:async()=>{throw Error();},spawnProcess:()=>child});
   assert.equal((await supervisor.start()).state,'failed');assert.equal(killed,1);assert.equal(supervisor.child,null);
 });
+test('unsupported platform stays unknown without executing a command', async () => {
+  const result = await detectGame('linux', async () => { throw Error('must not execute'); });
+  assert.equal(result.state, 'unknown'); assert.equal(result.dataConnected, false);
+});
+test('trusted pet can read game status but not full bootstrap or model settings', () => {
+  const { allowsWindowIpc } = require('../src/companion-security.cjs');
+  const trusted = { role: 'pet', trustedMainFrame: true, currentUrl: 'file:///pet.html', pageUrl: 'file:///pet.html' };
+  assert.equal(allowsWindowIpc(trusted, 'game-status'), true);
+  for (const method of ['bootstrap-status', 'model-config-get', 'model-config-save']) assert.equal(allowsWindowIpc(trusted, method), false);
+  assert.equal(allowsWindowIpc({ ...trusted, trustedMainFrame: false }, 'game-status'), false);
+});

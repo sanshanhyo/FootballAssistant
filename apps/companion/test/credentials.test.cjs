@@ -66,7 +66,7 @@ test('schema migration is backed up, future/unknown fields are not overwritten',
   }
 });
 test('credentials IPC is settings main-frame only, never pet-accessible', () => {
-  for (const method of ['model-config-get', 'model-config-save']) {
+  for (const method of ['model-config-get', 'model-config-save', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release']) {
     const context = { role: 'settings', trustedMainFrame: true, currentUrl: 'file://settings', pageUrl: 'file://settings' };
     assert.equal(allowsWindowIpc(context, method), true);
     assert.equal(allowsWindowIpc({ ...context, role: 'pet' }, method), false);
@@ -92,6 +92,8 @@ test('settings UI clears typed key, sends only entered fields and reflects sessi
   const publicConfig = { ...input, apiKey: undefined, hasApiKey: false, secureStorageAvailable: false, storage: 'none' };
   delete publicConfig.apiKey;
   const api = {
+    personaStatus: async () => ({ ok: true, value: { status: 'ready', path: '/fixture/persona.md', canOpen: true, external: false } }),
+    openPersonaFile: async () => ({ ok: true, value: { opened: true } }),
     subscribe: () => () => {}, getState: async () => ({ ok: false, error: 'offline fixture' }), speechCapabilities: async () => ({ ok: true, value: {} }),
     getModelConfig: async () => ({ ok: true, value: publicConfig }), updateStatus: async () => ({ ok: true, value: { state: 'disabled' } }),
     bootstrapStatus: async () => ({ ok: true, value: { backend: { state: 'ready', owned: true }, game: { state: 'running' }, readerPlatformSupported: false } }),
@@ -103,6 +105,17 @@ test('settings UI clears typed key, sends only entered fields and reflects sessi
     setTimeout: () => 1, clearTimeout() {},
   });
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(element('persona-open-file').disabled, false);
+  assert.equal(element('persona-path').textContent, '/fixture/persona.md');
+  api.personaStatus = async () => ({ ok: true, value: { status: 'ready', path: '/external/persona.md', canOpen: false, external: true } });
+  await element('persona-refresh').handlers.click();
+  assert.equal(element('persona-open-file').disabled, true);
+  assert.equal(element('persona-open-folder').disabled, true);
+  assert.match(element('persona-note').textContent, /不自动打开/);
+  api.personaStatus = async () => ({ ok: false, error: 'offline' });
+  await element('persona-refresh').handlers.click();
+  assert.equal(element('persona-path').textContent, '');
+  assert.equal(element('persona-open-file').disabled, true);
   assert.match(element('bootstrap-reader').textContent, /尚不支持/);
   assert.match(element('update-status').textContent, /尚未配置可信/);
   element('model-api-key').value = input.apiKey;

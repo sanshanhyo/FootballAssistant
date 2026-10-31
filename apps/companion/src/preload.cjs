@@ -4,6 +4,7 @@ const invoke = (name, ...args) => ipcRenderer.invoke(`companion:${name}`, ...arg
 const isSettings = process.argv.includes('--companion-window=settings');
 const common = {
   getState: () => invoke('get-state'),
+  gameStatus: () => invoke('game-status'),
   refreshReaderPreviews: () => invoke('refresh-reader-previews'),
   setCaptureProfile: profile => invoke('set-capture-profile', profile),
   setMode: mode => invoke('set-mode', mode),
@@ -39,4 +40,4 @@ const pet = {
   dragStart: () => invoke('drag-start'), dragMove: () => invoke('drag-move'), dragEnd: () => invoke('drag-end'),
   inputRects: rects => ipcRenderer.send('companion:input-rects', rects),
 };
-contextBridge.exposeInMainWorld('companion', isSettings ? { ...common, bootstrapStatus: () => invoke('bootstrap-status'), updateStatus: () => invoke('update-status'), checkUpdate: () => invoke('update-check'), downloadUpdate: () => invoke('update-download'), getModelConfig: () => invoke('model-config-get'), saveModelConfig: input => invoke('model-config-save', input) } : { ...common, ...pet });
+contextBridge.exposeInMainWorld('companion', isSettings ? { ...common, personaStatus: () => invoke('persona-status'), openPersonaFile: () => invoke('persona-open-file'), openPersonaFolder: () => invoke('persona-open-folder'), openUpdateRelease: () => invoke('update-open-release'), bootstrapStatus: () => invoke('bootstrap-status'), updateStatus: () => invoke('update-status'), checkUpdate: () => invoke('update-check'), downloadUpdate: () => invoke('update-download'), getModelConfig: () => invoke('model-config-get'), saveModelConfig: input => invoke('model-config-save', input) } : { ...common, ...pet });

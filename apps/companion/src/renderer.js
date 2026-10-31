@@ -4,6 +4,11 @@
   const api = window.companion;
   const UI = window.CompanionUI;
   const Bubbles = window.CompanionBubbles;
+  const Scenes = window.CompanionScenes;
+  let gameStatus = { state: 'unknown' };
+  let gamePollTimer;
+  let sceneClosed = false;
+  const failedScenes = new Set();
   let state = null;
   let messages = new Map();
   const tools = new Map();
@@ -101,7 +106,7 @@
     const manual = preferences().expression;
     const expression = manual !== 'auto' ? manual : next;
     $('pet').dataset.expression = UI.EXPRESSIONS[expression] ? expression : 'idle';
-    // The current character has one static image; this label reports interaction state.
+    // Static discussion artwork is independent of this interaction-state label.
     $('expression-label').textContent = UI.EXPRESSIONS[next] || UI.EXPRESSIONS.idle;
   }
 
@@ -130,7 +135,10 @@
     pet.dataset.visualResource = character.visual?.resourceKey || '';
     const image = $('character-image');
     const visual = character.visual;
-    const source = visual?.kind === 'builtin-image' && typeof visual.source === 'string' ? new URL(visual.source, document.baseURI).href : '';
+    const scene = Scenes.selectScene({ game: gameStatus, messages: messages.values(), sessionId: state.sessionId, epoch: state.epoch });
+    pet.dataset.scene = failedScenes.has(scene) ? 'default' : scene;
+    const localSource = character.characterId === 'official.eckera' ? Scenes.sourceFor(scene, failedScenes) : visual?.source;
+    const source = visual?.kind === 'builtin-image' && typeof localSource === 'string' ? new URL(localSource, document.baseURI).href : '';
     if (source && image.src !== source) {
       image.hidden = false;
       $('character-visual-error').hidden = true;
@@ -151,6 +159,8 @@
     updateRects();
   });
   $('character-image').addEventListener('error', () => {
+    const scene = $('pet').dataset.scene;
+    if (scene && scene !== 'default') { failedScenes.add(scene); renderCharacter(); return; }
     $('character-image').hidden = true;
     $('character-visual-error').hidden = false;
     updateRects();
@@ -178,7 +188,6 @@
       $('message').value = ''; resetDraftNote(); resizeComposer();
     }
     state = next;
-    renderCharacter();
     if (Array.isArray(next.messages)) messages = new Map(next.messages.filter(item => UI.belongsToSession(item, next)).map(item => [item.id, item]));
     if (Array.isArray(next.tools)) { tools.clear(); next.tools.forEach(item => { if (UI.belongsToSession(item, next)) tools.set(`${item.requestId}:${item.tool.id}`, item); }); }
     if (Array.isArray(next.pendingRequests)) {
@@ -189,7 +198,7 @@
     }
     updateSendAvailability();
     $('message').placeholder = !next.canSend ? '后端未接入，暂不能发送' : next.connection?.state === 'disconnected' ? '连接已中断' : '输入消息…';
-    renderBubble(); renderTasks();
+    renderCharacter(); renderBubble(); renderTasks();
     if (next.storageWarning) showError(next.storageWarning);
   }
 
@@ -202,7 +211,7 @@
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') { onSpeechEvent(event.state); return; }
     if (event.type === 'message' && UI.belongsToSession(event.message, state)) {
-      messages.set(event.message.id, event.message); renderBubble();
+      messages.set(event.message.id, event.message); renderCharacter(); renderBubble();
       if (event.message.origin === 'proactive') { setExpression('notice'); clearTimeout(noticeTimer); noticeTimer = setTimeout(refreshExpression, 2500); }
     }
     if (event.type === 'tool' && UI.belongsToSession(event, state)) { tools.set(`${event.requestId}:${event.tool.id}`, event); renderTasks(); }
@@ -452,13 +461,22 @@
     document.addEventListener('toggle', updateRects, true);
     window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
     window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
-    window.addEventListener('beforeunload', () => { cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
+    window.addEventListener('beforeunload', () => { sceneClosed = true; clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
     const observer = new ResizeObserver(updateRects);
     [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
   }
 
+  async function pollGameStatus() {
+    if (sceneClosed || !api.gameStatus) return;
+    try { gameStatus = unwrap(await api.gameStatus()) || { state: 'unknown' }; }
+    catch { gameStatus = { state: 'unknown' }; }
+    if (sceneClosed) return;
+    renderCharacter();
+    gamePollTimer = setTimeout(pollGameStatus, 10000);
+  }
+
   let unsubscribe;
-  if (!api || !UI || !Bubbles) {
+  if (!api || !UI || !Bubbles || !Scenes) {
     $('error').textContent = '桌宠桥接未就绪，请从应用打开。';
     $('error').hidden = false; $('interaction-feedback').hidden = false;
     return;
@@ -467,5 +485,6 @@
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeechCapabilities();
+  pollGameStatus();
   updateRects();
 })();
