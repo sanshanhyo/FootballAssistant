@@ -106,17 +106,22 @@ internal static class WindowsSmokeReader
                     nodes++;
                     budget.Stage = "visible";
                     if (!backend.Visible(frame.Element, budget)) continue; // Hidden ancestors prune descendants.
-                    budget.Stage = "world_bounds";
-                    var bounds = backend.Bounds(frame.Element, budget);
-                    // Invalid parent bounds suppress parent text only; visible children may still be valid.
+                    // Bounds gate text only, not descendant traversal. Avoid a boxed Rect getter
+                    // and temporary GC root for non-text containers; retain every native gate.
                     budget.Stage = "text_type";
-                    if (bounds.PositiveFinite && backend.IsTextElement(frame.Element, budget))
+                    if (backend.IsTextElement(frame.Element, budget))
                     {
-                        budget.Stage = "text_getter";
-                        var text = backend.ReadText(frame.Element, 128, budget);
-                        textGetterSucceeded = true;
-                        if (text.Length > 128) throw new InvalidOperationException("UI adapter violated bounded string contract.");
-                        if (!string.IsNullOrWhiteSpace(text)) return Finish(text, "one_text");
+                        budget.Stage = "world_bounds";
+                        var bounds = backend.Bounds(frame.Element, budget);
+                        // Invalid parent bounds suppress parent text only; visible children may still be valid.
+                        if (bounds.PositiveFinite)
+                        {
+                            budget.Stage = "text_getter";
+                            var text = backend.ReadText(frame.Element, 128, budget);
+                            textGetterSucceeded = true;
+                            if (text.Length > 128) throw new InvalidOperationException("UI adapter violated bounded string contract.");
+                            if (!string.IsNullOrWhiteSpace(text)) return Finish(text, "one_text");
+                        }
                     }
                     budget.Stage = "child_count";
                     var count = backend.ChildCount(frame.Element, budget);

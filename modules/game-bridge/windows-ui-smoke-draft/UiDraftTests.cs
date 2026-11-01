@@ -5,9 +5,14 @@ UiSmokeResult Read(FakeBackend backend, Action? guard = null, Func<double>? elap
 var backend = new FakeBackend();
 var one = Read(backend);
 Check(one.Text == "fixture text" && one.Nodes == 2 && backend.ChildReads == 1, "lazy first eligible text, no eager sibling reads");
+Check(backend.BoundsReads == 1, "non-text root skips bounds; eligible text still checks bounds");
+backend = new FakeBackend { TextBoundsPositive = false };
+Check(Read(backend).Text is null && backend.TextReads == 0 && backend.BoundsReads == 8,
+    "text nodes with invalid bounds never invoke text getter");
 backend = new FakeBackend { RootVisible = false };
 Check(Read(backend).Text is null && backend.ChildReads == 0, "hidden ancestor prunes subtree");
-backend = new FakeBackend { RootBoundsPositive = false };
+Check(backend.BoundsReads == 0 && backend.TypeReads == 0, "hidden ancestor is pruned before type and bounds");
+backend = new FakeBackend { RootBoundsPositive = false, RootIsText = true };
 Check(Read(backend).Text == "fixture text", "invalid parent bounds do not hide valid descendant");
 backend = new FakeBackend();
 Check(Read(backend, elapsed: () => 101).StopReason == "time_budget" && backend.Calls == 0, "initial resolution inside time budget");
@@ -84,6 +89,8 @@ using (var nativeFixture = new NativeUiAdapterFixture())
     Check(nativeFixture.Invocations.Count(n => n == "get_text") == 1 &&
         nativeFixture.Invocations.All(n => new[] { "GetSortedPlayerPanels", "get_Count", "get_Item", "get_visualTree", "get_visible", "get_worldBound", "get_childCount", "get_text" }.Contains(n)),
         "only allowlisted getters and exactly one text getter invoked");
+    Check(nativeFixture.Invocations.Count(n => n == "get_worldBound") == 1,
+        "actual adapter skips non-text container bounds and still validates text bounds");
     Check(nativeFixture.LiveRoots > 0 && nativeFixture.RootCreates == nativeFixture.RootTargets,
         "each non-null runtime return rooted and exact target checked before later work");
     nativeBackend.Dispose();
@@ -158,17 +165,17 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
 {
     public string VerifiedModuleHash => new('b', 64);
     public void Dispose() { }
-    public bool RootVisible = true, RootBoundsPositive = true, ExcessiveText, NoText, EmptyText;
-    public int ResolutionCalls = 1, Calls, ChildReads, Children = 8;
+    public bool RootVisible = true, RootBoundsPositive = true, TextBoundsPositive = true, RootIsText, ExcessiveText, NoText, EmptyText;
+    public int ResolutionCalls = 1, Calls, ChildReads, BoundsReads, TypeReads, TextReads, Children = 8;
     private void Touch(UiSmokeBudget budget) { budget.BeforeNative(); Calls++; }
     public nint ResolveFirstPanelRoot(UiSmokeBudget budget)
     { for (var i = 0; i < ResolutionCalls; i++) Touch(budget); return 1; }
     public bool Visible(nint element, UiSmokeBudget budget) { Touch(budget); return element != 1 || RootVisible; }
     public UiSmokeBounds Bounds(nint element, UiSmokeBudget budget)
-    { Touch(budget); return new(0, 0, element != 1 || RootBoundsPositive ? 10 : 0, 10); }
-    public bool IsTextElement(nint element, UiSmokeBudget budget) { Touch(budget); return element != 1 && !NoText; }
+    { Touch(budget); BoundsReads++; return new(0, 0, (element == 1 ? RootBoundsPositive : TextBoundsPositive) ? 10 : 0, 10); }
+    public bool IsTextElement(nint element, UiSmokeBudget budget) { Touch(budget); TypeReads++; return (element != 1 || RootIsText) && !NoText; }
     public string ReadText(nint element, int maximumCodeUnits, UiSmokeBudget budget)
-    { Touch(budget); return EmptyText ? "" : ExcessiveText ? new string('x', 129) : "fixture text"; }
+    { Touch(budget); TextReads++; return EmptyText ? "" : ExcessiveText ? new string('x', 129) : "fixture text"; }
     public int ChildCount(nint element, UiSmokeBudget budget) { Touch(budget); return element == 1 ? Children : 0; }
     public nint Child(nint element, int index, UiSmokeBudget budget) { Touch(budget); ChildReads++; return index + 2; }
 }
