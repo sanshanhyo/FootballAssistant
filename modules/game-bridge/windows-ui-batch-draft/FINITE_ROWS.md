@@ -109,3 +109,5 @@ fixture bounds active-writer deferral to4096 attempts/10 seconds, propagates the
 writer task result, then unconditionally requires the complete final sequence32
 and no leaked temporary files. The production adapter must use its own approved
 producer/lifecycle and time bounds rather than copying a test's task predicate.
+
+Additional fixed tactics/next-match/schedule scopes and their page handoffs are documented in [PAGE_CAPTURES.md](PAGE_CAPTURES.md). Attribute manifest behavior above is unchanged.

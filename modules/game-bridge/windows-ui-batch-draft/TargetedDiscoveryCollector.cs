@@ -19,7 +19,7 @@ internal static class TargetedDiscoveryCollector
 
     // Fresh fixed-plan arrays. No caller-supplied paths or row indices.
     internal static string TargetFocus(string profile) => profile == "single" ? FocusRoot :
-        AttributeRowSelection.TryGet(profile, out var selected) ? selected.FocusRoot :
+        FiniteCaptureSelection.TryGet(profile, out var selected) ? selected.FocusRoot :
         throw new ArgumentException("Unknown fixed selection.");
     internal static int[][] CreateTargets(string profile = "single")
     {
@@ -30,11 +30,11 @@ internal static class TargetedDiscoveryCollector
             .Select(int.Parse).ToArray()).ToArray();
     }
     internal static bool ValidSelection(string profile, int panel, string focus) =>
-        profile == "single" || AttributeRowSelection.TryGet(profile, out var selected) &&
+        profile == "single" || FiniteCaptureSelection.TryGet(profile, out var selected) &&
         panel == 0 && focus == selected.FocusRoot;
     internal static string[] GetTargetPaths(string profile) => profile == "single" ?
         new[] { TitlePath, LabelPath, ValuePath } :
-        AttributeRowSelection.TryGet(profile, out var selected) ? selected.GetPaths() :
+        FiniteCaptureSelection.TryGet(profile, out var selected) ? selected.GetPaths() :
         throw new ArgumentException("Unknown fixed selection.");
     // Pure validation hook: it cannot activate a custom target or perform native calls.
     internal static bool IsAllowedTargetPath(string? path) => ValidTarget(path, FocusRoot);

@@ -73,8 +73,8 @@ internal static class FiniteRowsPolicyTests
                 "derived child authorization cannot move to replacement batch");
             Check(new FiniteRowsPolicy(extendedApproval with{Manifest="goalkeeper_rows0_3"}).ApprovalSha256!=extended.ApprovalSha256,
                 "manifest scope included in immutable approval digest");
-            var expectedProfiles=AttributeRowSelection.ManifestProfiles(manifestName);
-            var otherProfiles=AttributeRowSelection.ManifestProfiles(manifestName);otherProfiles[0]="modified";
+            var expectedProfiles=FiniteCaptureSelection.ManifestProfiles(manifestName);
+            var otherProfiles=FiniteCaptureSelection.ManifestProfiles(manifestName);otherProfiles[0]="modified";
             Check(expectedProfiles[0]=="goalkeeper_rows0_1","manifest arrays independently allocated");
             var totalRows=0;
             for(var index=0;index<count;index++) {
@@ -83,7 +83,7 @@ internal static class FiniteRowsPolicyTests
                 var chunk=extended.TryBegin(req,identity,now.AddMilliseconds(start),start)!;
                 Check(chunk is not null && chunk.SelectionProfile==expectedProfiles[index] && chunk.MaximumOperations==2048 && chunk.MaximumMilliseconds==1000,
                     "fixed profile order and unchanged per-chunk caps");
-                AttributeRowSelection.TryGet(chunk!.SelectionProfile,out var selection);
+                FiniteCaptureSelection.TryGet(chunk!.SelectionProfile,out var selection);
                 Check(chunk.RowStart==selection.RowStart && chunk.RowCount==selection.RowCount,"manifest supplies selected row interval");
                 totalRows+=chunk.RowCount;
                 Check(extended.Finish(chunk,2048,1000,true,now.AddMilliseconds(start+1000),start+1000),"complete fixed chunk");
@@ -92,6 +92,33 @@ internal static class FiniteRowsPolicyTests
             Check(totalRows==(count==18?35:12) && extended.TotalOperations==count*2048 && extended.TotalMilliseconds==count*1000,
                 "exact complete manifest rows and global bounded accounting");
         }
+        foreach(var pageManifest in new[]{"tactics_current","next_match_card","schedule_rows0_9"}) {
+            var pageApproval=Approval() with{Manifest=pageManifest};
+            var page=new FiniteRowsPolicy(pageApproval);
+            var chunks=pageManifest=="schedule_rows0_9"?10:1;
+            Check(page.MaximumDeclaredChunks==chunks && page.MaximumDeclaredOperations==chunks*2048 &&
+                page.MaximumDeclaredMilliseconds==chunks*1000,"page-specific fixed limits without raising per-chunk limits");
+            Check(new FiniteRowsPolicy(pageApproval with{Manifest="goalkeeper_rows0_3"}).ApprovalSha256!=page.ApprovalSha256,
+                "page scope cannot reuse attribute authorization digest");
+            for(var index=0;index<chunks;index++) {
+                var expected=chunks==10?"schedule_row"+index.ToString(System.Globalization.CultureInfo.InvariantCulture):pageManifest;
+                var time=index*3000d;
+                var req=new FiniteRowsRequest(4,pageApproval.BatchId,pageApproval.PageEpoch,index,page.NonceAt(index),page.ApprovalSha256);
+                var g=page.TryBegin(req,identity,now.AddMilliseconds(time),time)!;
+                Check(g is not null && g.SelectionProfile==expected && g.MaximumOperations==2048 && g.MaximumMilliseconds==1000,
+                    "one exact page/row selected in declared order");
+                Check(page.Finish(g!,2048,1000,true,now.AddMilliseconds(time+1000),time+1000),"page chunk acknowledges only complete success");
+                Check(page.Terminal==(index==chunks-1),"one-shot page terminal immediately; schedule terminates after ten");
+            }
+            Check(page.TotalOperations==chunks*2048 && page.TotalMilliseconds==chunks*1000 &&
+                page.TryBegin(new(4,pageApproval.BatchId,pageApproval.PageEpoch,0,page.NonceAt(0),page.ApprovalSha256),identity,now.AddSeconds(40),40000) is null,
+                "no page replay/implicit additional row after fixed completion");
+            var wrongOrder=new FiniteRowsPolicy(pageApproval);
+            Check(wrongOrder.TryBegin(new(4,pageApproval.BatchId,pageApproval.PageEpoch,1,pageApproval.SecondNonce,wrongOrder.ApprovalSha256),identity,now,0) is null && wrongOrder.Terminal,
+                "page manifest cannot start at later chunk");
+        }
+        foreach(var invalidManifest in new[]{"tactics","schedule_row0","schedule_rows0_10","next_match","profile_custom"})
+            Reject(Approval() with{Manifest=invalidManifest});
         var cap=new FiniteRowsPolicy(Approval());var active=cap.TryBegin(Request(cap),identity,now,0)!;
         Check(!cap.CheckActive(active,now.AddSeconds(1),1000) && cap.Terminal,"soft elapsed gate checked every child boundary");
     }

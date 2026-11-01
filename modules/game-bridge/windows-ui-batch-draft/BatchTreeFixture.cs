@@ -158,6 +158,45 @@ sealed class BatchTreeFixture : IDisposable
         // An extra available but unapproved row exists; not fetched even at category end.
         EnsurePath(CategoryRow(category,labels.Length));
     }
+    internal const string TacticsPageRoot = "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0";
+    internal const string NextMatchPageRoot = "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2";
+    internal const string SchedulePageRoot = "0/4/0/0/0/0/0/1/0/0/0/0/0/0/1/0/5";
+    internal static string PageFocus(string profile) => profile switch
+    { "tactics_current" => TacticsPageRoot, "next_match_card" => NextMatchPageRoot,
+       _ when profile.StartsWith("schedule_row",StringComparison.Ordinal) => SchedulePageRoot,
+       _ => throw new ArgumentException() };
+    internal static string[] PagePaths(string profile)
+    {
+        if(profile=="tactics_current") return new[] { TacticsPageRoot+"/0/0/0/0/1/0/0/1/0",TacticsPageRoot+"/0/0/1/0/0/0/0/0/0",
+            TacticsPageRoot+"/0/0/2/0/0/1/0/1",TacticsPageRoot+"/2/0/0/0/0/0" };
+        if(profile=="next_match_card") return new[] {NextMatchPageRoot+"/0/0/0/0/0/0/0",NextMatchPageRoot+"/0/0/0/0/0/1/0/1/0/0",
+            NextMatchPageRoot+"/0/0/0/0/0/1/0/1/1/0/0/0/0"};
+        if(!profile.StartsWith("schedule_row",StringComparison.Ordinal) || !int.TryParse(profile[12..],out var row) || row is <0 or >9)
+            throw new ArgumentException();
+        var prefix=SchedulePageRoot+"/0/0/0/0/0/0/0/0/1/1/0/1/0/0/0/2/0/0/"+row;
+        return new[] {SchedulePageRoot+"/0/0/0/0/0/0/0/0/1/1/0/0/0/0/0",prefix+"/0/0/0/0",
+            prefix+"/1/0/0/0/0/0/0/0/0/0/0/1",prefix+"/2/0/0/0",prefix+"/4/0/0/0/0/0/0/1"};
+    }
+    internal void BuildPageSelection(string profile)
+    {
+        Children[103]=new();
+        if(profile.StartsWith("schedule_row",StringComparison.Ordinal))
+        {
+            for(var row=0;row<10;row++)
+            {
+                var paths=PagePaths("schedule_row"+row);
+                var values=new[] {"赛程安排","30-2-28","TEST OPPONENT "+row,"主","TEST FRIENDLY"};
+                for(var i=0;i<paths.Length;i++){EnsurePath(paths[i]);SetNodeText(paths[i],values[i]);}
+            }
+        }
+        else
+        {
+            var paths=PagePaths(profile);
+            var values=profile=="tactics_current" ? new[] {"均衡4-4-2 - 控球","控球","均衡","队形"} :
+                new[] {"下一场比赛（2030-2-28）","TEST OPPONENT","TEST FRIENDLY"};
+            for(var i=0;i<paths.Length;i++){EnsurePath(paths[i]);SetNodeText(paths[i],values[i]);}
+        }
+    }
     private readonly List<nint> allocations = new();
     private readonly Dictionary<nint, nint> names = new();
     private readonly Dictionary<(nint, string, int), nint> methodIds = new();

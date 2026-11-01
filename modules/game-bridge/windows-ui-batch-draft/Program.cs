@@ -20,3 +20,5 @@ FiniteRowsCompositionTests.Run();
 AttributeCategoryTests.Run();
 
 FinitePrivateFileWriterTests.Run();
+
+PageDiscoveryTests.Run();

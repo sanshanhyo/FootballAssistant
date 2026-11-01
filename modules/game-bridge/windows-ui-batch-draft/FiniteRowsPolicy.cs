@@ -39,8 +39,8 @@ internal sealed class FiniteRowsPolicy
             throw new ArgumentException("Invalid finite goalkeeper-row manifest.");
         identityPolicy = new WindowsSmokePolicy(approval.Context);
         Approval = approval;
-        profiles = AttributeRowSelection.ManifestProfiles(approval.Manifest);
-        if (profiles.Length is < 1 or > MaximumChunks || profiles.Any(profile => !AttributeRowSelection.TryGet(profile,out _)))
+        profiles = FiniteCaptureSelection.ManifestProfiles(approval.Manifest);
+        if (profiles.Length is < 1 or > MaximumChunks || profiles.Any(profile => !FiniteCaptureSelection.TryGet(profile,out _)))
             throw new ArgumentException("Invalid fixed manifest profiles.");
         nonces = Enumerable.Range(0,profiles.Length).Select(index => DeriveNonce(approval,index)).ToArray();
         if (nonces.Any(nonce => nonce == Guid.Empty) || nonces.Distinct().Count() != nonces.Length)
@@ -49,7 +49,7 @@ internal sealed class FiniteRowsPolicy
             .GetBytes(JsonSerializer.Serialize(approval)))).ToLowerInvariant();
         lastUtc = approval.CreatedAt;
     }
-    internal static bool ValidManifest(string? name) => name is "goalkeeper_rows0_3" or "profile_rows0_3" or "profile_all_rows";
+    internal static bool ValidManifest(string? name) => name is "goalkeeper_rows0_3" or "profile_rows0_3" or "profile_all_rows" or "tactics_current" or "next_match_card" or "schedule_rows0_9";
     // First two operator-approved nonces remain unchanged. Additional fixed chunks are
     // deterministic from immutable manifest identifiers; no caller-supplied nonce array.
     private static Guid DeriveNonce(FiniteRowsApproval approval,int index)
@@ -103,7 +103,7 @@ internal sealed class FiniteRowsPolicy
             manifestWindow = window;
             started = now; startedMonotonic = monotonicMilliseconds;
             var profile = profiles[request.ChunkIndex];
-            if (!AttributeRowSelection.TryGet(profile,out var selection)) { terminal = true; return null; }
+            if (!FiniteCaptureSelection.TryGet(profile,out var selection)) { terminal = true; return null; }
             active = new(request,window.Value,selection.RowStart,selection.RowCount,ChunkOperations,ChunkMilliseconds,profile);
             return active;
         }

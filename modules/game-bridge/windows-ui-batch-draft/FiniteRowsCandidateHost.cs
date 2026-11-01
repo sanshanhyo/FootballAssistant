@@ -109,7 +109,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             session_id = context.Session, bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash,
             exe_sha256 = VerifiedWindowsBuild.ExecutableSha256, window_class = context.ConfirmedWindowClass,
             entry_tid = context.EntryThread, finite_rows_enabled_by_default = false, raw_diagnostics_only = true,
-            allowed_scopes = new[] { "goalkeeper_rows0_3", "profile_rows0_3", "profile_all_rows" }, maximum_chunks = 18, cooldown_ms = 2000,
+            allowed_scopes = new[] { "goalkeeper_rows0_3", "profile_rows0_3", "profile_all_rows", "tactics_current", "next_match_card", "schedule_rows0_9" }, maximum_chunks = 18, cooldown_ms = 2000,
             per_chunk_ms = 1000, per_chunk_units = 2048, total_ms = 18000, total_units = 36864,
             page_identity_verified = false, page_epoch_is_operator_assertion = true });
         WriteState(); _ = Task.Run(WriteEvidence);
@@ -209,14 +209,14 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
         var grant = policy.TryBegin(request, MainThreadGuard.ReadWindowsScanIdentity(context.EntryThread), startedUtc, startedMono);
         if (grant is null) { Volatile.Write(ref lastFailedChunk, index); Fail("finite_admission_failed_no_retry"); return; }
         DiscoveryPolicy? child = null; DiscoveryResult? result = null;
-        string[] labels = Array.Empty<string>(); var valid = false; string? errorType = null; string? category = null;
+        string[] labels = Array.Empty<string>(); var valid = false; string? errorType = null; string? category = null; string? sourceKind = null;
         DateTimeOffset captureStartedUtc = DateTimeOffset.UtcNow, captureFinishedUtc;
         try
         {
-            if (!AttributeRowSelection.TryGet(grant.SelectionProfile, out var selection) ||
+            if (!FiniteCaptureSelection.TryGet(grant.SelectionProfile, out var selection) ||
                 selection.RowStart != grant.RowStart || selection.RowCount != grant.RowCount)
                 throw new InvalidOperationException("Finite selection profile mismatch.");
-            category = selection.Category;
+            category = selection.Category; sourceKind = selection.Kind;
             child = new DiscoveryPolicy(new(context, nonce, 0, selection.FocusRoot,
                 policy.Approval.CreatedAt, policy.Approval.ExpiresAt, true, grant.SelectionProfile),
                 () => policy.CheckActive(grant, DateTimeOffset.UtcNow, Monotonic(), cancel.Token), requiredWindow: grant.Window);
@@ -224,9 +224,14 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             captureStartedUtc = DateTimeOffset.UtcNow;
             result = ready.RunDiscoveryOnce(child, token, cancel.Token);
             captureFinishedUtc = DateTimeOffset.UtcNow;
-            valid = result is not null && GroupedDiscoveryValidation.TryValidate(result, grant.SelectionProfile, out labels);
-            if (valid && (seenLabels.Count + labels.Length > 35 ||
-                labels.Any(label => seenLabels.Contains((category!, label))))) valid = false;
+            if (sourceKind == "attributes")
+            {
+                valid = result is not null && GroupedDiscoveryValidation.TryValidate(result, grant.SelectionProfile, out labels);
+                if (valid && (seenLabels.Count + labels.Length > 35 ||
+                    labels.Any(label => seenLabels.Contains((category!, label))))) valid = false;
+            }
+            else valid = (sourceKind is "tactics" or "next_match" or "schedule") &&
+                result is not null && PageDiscoveryValidation.TryValidate(result, grant.SelectionProfile);
         }
         catch (Exception error)
         {
@@ -238,7 +243,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
         var accepted = policy.Finish(grant, operations, elapsed, valid, DateTimeOffset.UtcNow, Monotonic());
         if (accepted)
         {
-            foreach (var label in labels) seenLabels.Add((category!, label));
+            if (sourceKind == "attributes") foreach (var label in labels) seenLabels.Add((category!, label));
             Volatile.Write(ref lastSuccessfulChunk, index);
             if (policy.Terminal) Volatile.Write(ref outcome, "completed");
         }
@@ -257,7 +262,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash, entry_tid = context.EntryThread,
             callback_tid = platform.ThreadId, batch_id = policy.Approval.BatchId, page_epoch = policy.Approval.PageEpoch,
             page_epoch_is_operator_assertion = true, chunk_index = index, nonce, selection_profile = grant.SelectionProfile,
-            manifest_name = policy.Approval.Manifest, category_key = category, row_start = grant.RowStart, row_count = grant.RowCount,
+            manifest_name = policy.Approval.Manifest, source_kind = sourceKind, category_key = category, row_start = grant.RowStart, row_count = grant.RowCount,
             declared_chunks = policy.MaximumDeclaredChunks, declared_units = policy.MaximumDeclaredOperations,
             declared_ms = policy.MaximumDeclaredMilliseconds,
             capture_started_at = captureStartedUtc, capture_finished_at = captureFinishedUtc,

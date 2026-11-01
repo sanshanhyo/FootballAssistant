@@ -26,13 +26,13 @@ internal static class FiniteRowsCandidateConfigurationTests
         foreach (var (field,value) in new (string,object)[]
         {
             ("schema_version",3), ("schema_version",4.5), ("mode","ui_discovery_once"),
-            ("mode","goalkeeper_rows0_4"), ("stable_profile_asserted",false), ("stable_profile_asserted","true"),
+            ("mode","goalkeeper_rows0_4"), ("mode","schedule_rows0_10"), ("mode","schedule_row0"), ("stable_profile_asserted",false), ("stable_profile_asserted","true"),
             ("first_nonce",Guid.Empty.ToString("D")), ("page_epoch",Guid.Empty.ToString("D")),
             ("window_class","OtherWindow"), ("pid",0), ("pid",12.5), ("bridge_sha256",new string('A',64)),
             ("expires_at",at.AddSeconds(121).ToString("O")), ("requested_at","2026-01-01T00:00:00")
         })
         { var invalid = Input(); invalid[field] = value; Reject(() => Parse(invalid), "invalid " + field); }
-        foreach(var scope in new[]{"profile_rows0_3","profile_all_rows"}) {
+        foreach(var scope in new[]{"profile_rows0_3","profile_all_rows","tactics_current","next_match_card","schedule_rows0_9"}) {
             var expanded=Input();expanded["mode"]=scope;
             var parsed=Parse(expanded);var approved=FiniteRowsCandidateConfiguration.TryApproval(parsed,context,at)!;
             Check(parsed.Manifest==scope && approved.Manifest==scope && approved.ModeEnabled,"request mode exactly binds immutable manifest");

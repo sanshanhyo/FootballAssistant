@@ -30,7 +30,9 @@ internal sealed class DiscoveryPolicy
         ArgumentNullException.ThrowIfNull(approval);
         ArgumentNullException.ThrowIfNull(approval.Context);
         if (approval.Nonce == Guid.Empty || approval.PanelIndex is < 0 or > 31 ||
-            !ValidPath(approval.FocusPath) ||
+            !(ValidPath(approval.FocusPath) ||
+              (approval.SelectionProfile == "tactics_current" && approval.PanelIndex == 0 &&
+               approval.FocusPath == FiniteCaptureSelection.TacticsRoot)) ||
             !TargetedDiscoveryCollector.ValidSelection(approval.SelectionProfile, approval.PanelIndex, approval.FocusPath) || approval.ExpiresAt <= approval.CreatedAt ||
             approval.ExpiresAt - approval.CreatedAt > TimeSpan.FromSeconds(120) ||
             approval.Context.Session is null || approval.Context.Session.Length > 128)
