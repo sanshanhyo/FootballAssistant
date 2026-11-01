@@ -12,8 +12,9 @@ mem.Q(club + 0xC8, 0x20008000); mem.S(0x20008004, "Test Club");
 var reader = new ManagerCandidateReader(mem, img);
 var hit = reader.Read(406); if (hit.Candidates.Count != 1 || hit.Candidates[0].Uid != 123 || hit.Candidates[0].Name != "Test Manager") throw new Exception("candidate");
 if (reader.Read(407).Candidates.Count != 0) throw new Exception("explicit selection");
+var all = reader.ReadAll(); if (all.Candidates.Count != 1 || all.Candidates[0].ClubUid != 406 || all.Candidates[0].ClubName != "Test Club") throw new Exception("all candidates");
 mem.MutateOnSecondArrayRead = true; if (reader.Read(406).Status != "unavailable") throw new Exception("changed array");
-Console.WriteLine("3 synthetic checks passed");
+Console.WriteLine("4 synthetic checks passed");
 sealed class Fake : IReadOnlyMemory
 {
     readonly Dictionary<long, byte> data = new(); int arrayReads; public bool MutateOnSecondArrayRead;

@@ -479,6 +479,35 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelUnavailable as error:
                 raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
 
+        @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
+        async def auto_calendar_advice(body: ChatRequest):
+            from .offseason_snapshot import read_offseason
+            from .calendar_selection import choose_calendar_scope
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            if not configured:
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "当前无法读取球队候选和游戏日期。"}
+            executable = Path(configured)
+            initial = await read_offseason(executable, 0, 0)
+            scope = choose_calendar_scope(initial, body.message)
+            if scope is None:
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "未能唯一确认所问球队候选或当前游戏日期，请明确球队名称或俱乐部 UID。"}
+            envelope = await read_offseason(executable, scope["club_uid"], 0, scope["start"], scope["end"])
+            verified = choose_calendar_scope(envelope, body.message)
+            if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}
+            try:
+                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"])
+                if result.get("status") == "partial":
+                    result["reply"] = "按经理关联球队候选读取，尚未确认当前执教身份。\n" + result["reply"]
+                    result["selection"] = {key: scope[key] for key in ("club_uid", "club_name", "selection", "start", "end")}
+                return result
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+
         @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
         async def ui_advice(body: BusinessAdviceRequest):
             # Only the server-owned channel supplies data. Request bodies cannot

@@ -36,7 +36,7 @@ async function request(runtimeFile, endpoint, body, options = {}) {
   if (raw && (endpoint !== '/v1/reader/windows-discovery/import' || typeof options.rawJson !== 'string' || body !== undefined)) throw new Error('原始 JSON 仅用于固定诊断导入接口。');
   const deleting = endpoint === '/v1/reader/windows-discovery' && options.method === 'DELETE';
   if (options.method !== undefined && !deleting) throw new Error('不支持的服务接口或请求方法。');
-  const post = endpoint === '/v1/reader/windows-discovery/import' || (endpoint === '/v1/reader/capture-profile' && body !== undefined) || ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice', '/v1/agent/calendar-advice'].includes(endpoint);
+  const post = endpoint === '/v1/reader/windows-discovery/import' || (endpoint === '/v1/reader/capture-profile' && body !== undefined) || ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice', '/v1/agent/calendar-advice', '/v1/agent/auto-calendar-advice'].includes(endpoint);
   const get = ['/v1/reader/match', '/v1/reader/windows-discovery', '/v1/agent/persona', '/v1/reader/capture-profile', '/v1/reader/ui-change-preview', '/v1/reader/schedule', '/v1/reader/tactics', '/v1/reader/current-page-attributes', '/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || isCalendarEndpoint(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
   if ((!post && !get && !deleting) || (post !== (body !== undefined || raw))) throw new Error('不支持的服务接口或请求方法。');
   if (endpoint === '/v1/reader/windows-discovery/import' && Buffer.byteLength(raw ? options.rawJson : JSON.stringify(body), 'utf8') > 32768) throw new Error('诊断导入超过 32 KiB。');

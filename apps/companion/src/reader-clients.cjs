@@ -273,6 +273,21 @@ class RealReaderClient {
         metadata: { ...meta, sampledAt: result.context?.observed_at ?? null, selectedClubUid: clubUid,
           limitations: [...meta.limitations, `未加载范围：${result.context?.unloaded ?? '未知'}；未知项：${result.context?.unknown ?? '未知'}。`] } };
     }
+    if (typeof message === 'string' && /(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) {
+      const meta = { source: 'native_calendar_candidate', synthetic: false, freshness: 'unknown', partial: true,
+        limitations: ['仅包含已加载赛程候选，可能不完整；经理关联候选不代表已确认当前执教球队。'] };
+      const result = await this.request('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null }, { signal, timeoutMs: 120_000 });
+      const selection = result?.selection, context = result?.context;
+      if (result?.status !== 'partial' || context?.status !== 'partial' || !selection ||
+          context.selected_club_uid !== selection.club_uid || context.start !== selection.start || context.end !== selection.end ||
+          !['named_candidate', 'unique_candidate_not_active_confirmed'].includes(selection.selection) ||
+          typeof result.reply !== 'string' || !result.reply.trim()) {
+        return { text: typeof result?.reply === 'string' && result.status === 'unavailable' ? result.reply : '赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
+      }
+      return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [],
+        metadata: { ...meta, sampledAt: context.observed_at ?? null, selectedClubUid: selection.club_uid,
+          limitations: [...meta.limitations, `未加载范围：${context.unloaded ?? '未知'}；未知项：${context.unknown ?? '未知'}。`] } };
+    }
     if (/(比分|比赛情况|比赛怎么样|比赛进展|score)/i.test(message)) {
       const view = matchView(await this.match({ signal }));
       if (!view) return { text: '当前没有可用的新鲜比赛快照。', conversationId, cards: [],

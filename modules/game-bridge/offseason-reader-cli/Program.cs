@@ -34,7 +34,7 @@ try
         }
         var team = clubUid > 0 ? TeamCandidateLookup.Read(pid, clubUid) : null;
         var schedule = clubUid > 0 ? ScheduleCandidateLookup.Read(pid, clubUid) : null;
-        var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid) : null;
+        var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid) : ManagerCandidateLookup.ReadAll(pid);
         var tactic = clubUid > 0 ? TacticCandidateLookup.Read(pid, clubUid) : null;
         var calendar = args.Length == 4 ? FixtureCalendarLookup.Read(pid, clubUid, start, finish) : null;
         if (date.Status != "experimental" && person?.Status != "experimental" &&

@@ -48,7 +48,8 @@ public sealed class ManagerCandidateReader
         if (!V(team, 0x04CE1108)) return ("unknown_team", null);
         long club = I64(team + 0x30); if (club == 0) return ("no_club", null);
         if (!V(club, 0x04CDA1F8)) return ("unknown_club", null);
-        uint clubUid = U32(club + 0x0C); if (clubUid != target) return ("other_club", null);
+        uint clubUid = U32(club + 0x0C); if (clubUid is 0 or uint.MaxValue) return ("unknown_club", null);
+        if (target != 0 && clubUid != target) return ("other_club", null);
         uint uid = U32(person + 0x0C); if (uid is 0 or uint.MaxValue) throw new InvalidOperationException();
         string first = Name(person, 0x50), last = Name(person, 0x58), common = Name(person, 0x60);
         string name = string.IsNullOrWhiteSpace(common) ? $"{first} {last}".Trim() : common;
@@ -61,6 +62,12 @@ public sealed class ManagerCandidateReader
     public Result Read(uint clubUid)
     {
         if (clubUid is 0 or uint.MaxValue) throw new ArgumentOutOfRangeException(nameof(clubUid));
+        return ReadCandidates(clubUid);
+    }
+    // Zero is only an internal wildcard, not a verified active-manager selector.
+    public Result ReadAll() => ReadCandidates(0);
+    private Result ReadCandidates(uint clubUid)
+    {
         try
         {
             var clock = System.Diagnostics.Stopwatch.StartNew(); var h = Header();
