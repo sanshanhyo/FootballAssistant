@@ -2,7 +2,7 @@
 // Main-process only. Never expose backendEnv or decrypted material through IPC.
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, createHash } = require('node:crypto');
 const { destination, PROVIDERS } = require('./model-providers.cjs');
 const DEFAULTS = Object.freeze({ schema_version: 1, provider: 'opencode-go', baseUrl: '', model: '' });
 function validate(input, { persisted = false } = {}) {
@@ -21,6 +21,7 @@ function validate(input, { persisted = false } = {}) {
   if (!persisted && !input.model.trim()) throw Error('请输入模型名称。');
   if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 8192 || /[\x00-\x20\x7f]/.test(input.apiKey))) throw Error('API Key 格式无效，请勿包含空白。');
   if (input.removeKey !== undefined && typeof input.removeKey !== 'boolean') throw Error('清除密钥选项无效。');
+  if (typeof input.apiKey === 'string' && /^[•●*]{4,}$/.test(input.apiKey)) throw Error('请输入新密钥，不能保存遮罩占位符。');
   if (input.removeKey && input.apiKey) throw Error('不能同时保存和清除密钥。');
   if (input.apiKey && !baseUrl) throw Error('保存密钥前请填写服务地址。');
   const preset = PROVIDERS.find(item => item.id === input.provider);
@@ -29,11 +30,13 @@ function validate(input, { persisted = false } = {}) {
 }
 function atomicWrite(file, value, backup = false) {
   const temp = `${file}.${randomUUID()}.tmp`;
+  let handle;
   try {
-    fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    handle = fs.openSync(temp, 'wx', 0o600);
+    fs.writeFileSync(handle, `${JSON.stringify(value, null, 2)}\n`); fs.fsyncSync(handle); fs.closeSync(handle); handle = undefined;
     if (backup && fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
     fs.renameSync(temp, file);
-  } finally { fs.rmSync(temp, { force: true }); }
+  } finally { if (handle !== undefined) fs.closeSync(handle); fs.rmSync(temp, { force: true }); }
 }
 function createCredentialConfig({ userData, safeStorage }) {
   fs.mkdirSync(userData, { recursive: true, mode: 0o700 });
@@ -60,8 +63,11 @@ function createCredentialConfig({ userData, safeStorage }) {
     } catch { /* OS account/keychain changed: require explicit re-entry, never leak decrypt errors. */ }
   }
   const getPublicConfig = () => ({ ...config, configured: Boolean(config.baseUrl), hasApiKey: Boolean(apiKey), storage, secureStorageAvailable: secure() });
+  const fileRevision = file => fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null;
+  let configRevision = fileRevision(configFile), secretRevision = fileRevision(secretFile);
   function save(input) {
     const next = validate(input);
+    if (fileRevision(configFile) !== configRevision || fileRevision(secretFile) !== secretRevision) throw Error('Configuration changed outside this instance; restart before saving');
     let nextKey = input.removeKey ? '' : input.apiKey || ((next.baseUrl === config.baseUrl && next.provider === config.provider) ? apiKey : '');
     let nextStorage = 'none';
     let encrypted;
@@ -71,9 +77,21 @@ function createCredentialConfig({ userData, safeStorage }) {
       nextStorage = 'encrypted';
     } else if (nextKey) nextStorage = 'session';
     // A crash between writes can only make the key unavailable, never send it to another host.
+    const previousSecret = fs.existsSync(secretFile) ? JSON.parse(fs.readFileSync(secretFile, 'utf8')) : null;
     if (encrypted) atomicWrite(secretFile, encrypted);
     else fs.rmSync(secretFile, { force: true });
-    atomicWrite(configFile, next, true);
+    const writtenSecretRevision = fileRevision(secretFile);
+    try { atomicWrite(configFile, next, true); }
+    catch (error) {
+      // Roll back a reported save failure, without overwriting another writer's key.
+      if (fileRevision(secretFile) === writtenSecretRevision) {
+        if (previousSecret) atomicWrite(secretFile, previousSecret);
+        else fs.rmSync(secretFile, { force: true });
+        secretRevision = fileRevision(secretFile);
+      }
+      throw error;
+    }
+    configRevision = fileRevision(configFile); secretRevision = fileRevision(secretFile);
     config = next; apiKey = nextKey; storage = nextStorage;
     return getPublicConfig();
   }

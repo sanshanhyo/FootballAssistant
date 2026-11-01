@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createPersonaAccess } = require('./persona-access.cjs');
+const { controlSettingsWindow } = require('./settings-window.cjs');
 const { createSettingsContent } = require('./settings-content.cjs');
 const { createModelDiscovery } = require('./model-providers.cjs');
 const { createCredentialConfig } = require('./credentials.cjs');
@@ -12,6 +13,7 @@ const { createBridgeDeployment } = require('./bridge-ipc.cjs');
 const { createUpdateRecovery } = require('./update-recovery.cjs');
 const { createUpdateLifecycle } = require('./update-lifecycle.cjs');
 const updateTrust = require('./update-trust.cjs');
+const { rendererHealthy: checkRendererHealth } = require('./update-health.cjs');
 const { createInstalledUpdater } = require('./update-installed.cjs');
 const { distribution } = require('./distribution.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
@@ -124,13 +126,16 @@ async function openSettings() {
   const area = screen.getPrimaryDisplay().workArea;
   const window = new BrowserWindow({ width: Math.min(960, area.width), height: Math.min(740, area.height),
     minWidth: Math.min(580, area.width), minHeight: Math.min(420, area.height),
-    title: 'FootballAssistant 设置', backgroundColor: '#111714', show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: ['--companion-window=settings'], contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'companion-settings' } });
+    title: 'FootballAssistant 设置', backgroundColor: '#191a1c', show: false, frame: false, autoHideMenuBar: true,
+    // Share the default persistent session so appearance preferences survive
+    // restart and storage events reach the pet. Permission checks remain scoped
+    // to the pet's webContents and exact main-frame page in permitMicrophone.
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: ['--companion-window=settings'], contextIsolation: true, nodeIntegration: false, sandbox: true } });
   settingsWindow = window;
+  window.setMenu(null);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  window.webContents.session.setPermissionCheckHandler(() => false);
+  installSessionPermissions(window.webContents.session);
   window.on('closed', () => { if (settingsWindow === window) settingsWindow = null; });
   try {
     await window.loadFile(settingsPage);
@@ -233,6 +238,7 @@ function registerIpc() {
   handle('save-memory', value => runtime.saveMemory(value));
   handle('delete-memory', id => runtime.deleteMemory(id));
   handle('open-settings', openSettings);
+  handle('settings-window-control', action => controlSettingsWindow(settingsWindow, action));
   handle('context-menu', () => { contextMenu().popup({ window: win }); return {}; });
   handle('speech-capabilities', () => speech.capabilities());
   function speechInput(input) {
@@ -269,6 +275,10 @@ function registerIpc() {
 function permitMicrophone(contents, permission, details, check = false) {
   return allowsMicrophone({ trustedContents: Boolean(win && !win.isDestroyed() && contents === win.webContents), currentUrl: contents?.getURL(), pageUrl }, permission, details, check);
 }
+function installSessionPermissions(session) {
+  session.setPermissionRequestHandler((contents, permission, callback, details) => callback(permitMicrophone(contents, permission, details)));
+  session.setPermissionCheckHandler((contents, permission, _origin, details) => permitMicrophone(contents, permission, details, true));
+}
 async function buildWindow() {
   const primary = screen.getPrimaryDisplay().workArea;
   const width = Math.min(520, primary.width); const height = Math.min(620, primary.height);
@@ -284,19 +294,22 @@ async function buildWindow() {
   win.setAlwaysOnTop(true, process.platform === 'darwin' ? 'floating' : 'normal');
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  win.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => callback(permitMicrophone(contents, permission, details)));
-  win.webContents.session.setPermissionCheckHandler((contents, permission, _origin, details) => permitMicrophone(contents, permission, details, true));
+  installSessionPermissions(win.webContents.session);
   win.on('close', event => { if (!quitting) { event.preventDefault(); hidePet(); } });
   win.once('ready-to-show', showPet);
   await win.loadFile(page);
   pointerTimer = setInterval(pointerFallback, 60);
   screen.on('display-removed', () => { if (win && !win.isDestroyed()) win.setBounds(visibleBounds(win.getBounds())); });
   if (smokePath) {
+    await openSettings();
+    const settingsRenderer = await settingsWindow.webContents.executeJavaScript("(async () => ({ipcOk: (await window.companion.getState()).ok, aboutOk: (await window.companion.getAbout()).ok, customControls: Boolean(document.getElementById('window-close'))}))()");
+    settingsWindow.close();
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
       runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status, recovery: updateRecovery.status },
-      renderer: await win.webContents.executeJavaScript('({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet"))})'),
+      renderer: await win.webContents.executeJavaScript('(async () => ({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet")), ipcOk: (await window.companion.getState()).ok}))()'),
+      settingsRenderer,
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
     await fs.writeFile(smokePath, JSON.stringify(report, null, 2));
@@ -331,12 +344,13 @@ async function prepareUpdateRestart({ targetVersion }) {
   if (game.state !== 'not_detected' || !updateSafeNow()) throw new Error('Update postponed: application/game became active');
   lastGameClearAt = Date.now();
   updateQuiescing = true; updateBackendStopped = false;
-  const recovery = await updateRecovery.prepare({ targetVersion });
-  if (recovery.state !== 'prepared') { updateQuiescing = false; throw new Error('Update recovery checkpoint could not be saved'); }
   await runtime.persist();
-  if (runtime.storageWarning) { updateQuiescing = false; throw new Error('Conversation state could not be saved before update'); }
+  if (runtime.storageWarning) throw new Error('Conversation state could not be saved before update');
+  win.webContents.session.flushStorageData();
   updateBackendStopped = backendSupervisor.status.owned === true;
   await backendSupervisor.stop(); // Only the helper this app owns, never FM/external services.
+  const recovery = await updateRecovery.prepare({ targetVersion });
+  if (recovery.state !== 'prepared') throw new Error('Update recovery checkpoint could not be saved');
   if ((await detectGame()).state !== 'not_detected' || updateSessionEnding) throw new Error('Update postponed: game started or Windows session is ending');
   lastGameClearAt = Date.now();
 }
@@ -410,17 +424,17 @@ async function main() {
   runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await initializeCompanion(runtime); runtime.on('event', emit);
   registerIpc();
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
+  Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
     { label: '显示桌宠', click: showPet }, { label: '隐藏桌宠', click: hidePet },
     { label: '设置…', click: () => openSettings().catch(() => {}) },
     { type: 'separator' }, { role: 'quit', label: '退出' },
-  ] }]));
+  ] }]) : null);
   await buildWindow();
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
   app.on('activate', () => { showPet(); openSettings().catch(() => {}); });
-  const rendererHealthy = await win.webContents.executeJavaScript("document.readyState === 'complete' && Boolean(window.companion) && Boolean(document.getElementById('pet'))").catch(() => false);
+  const rendererHealthy = await checkRendererHealth(win.webContents);
   if (bootstrapStatus.backend.state === 'ready' && rendererHealthy && !runtime.storageWarning) await updateRecovery.acknowledgeHealthy();
   else if (updateRecovery.status.state === 'awaiting_health') await updateRecovery.fail('Updated app backend or local state failed initial health check');
   updateLifecycle = createUpdateLifecycle({ installedUpdater: installedUpdates, inspectActivity: inspectUpdateActivity });

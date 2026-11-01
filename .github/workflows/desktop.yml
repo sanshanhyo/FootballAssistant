@@ -2,6 +2,17 @@ name: Companion desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      prepare_alpha:
+        description: Prepare signed Alpha artifacts without publishing
+        type: boolean
+        default: false
+      alpha_version:
+        description: New immutable version (X.Y.Z-alpha.N)
+        type: string
+      previous_alpha_version:
+        description: Previous highest distributed Alpha version
+        type: string
   push:
     paths:
       - apps/companion/**
@@ -62,6 +73,15 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: apps/companion/package-lock.json
+      - name: Prepare monotonic Alpha version without publishing
+        if: github.event_name == 'workflow_dispatch' && inputs.prepare_alpha
+        run: |
+          if (process.env.GITHUB_REF !== 'refs/heads/integration/alpha-reader-ui') throw new Error('Alpha preparation is restricted to integration/alpha-reader-ui');
+          require(process.cwd() + '/packaging/prepare-alpha.cjs').prepare({ appRoot: process.cwd(), version: process.env.FA_ALPHA_VERSION, previousVersion: process.env.FA_ALPHA_PREVIOUS_VERSION }).catch(error => { console.error(error.message); process.exitCode = 1; });
+        shell: node {0}
+        env:
+          FA_ALPHA_VERSION: ${{ inputs.alpha_version }}
+          FA_ALPHA_PREVIOUS_VERSION: ${{ inputs.previous_alpha_version }}
       - run: npm ci --no-fund --no-audit
       - run: npm run check
       - uses: actions/setup-dotnet@v4
@@ -123,6 +143,7 @@ jobs:
           if ($report.platform -ne 'win32' -or $report.arch -ne 'x64') { throw 'Unexpected desktop target' }
           if ($report.bootstrap.backend.state -ne 'ready') { throw 'Embedded backend did not become ready' }
           if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
+          if (-not $report.renderer.ipcOk -or -not $report.settingsRenderer.ipcOk -or -not $report.settingsRenderer.aboutOk -or -not $report.settingsRenderer.customControls) { throw 'Packaged window IPC/controls check failed' }
       - name: Verify NSIS installation, reinstall and uninstall preserve user data
         if: runner.os == 'Windows'
         shell: powershell
@@ -133,7 +154,7 @@ jobs:
           node test/update-native-fixture.cjs
           node test/assert-update-fixture.cjs
       - name: Prepare signed Alpha manifest without publishing
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/integration/alpha-reader-ui'
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.prepare_alpha && github.ref == 'refs/heads/integration/alpha-reader-ui'
         run: node packaging/sign-alpha-update.cjs
         env:
           FA_ALPHA_UPDATE_SIGNING_KEY: ${{ secrets.FA_ALPHA_UPDATE_SIGNING_KEY }}
@@ -214,6 +235,8 @@ jobs:
             apps/companion/dist/*.blockmap
             apps/companion/dist/*.yml
             apps/companion/dist/alpha-update.json
+              apps/companion/dist/alpha-release-plan.json
+              apps/companion/alpha-preparation.json
           if-no-files-found: error
           retention-days: 7
       - name: Upload Windows smoke diagnostics

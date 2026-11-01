@@ -82,6 +82,50 @@ test('UI uses masked input, no secret readback, and preloads expose only sanitiz
   assert.doesNotMatch(src('preload.cjs'), /backendEnv/);
 });
 // Six-page UI secret lifecycle is exercised by settings-pages.test.cjs.
+test('blank untouched key preserves encrypted secret across model edits and restart; masks are rejected', t => {
+  const options=fixture(t), store=createCredentialConfig(options);store.save(input);
+  store.save({...input,apiKey:'',model:'another-model'});
+  assert.equal(createCredentialConfig(options).backendEnv().FOOTBALL_ASSISTANT_API_KEY,input.apiKey);
+  for(const apiKey of ['••••••••','********','●●●●']) assert.throws(()=>store.save({...input,apiKey}));
+  assert.equal(createCredentialConfig(options).backendEnv().FOOTBALL_ASSISTANT_API_KEY,input.apiKey);
+});
+
+test('encryption failure leaves prior configuration and key intact across restart',t=>{
+  const options=fixture(t),store=createCredentialConfig(options);store.save(input);
+  options.safeStorage.encryptString=()=>{throw Error('test storage locked');};
+  assert.throws(()=>store.save({...input,model:'new-model',apiKey:'TEST-replacement'}));
+  const reopened=createCredentialConfig(options);
+  assert.equal(reopened.getPublicConfig().model,input.model);
+  assert.equal(reopened.backendEnv().FOOTBALL_ASSISTANT_API_KEY,input.apiKey);
+});
+
+test('concurrent configuration instances cannot silently overwrite an updated key',t=>{
+  const options=fixture(t),first=createCredentialConfig(options);first.save(input);
+  const stale=createCredentialConfig(options);first.save({...input,apiKey:'TEST-new-key'});
+  assert.throws(()=>stale.save({...input,apiKey:'TEST-stale-key'}),/changed outside/);
+  assert.equal(createCredentialConfig(options).backendEnv().FOOTBALL_ASSISTANT_API_KEY,'TEST-new-key');
+});
+
+test('failed config rename rolls back key replacement or removal and permits retry',t=>{
+ for (const patch of [{apiKey:'TEST-replacement'}, {apiKey:undefined,removeKey:true}]) {
+  const options=fixture(t),store=createCredentialConfig(options);store.save(input);
+  const configFile=path.join(options.userData,'model-config.json'),rename=fs.renameSync;
+  let fail=true;
+  fs.renameSync=(from,to)=>{if(to===configFile && fail){fail=false;throw Error('TEST write denied');}return rename(from,to);};
+  try {assert.throws(()=>store.save({...input,model:'new-model',...patch}),/TEST write denied/);}
+  finally {fs.renameSync=rename;}
+  const reopened=createCredentialConfig(options);
+  assert.equal(reopened.getPublicConfig().model,input.model);
+  assert.equal(reopened.backendEnv().FOOTBALL_ASSISTANT_API_KEY,input.apiKey);
+  assert.equal(store.save({...input,apiKey:undefined,model:'retry'}).hasApiKey,true);
+ }
+});
+test('external account configuration changes are not overwritten by an old instance',t=>{
+  const options=fixture(t),store=createCredentialConfig(options);store.save(input);
+  const file=path.join(options.userData,'model-config.json');const external={schema_version:1,provider:'openai-compatible',baseUrl:'https://new.test/v1',model:'changed'};
+  fs.writeFileSync(file,JSON.stringify(external));assert.throws(()=>store.save(input),/changed outside/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)),external);
+});
 test('legacy nonstandard preset is custom and cannot reuse the old bound secret', t => {
   const options=fixture(t); const store=createCredentialConfig(options);
   store.save(input);

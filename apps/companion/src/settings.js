@@ -3,11 +3,11 @@
   const $ = id => document.getElementById(id);
   const api = window.companion;
   const UI = window.CompanionUI;
-  const PAGES = { connection: '连接', voice: '输入', companion: '人设', records: '历史与记忆', appearance: '外观', about: '关于' };
+  const PAGES = { connection: '连接', voice: '输入', records: '历史与记忆', appearance: '外观', about: '关于' };
   let state = null, activePage = 'connection', speechInfo = null;
   let history = [], historyLimit = 40, historyLoad = 0, memoryLoad = 0;
   let recordsTimer, noticeTimer, unsubscribe, stopped = false, proactivityEditing = false;
-  let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false;
+  let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false, modelSaving = false;
   let personaRevision = null, personaDirty = false, personaLoad = 0;
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -59,7 +59,6 @@
   }
   function renderCharacter() {
     const character = state?.character;
-    $('character-name').textContent = character?.displayName || '角色介绍';
     $('expression').disabled = character?.visual?.kind === 'builtin-image' || !character;
   }
   function renderPreferences() {
@@ -158,7 +157,8 @@
   }
 
   function setPage(page) {
-    if (!PAGES[page]) return; activePage = page;
+    if (!Object.hasOwn(PAGES, page)) page = 'connection';
+    activePage = page;
     for (const button of document.querySelectorAll('[data-page]')) {
       const current = button.dataset.page === page; button.classList.toggle('active', current);
       if (current) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
@@ -183,11 +183,25 @@
     $('model-name').disabled = true; $('model-save').disabled = true;
   }
   function selectedProvider() { return providers.find(item => item.id === $('model-provider').value); }
+  function savedCredentialSelected() {
+    const provider = $('model-provider').value;
+    const baseUrl = (provider === 'openai-compatible' ? $('model-base-url').value.trim() : selectedProvider()?.baseUrl || '').replace(/\/+$/, '');
+    return savedConfig?.provider === provider && savedConfig.baseUrl === baseUrl && savedConfig.hasApiKey;
+  }
+  function renderCredentialStatus() {
+    const configured = savedCredentialSelected(), draft = Boolean($('model-api-key').value);
+    // The mask is a placeholder, never an input value or a secret readback.
+    $('model-api-key').placeholder = configured ? '••••••••' : '输入 API Key';
+    $('model-api-key').setAttribute('aria-label', configured ? 'API Key，已配置；输入新密钥以替换' : 'API Key');
+    $('model-storage-note').textContent = draft ? configured ? '新密钥待保存' : '密钥待保存' : configured ? savedConfig.storage === 'encrypted' ? '密钥已配置' : '密钥已配置（仅本次）' : '未配置密钥';
+    $('model-remove-key').disabled = modelSaving || !configured;
+  }
   function updateProvider() {
     const custom = $('model-provider').value === 'openai-compatible';
     $('custom-url-row').hidden = !custom; $('model-base-url').required = custom;
-    $('model-api-key').value = ''; $('model-storage-note').textContent = '';
-    $('model-base-url').value = custom ? '' : selectedProvider()?.baseUrl || '';
+    $('model-api-key').value = '';
+    $('model-base-url').value = custom ? savedConfig?.provider === 'openai-compatible' ? savedConfig.baseUrl : '' : selectedProvider()?.baseUrl || '';
+    renderCredentialStatus();
     invalidateModels();
   }
   function renderModelConfig(value) {
@@ -197,10 +211,11 @@
     $('custom-url-row').hidden = value.provider !== 'openai-compatible';
     $('model-base-url').required = value.provider === 'openai-compatible';
     $('model-api-key').value = '';
-    $('model-storage-note').textContent = value.hasApiKey ? value.storage === 'encrypted' ? '密钥已保存' : '密钥仅本次有效' : '未配置密钥';
+    renderCredentialStatus();
     invalidateModels();
   }
   async function loadModelConfiguration() {
+    const generation = modelGeneration;
     const registry = await perform(() => api.getModelProviders());
     if (!registry) return;
     providers = registry.providers || []; $('model-provider').replaceChildren();
@@ -208,7 +223,9 @@
       const option = node('option', '', provider.name || provider.id); option.value = provider.id; option.disabled = provider.disabled === true; $('model-provider').append(option);
     }
     $('model-provider').disabled = !providers.length;
-    renderModelConfig(await perform(() => api.getModelConfig()));
+    const value = await perform(() => api.getModelConfig());
+    if (generation === modelGeneration) renderModelConfig(value);
+    else if (value) { savedConfig = value; renderCredentialStatus(); }
   }
   async function fetchModels() {
     const generation = ++modelGeneration; modelReadyGeneration = -1; modelBusy = true;
@@ -229,19 +246,21 @@
     finally { delete input.apiKey; modelBusy = false; $('model-fetch').disabled = false; }
   }
   async function saveModelConfig(removeKey = false) {
+    if (modelSaving || (removeKey && !savedCredentialSelected())) return;
     if (!removeKey && (modelBusy || modelReadyGeneration !== modelGeneration || !$('model-name').value)) { showError('请读取并选择模型'); return; }
     const generation = modelGeneration;
     const provider = $('model-provider').value;
     const input = { provider, baseUrl: provider === 'openai-compatible' ? $('model-base-url').value.trim() : selectedProvider()?.baseUrl || '', model: $('model-name').value || savedConfig?.model || '' };
     if (removeKey) input.removeKey = true; else if ($('model-api-key').value) input.apiKey = $('model-api-key').value;
-    $('model-api-key').value = ''; $('model-save').disabled = true; $('model-remove-key').disabled = true;
+    modelSaving = true; $('model-save').disabled = true; $('model-remove-key').disabled = true;
     const value = await perform(() => api.saveModelConfig(input)); delete input.apiKey;
-    $('model-remove-key').disabled = false;
+    modelSaving = false;
     if (value) {
       savedConfig = value;
       if (generation === modelGeneration) renderModelConfig(value);
       notice(value.restartRequired ? '已保存，待重启服务' : '已保存');
-    } else if (generation === modelGeneration) invalidateModels();
+    } else if (generation === modelGeneration) $('model-save').disabled = modelReadyGeneration !== modelGeneration;
+    renderCredentialStatus();
   }
   function renderPersona(value) {
     personaRevision = value.revision;
@@ -285,14 +304,25 @@
   const APPEARANCE_KEY = Appearance.KEY;
   function applyAppearance(value) {
     const prefs = Appearance.apply(document, value);
-    $('font-family').value = prefs.fontFamily; $('font-size').value = String(prefs.fontSize); $('dark-mode').checked = prefs.darkMode;
+    $('font-family').value = prefs.fontFamily; $('font-size').value = String(prefs.fontSize); $('dark-mode').checked = prefs.darkMode; $('light-motion').checked = prefs.lightMotion;
   }
   function saveAppearance() {
-    const value = { fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked };
+    const value = { fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked, lightMotion:$('light-motion').checked };
     try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value); }
     catch { showError('外观保存失败'); }
   }
+  function saveLightMotion() {
+    try {
+      let previous = {};
+      try { previous = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}'); } catch {}
+      const value = { ...previous, lightMotion:$('light-motion').checked };
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value);
+    } catch { showError('外观保存失败'); }
+  }
   function bind() {
+    for (const [id, action] of [['window-minimize','minimize'],['window-maximize','toggle-maximize'],['window-close','close']]) {
+      $(id).addEventListener('click', () => perform(() => api.controlSettingsWindow(action)));
+    }
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     Object.entries(UI.EXPRESSIONS).forEach(([value,label]) => { if (value === 'auto') return; const option=node('option','',label); option.value=value; $('expression').append(option); });
     $('proactivity').addEventListener('input', () => { proactivityEditing=true; $('proactivity-value').textContent=`${$('proactivity').value}%`; });
@@ -305,8 +335,8 @@
     $('clear-history').addEventListener('click',async () => { if(!window.confirm('清除全部聊天历史？')) return; const result=await perform(() => api.clearHistory(),{button:$('clear-history'),success:'已清除'}); if(result!==undefined) refreshHistory(); });
     $('save-memory').addEventListener('click',async () => { const input=$('memory-text'), text=input.value.trim(); if(!text) {input.focus();return;} const result=await perform(() => api.saveMemory({text}),{button:$('save-memory'),success:'已保存'}); if(result!==undefined) {if(input.value.trim()===text)input.value='';refreshMemories();} });
     $('model-provider').addEventListener('change',updateProvider);
-    $('model-api-key').addEventListener('input',invalidateModels);
-    $('model-base-url').addEventListener('input',invalidateModels);
+    $('model-api-key').addEventListener('input',() => { invalidateModels(); renderCredentialStatus(); });
+    $('model-base-url').addEventListener('input',() => { invalidateModels(); renderCredentialStatus(); });
     $('model-fetch').addEventListener('click',fetchModels);
     $('model-config-form').addEventListener('submit',event => {event.preventDefault();saveModelConfig();});
     $('model-remove-key').addEventListener('click',() => saveModelConfig(true));
@@ -321,6 +351,7 @@
     $('open-repository').addEventListener('click',() => perform(() => api.openRepository()));
     $('open-contributors').addEventListener('click',() => perform(() => api.openContributors()));
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
+    $('light-motion').addEventListener('change',saveLightMotion);
     window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
   }
   try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}')); } catch { applyAppearance({}); }
@@ -330,5 +361,4 @@
   loadModelConfiguration(); refreshSpeech();
   perform(() => api.getAbout()).then(value => { if(value?.version) $('app-version').textContent=value.version; });
   perform(() => api.updateStatus()).then(renderUpdate);
-  perform(() => api.getCharacterIntroduction()).then(value => { if(value) $('character-introduction').textContent=value.content || ''; });
 })();

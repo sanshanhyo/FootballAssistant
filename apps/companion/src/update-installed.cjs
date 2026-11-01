@@ -4,7 +4,14 @@ const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { verifyManifest, REPOSITORY } = require('./update-security.cjs');
+const { verifyManifest, trustedReleaseUrl } = require('./update-security.cjs');
+
+function nativeFeed(candidate) {
+  const url = new URL(trustedReleaseUrl(candidate.artifact.url));
+  const directory = new URL('.', url);
+  if (directory.pathname.split('/').filter(Boolean).at(-1) !== candidate.version) throw Error('Installer release tag does not match signed version');
+  return { provider: 'generic', url: directory.href, channel: 'alpha' };
+}
 
 async function verifyInstaller(file, artifact) {
   const stat = await fsp.lstat(file);
@@ -26,16 +33,15 @@ async function verifyWindowsSignature(file, allowedThumbprints) {
 // This gate is dormant in production until release trust is explicitly configured.
 // All options are trusted main-process/build-time values, never renderer IPC input.
 function createInstalledUpdater(options) {
-  const { productionTrust, nativeFactory = () => {
+  const { productionTrust, nativeFactory = feed => {
     const { NsisUpdater } = require('electron-updater');
-    const [owner, repo] = REPOSITORY.split('/');
-    return new NsisUpdater({ provider: 'github', owner, repo });
+    return new NsisUpdater(feed);
   }, verifySignature = verifyWindowsSignature, isSafeToInstall = () => false, beforeInstall = async () => {}, onInstallFailure = async () => {}, onStatus = () => {} } = options;
   const thumbprints = productionTrust?.certificateThumbprints;
   const trustPolicy = productionTrust?.trustPolicy || 'authenticode-and-ed25519';
   const publisherTrust = trustPolicy === 'ed25519-pinned' || (trustPolicy === 'authenticode-and-ed25519' && Array.isArray(thumbprints) && thumbprints.length > 0 && thumbprints.every(x => typeof x === 'string' && /^[A-Fa-f0-9]{40}$/.test(x)));
   const enabled = options.platform === 'win32' && options.distribution === 'nsis' && typeof productionTrust?.publicKey === 'string' && publisherTrust;
-  let native = null, ready = null, operation = null, disposed = false, preparationStarted = false;
+  let native = null, nativeFeedUrl = null, ready = null, operation = null, disposed = false, preparationStarted = false;
   let status = { state: 'manual_required', automaticInstallEnabled: Boolean(enabled), distribution: options.distribution || 'unknown', trustPolicy, publisherVerificationRequired: trustPolicy === 'authenticode-and-ed25519', reason: enabled ? 'Trusted NSIS path configured; waiting for a signed compatible release' : 'Automatic installation requires an installed NSIS build, pinned release key and trusted Windows signing certificate; current updates remain manual' };
   function publish(patch) { status = { ...status, ...patch }; try { onStatus(structuredClone(status)); } catch {} return structuredClone(status); }
   async function failed(error) {
@@ -51,9 +57,10 @@ function createInstalledUpdater(options) {
     operation = Promise.resolve().then(task).catch(failed).finally(() => { operation = null; });
     return operation;
   }
-  function getNative() {
-    if (!native) {
-      native = nativeFactory();
+  function getNative(candidate) {
+    const feed = nativeFeed(candidate);
+    if (!native || nativeFeedUrl !== feed.url) {
+      native = nativeFactory(feed); nativeFeedUrl = feed.url;
       // Do not let any native default quit hook bypass our safety/verification gate.
       native.autoDownload = false;
       native.disableWebInstaller = true;
@@ -74,7 +81,9 @@ function createInstalledUpdater(options) {
     if (candidate.isCurrent) return publish({ state: 'up_to_date' });
     if (candidate.artifact.format !== 'exe' || candidate.artifact.installerType !== 'nsis') throw new Error('Signed artifact is not an NSIS installer');
     publish({ state: 'checking' });
-    const updater = getNative();
+    // Resolve alpha.yml inside the exact signed version's release, never GitHub's
+    // latest release (which can move while an Alpha rollout is in progress).
+    const updater = getNative(candidate);
     const result = await updater.checkForUpdates();
     if (!result || result.updateInfo?.version !== candidate.version) throw new Error('Native update metadata does not match signed release');
     publish({ state: 'downloading' });
@@ -115,4 +124,4 @@ function createInstalledUpdater(options) {
   function stop() { disposed = true; ready = null; if (native) { native.autoInstallOnAppQuit = false; } }
   return { get status() { return structuredClone(status); }, stage, applyOnSafeExit, stop };
 }
-module.exports = { createInstalledUpdater, verifyInstaller, verifyWindowsSignature };
+module.exports = { createInstalledUpdater, verifyInstaller, verifyWindowsSignature, nativeFeed };
