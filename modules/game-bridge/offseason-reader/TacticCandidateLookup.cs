@@ -64,7 +64,7 @@ try
     foreach (var entry in inspected)
         if (!Read64(memory, entry.Slot, out long current) || current != entry.Object) return new("changed_during_read");
     if (ReadHeader(memory, image) != header || clock.ElapsedMilliseconds >= 2000) return new("changed_during_read");
-    return new("experimental", "unknown", selected.PositionMasks.Split(','), selected.RolesDuties.Split(','), DateTimeOffset.UtcNow, players, secondPhaseRoles);
+    return new("experimental", "unknown", selected.PositionMasks.Split(','), selected.RolesDuties.Split(','), DateTimeOffset.UtcNow, players, secondPhaseRoles, "unknown", "Candidate may not track active or unsaved tactical edits; observedAt is read time only.");
 }
 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
 { return new("unavailable"); }
@@ -151,11 +151,12 @@ private sealed class SafeProcessHandle : Microsoft.Win32.SafeHandles.SafeHandleZ
 
 
 }
-public sealed record TacticCandidateResult(string Status, string? Phase = null, IReadOnlyList<string>? PositionMasks = null, IReadOnlyList<string>? RolesDuties = null, DateTimeOffset? ObservedAt = null, IReadOnlyList<TacticPlayerCandidate>? Players = null, IReadOnlyList<string>? SecondPhaseRoles = null);
+public sealed record TacticCandidateResult(string Status, string? Phase = null, IReadOnlyList<string>? PositionMasks = null, IReadOnlyList<string>? RolesDuties = null, DateTimeOffset? ObservedAt = null, IReadOnlyList<TacticPlayerCandidate>? Players = null, IReadOnlyList<string>? SecondPhaseRoles = null, string? ContentFreshness = null, string? Limitation = null);
 
 
 
 public sealed record TacticDecoded(IReadOnlyList<string> Positions, IReadOnlyList<string> RolesDuties);
+
 
 
 
