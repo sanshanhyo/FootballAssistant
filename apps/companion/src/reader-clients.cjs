@@ -1,5 +1,6 @@
 'use strict';
 const { matchView, matchCard } = require('./match-reader.cjs');
+const { calendarEndpoint } = require('./offseason-calendar.cjs');
 const { validateImport, asksImportedDiagnostic, diagnosticReply } = require('./windows-discovery.cjs');
 
 const MOCK_LIMITATIONS = Object.freeze([
@@ -176,6 +177,9 @@ class RealReaderClient {
   }
   async match({ signal } = {}) {
     return this.request('/v1/reader/match', undefined, { signal });
+  }
+  async offseasonCalendar({ clubUid, start, end, signal } = {}) {
+    return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
   }
   async snapshot({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/snapshot', undefined, { signal });
