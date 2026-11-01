@@ -53,6 +53,12 @@ class BusinessAdviceRequest(ChatRequest):
     capability: Literal["player_info", "transfer_analysis", "tactical_analysis", "schedule_analysis"]
 
 
+class CalendarAdviceRequest(ChatRequest):
+    club_uid: int = Field(ge=1, le=4294967294)
+    start: str = Field(min_length=10, max_length=10)
+    end: str = Field(min_length=10, max_length=10)
+
+
 class MemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     content: str = Field(min_length=1, max_length=2000)
@@ -456,6 +462,22 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
                 raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+
+        @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
+        async def calendar_advice(body: CalendarAdviceRequest):
+            from .offseason_snapshot import read_offseason, valid_range, unavailable
+            if not valid_range(body.start, body.end, body.club_uid):
+                raise HTTPException(422, detail="invalid calendar range")
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
+            try:
+                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end)
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
 
         @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
         async def ui_advice(body: BusinessAdviceRequest):

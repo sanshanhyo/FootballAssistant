@@ -39,3 +39,13 @@ test('transport allows only validated calendar URL, attaches auth, and cancels',
   const controller = new AbortController(); controller.abort();
   await assert.rejects(request(runtime, endpoint, undefined, {signal:controller.signal}), {name:'AbortError'});
 });
+
+test('calendar advice sends only explicit selection and question, not caller supplied facts', async () => {
+  let called;
+  const client = new RealReaderClient({ request: async (...args) => { called = args; return {status:'partial', context:{status:'partial'}}; } });
+  const result = await client.calendarAdvice({ message:'What is the schedule?', clubUid:42, start:'2026-02-01', end:'2026-02-10', fixtures:[{name:'injected'}] });
+  assert.equal(result.status, 'partial');
+  assert.equal(called[0], '/v1/agent/calendar-advice');
+  assert.deepEqual(called[1], {message:'What is the schedule?', conversation_id:null, club_uid:42, start:'2026-02-01', end:'2026-02-10'});
+  await assert.rejects(client.calendarAdvice({ message:'question', clubUid:0, start:'2026-02-01', end:'2026-02-10' }));
+});

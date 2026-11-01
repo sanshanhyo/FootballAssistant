@@ -181,6 +181,11 @@ class RealReaderClient {
   async offseasonCalendar({ clubUid, start, end, signal } = {}) {
     return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
   }
+  async calendarAdvice({ message, conversationId, clubUid, start, end, signal } = {}) {
+    calendarEndpoint(clubUid, start, end); // Validate the explicit selection before a request.
+    if (typeof message !== 'string' || !message.trim() || message.length > 4000) throw new Error('Invalid question');
+    return this.request('/v1/agent/calendar-advice', { message, conversation_id: conversationId ?? null, club_uid: clubUid, start, end }, { signal, timeoutMs: 120_000 });
+  }
   async snapshot({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/snapshot', undefined, { signal });
     const meta = businessMetadata(envelope);
