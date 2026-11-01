@@ -12,9 +12,17 @@ function createUpdateController(options) {
   const signedMode = Boolean(feedUrl && publicKey);
   const automaticInstallEnabled = Boolean(signedMode && options.installedUpdater?.status.automaticInstallEnabled);
   let status = { state: 'idle', currentVersion: options.currentVersion, automaticInstallEnabled, installMode: automaticInstallEnabled ? 'idle-restart' : 'manual', source: signedMode ? 'signed-manifest' : 'github-releases', signedDownloadAvailable: signedMode, reason: signedMode ? null : 'Public Alpha release checks enabled; signed automatic downloads are not configured' };
-  let candidate = null, signedEnvelope = null, operation = null, timer = null, aborter = null, stopped = false;
+  let candidate = null, signedEnvelope = null, operation = null, timer = null, aborter = null, stopped = false, pollEpoch = 0, polling = false;
+  const schedule = options.schedule || setTimeout, cancelSchedule = options.cancelSchedule || clearTimeout;
   const snapshot = () => structuredClone(status);
   function publish(patch) { status = { ...status, ...patch }; try { onStatus(snapshot()); } catch {} return snapshot(); }
+  function hasStagedDownload() {
+    const nativeState = options.installedUpdater?.status.state;
+    // A failed/expired native candidate must not remain pinned by an older UI state.
+    if (automaticInstallEnabled && ['blocked', 'manual_required', 'up_to_date'].includes(nativeState)) return false;
+    return ['downloaded', 'ready_for_safe_exit', 'deferred', 'installing'].includes(status.state) ||
+      ['ready_for_safe_exit', 'deferred', 'installing'].includes(nativeState);
+  }
   function run(task) {
     if (operation) return operation;
     if (stopped) return Promise.resolve(snapshot());
@@ -50,8 +58,7 @@ function createUpdateController(options) {
   }
   function check() { return run(async () => {
     // Keep an already verified download ready until the user installs it.
-    if (['downloaded', 'ready_for_safe_exit', 'deferred', 'installing'].includes(status.state) ||
-        ['ready_for_safe_exit', 'deferred', 'installing'].includes(options.installedUpdater?.status.state)) return snapshot();
+    if (hasStagedDownload()) return snapshot();
     candidate = null; signedEnvelope = null;
     publish({ state: 'checking', reason: null, availableVersion: null, downloadedPath: null, releaseUrl: null });
     if (!signedMode) {
@@ -71,8 +78,7 @@ function createUpdateController(options) {
     return publish({ state: 'update_available', availableVersion: candidate.version, releaseUrl: candidate.releaseUrl, reason: automaticInstallEnabled ? 'Verified update available; background download and idle restart enabled' : 'Verified update available; manual installation required' });
   }); }
   function download() { return run(async () => {
-    if (['downloaded', 'ready_for_safe_exit', 'deferred', 'installing'].includes(status.state) ||
-        ['ready_for_safe_exit', 'deferred', 'installing'].includes(options.installedUpdater?.status.state)) return snapshot();
+    if (hasStagedDownload()) return snapshot();
     if (!signedMode) return publish({ state: 'manual_required', reason: 'No signed download feed configured. Review the official release page and install manually; the app will not download or execute this package.' });
     if (!candidate) throw new Error('Check for a compatible update first');
     if (options.installedUpdater?.status.automaticInstallEnabled) {
@@ -98,13 +104,22 @@ function createUpdateController(options) {
     } finally { await file?.close(); await fs.rm(temporary, { force: true }); }
   }); }
   function start({ intervalMs = 30 * 60 * 1000, autoDownload = true } = {}) {
-    if (timer) return;
+    if (polling) return;
     if (!Number.isFinite(intervalMs) || intervalMs < 60000) throw new Error('Update interval must be at least one minute');
-    stopped = false;
-    const tick = async () => { await check(); if (!stopped && autoDownload && signedMode && status.state === 'update_available') await download(); };
-    void tick(); timer = setInterval(tick, intervalMs); timer.unref?.();
+    stopped = false; polling = true; const epoch = ++pollEpoch; let failures = 0;
+    const tick = async () => {
+      if (stopped || epoch !== pollEpoch) return;
+      await check();
+      if (!stopped && epoch === pollEpoch && autoDownload && signedMode && status.state === 'update_available') await download();
+      if (stopped || epoch !== pollEpoch) return;
+      const failed = ['error', 'network_error', 'blocked'].includes(status.state);
+      failures = failed ? Math.min(failures + 1, 6) : 0;
+      const delay = failed ? Math.min(intervalMs, 60000 * 2 ** (failures - 1)) : intervalMs;
+      timer = schedule(() => { void tick(); }, delay); timer.unref?.();
+    };
+    void tick();
   }
-  function stop() { stopped = true; clearInterval(timer); timer = null; aborter?.abort(); }
+  function stop() { stopped = true; polling = false; pollEpoch++; cancelSchedule(timer); timer = null; aborter?.abort(); }
   return { get status() { return snapshot(); }, check, download, start, stop };
 }
 module.exports = { createUpdateController };

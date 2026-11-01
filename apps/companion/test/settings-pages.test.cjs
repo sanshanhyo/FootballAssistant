@@ -92,19 +92,22 @@ test('explicit removal never submits a typed replacement and clears configured m
  assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-api-key').placeholder,'输入 API Key');
  assert.equal(h.$('model-storage-note').textContent,'未配置密钥');
 });
-test('six pages; forbidden helper, branding, diagnostic and import DOM removed',()=>{
+test('five navigation pages with Alpha persona configuration hidden; diagnostic DOM removed',()=>{
   assert.equal((html.match(/class="settings-page"/g)||[]).length,6);
+  assert.equal((html.match(/data-page="/g)||[]).length,5);
+  assert.doesNotMatch(html,/data-page="companion"/);
+  assert.match(html,/id="page-companion"[^>]+hidden inert/);
   for(const forbidden of ['COMPANION','sidebar-footer','class="brand"','class="muted"','<small>','Windows 手动诊断导入','bridge-setup-card','模拟数据演示','page-description','discovery-settings.js','bridge-settings.js'])assert.ok(!html.includes(forbidden),forbidden);
   assert.match(html,/<select id="model-name"/);assert.doesNotMatch(html,/<input id="model-name"/);
   assert.match(css,/\.about-nav\{margin-top:auto\}/);
 });
 
-test('Alpha hides character presentation/selection while retaining persona editor and memory pages',async()=>{
+test('Alpha hides all character configuration navigation while retaining persona data and memory pages',async()=>{
  assert.doesNotMatch(html,/character-card|character-introduction|data-page="characters?"|id="page-characters?"/);
  for(const id of ['persona-content','persona-save','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
- const h=await harness();const persona=h.nav.find(x=>x.dataset.page==='companion');await persona.fire('click');await flush();
- assert.equal(h.$('page-companion').hidden,false);assert.equal(h.$('persona-content').value,'# Original');
- persona.dataset.page='characters';await persona.fire('click');
+ const h=await harness();assert.equal(h.nav.some(x=>x.dataset.page==='companion'),false);
+ assert.equal(h.$('page-companion').hidden,true);
+ const legacy=h.nav[0];legacy.dataset.page='companion';await legacy.fire('click');
  assert.equal(h.$('page-connection').hidden,false);assert.equal(h.$('page-companion').hidden,true);
  assert.equal(h.$('page-title').textContent,'连接');
 });

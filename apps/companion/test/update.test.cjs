@@ -120,3 +120,32 @@ test('production contains only approved public Ed25519 trust and a fixed officia
   assert.equal(trust.productionTrust.trustPolicy, 'ed25519-pinned');
   assert.equal(trustedReleaseUrl(trust.feedUrl), 'https://github.com/sanshanhyo/FootballAssistant/releases/download/alpha-channel/alpha-update.json');
 });
+
+test('expired or failed staged native candidate can refresh the feed and stage a retry',async()=>{
+ let checks=0,stages=0;const installed={status:{automaticInstallEnabled:true},stage:async()=>{stages++;installed.status.state='ready_for_safe_exit';return {...installed.status};}};
+ const controller=createUpdateController({...context,publicKey:pem,feedUrl:`${root}alpha-update.json`,installedUpdater:installed,fetchImpl:async()=>{checks++;return Response.json(sign(manifest()));}});
+ await controller.check();await controller.download();installed.status.state='blocked';
+ assert.equal((await controller.check()).state,'update_available');await controller.download();
+ assert.equal(checks,2);assert.equal(stages,2);
+});
+
+test('background network failures back off and recover without concurrent ticks; stop cancels retry',async()=>{
+ const timers=[];let requests=0,cancelled;
+ const controller=createUpdateController({...context,fetchImpl:async()=>{requests++;if(requests<=2)throw Error('offline');return Response.json([]);},schedule:(fn,delay)=>{const timer={fn,delay};timers.push(timer);return timer;},cancelSchedule:timer=>{cancelled=timer;}});
+ const flush=()=>new Promise(r=>setImmediate(r));
+ controller.start();controller.start();await flush();assert.equal(timers[0].delay,60000);
+ timers[0].fn();await flush();assert.equal(timers[1].delay,120000);
+ timers[1].fn();await flush();assert.equal(timers[2].delay,1800000);assert.equal(requests,3);
+ controller.stop();assert.equal(cancelled,timers[2]);timers[2].fn();await flush();assert.equal(requests,3);
+});
+
+test('interrupted download removes partial bytes and a later retry succeeds',async t=>{
+ const cacheDir=await fs.mkdtemp(path.join(os.tmpdir(),'fa-interrupted-'));t.after(()=>fs.rm(cacheDir,{recursive:true,force:true}));let failed=false;
+ const controller=createUpdateController({...context,publicKey:pem,cacheDir,feedUrl:`${root}alpha-update.json`,fetchImpl:async url=>{
+  if(url.endsWith('alpha-update.json'))return Response.json(sign(manifest()));
+  if(!failed){failed=true;return {ok:true,status:200,body:(async function*(){yield bytes.subarray(0,2);throw Error('interrupted');})()};}
+  return new Response(bytes);
+ }});
+ await controller.check();assert.equal((await controller.download()).state,'error');assert.deepEqual(await fs.readdir(cacheDir),[]);
+ assert.equal((await controller.download()).state,'downloaded');assert.deepEqual(await fs.readFile(controller.status.downloadedPath),bytes);
+});

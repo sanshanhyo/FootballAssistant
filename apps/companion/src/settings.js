@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const api = window.companion;
   const UI = window.CompanionUI;
-  const PAGES = { connection: '连接', voice: '输入', companion: '人设', records: '历史与记忆', appearance: '外观', about: '关于' };
+  const PAGES = { connection: '连接', voice: '输入', records: '历史与记忆', appearance: '外观', about: '关于' };
   let state = null, activePage = 'connection', speechInfo = null;
   let history = [], historyLimit = 40, historyLoad = 0, memoryLoad = 0;
   let recordsTimer, noticeTimer, unsubscribe, stopped = false, proactivityEditing = false;

@@ -13,6 +13,11 @@ const context = { platform: 'win32', distribution: 'nsis', arch: 'x64', currentV
 const content = Buffer.from('mock installer, not executable');
 const payload = { schema: 1, channel: 'alpha', version: '0.0.2-alpha.1', expiresAt: '2099-01-01T00:00:00Z', configSchemas: [1], backendProtocol: 1, bridgeProtocol: 1, artifacts: [{ platform: 'win32', arch: 'x64', format: 'exe', installerType: 'nsis', size: content.length, sha256: crypto.createHash('sha256').update(content).digest('hex'), url: 'https://github.com/sanshanhyo/FootballAssistant/releases/download/0.0.2-alpha.1/setup.exe' }] };
 function signed(data = payload) { const payload = JSON.stringify(data); return { payload, signature: crypto.sign(null, Buffer.from(payload), privateKey).toString('base64') }; }
+test('native Alpha metadata is pinned to the signed immutable version, not latest release',()=>{
+ const {nativeFeed}=require('../src/update-installed.cjs');
+ assert.deepEqual(nativeFeed({version:payload.version,artifact:payload.artifacts[0]}),{provider:'generic',channel:'alpha',url:'https://github.com/sanshanhyo/FootballAssistant/releases/download/0.0.2-alpha.1/'});
+ assert.throws(()=>nativeFeed({version:'0.0.3-alpha.1',artifact:payload.artifacts[0]}),/tag/);
+});
 async function fixture(t, overrides = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'installed-update-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'setup.exe'); await fs.writeFile(file, content);
@@ -51,6 +56,13 @@ test('metadata mismatch and non-NSIS signed artifact block before download', asy
   assert.equal((await f.updater.stage(signed())).state, 'blocked'); assert.equal(f.counts().downloads, 0);
   const other = { ...payload, artifacts: [{ ...payload.artifacts[0], installerType: 'portable' }] };
   assert.equal((await f.updater.stage(signed(other))).state, 'blocked'); assert.equal(f.counts().downloads, 0);
+});
+
+test('interrupted native download is retryable without install or recovery dispatch',async t=>{
+ const f=await fixture(t);const download=f.native.downloadUpdate;let fail=true;
+ f.native.downloadUpdate=async()=>{if(fail){fail=false;throw Error('network interrupted');}return download();};
+ assert.equal((await f.updater.stage(signed())).state,'blocked');assert.equal(f.counts().installs,0);
+ assert.equal((await f.updater.stage(signed())).state,'ready_for_safe_exit');assert.equal(f.counts().installs,0);
 });
 test('untrusted signature or modified cached bytes never install', async t => {
   const bad = await fixture(t, { verifySignature: async () => { throw new Error('Untrusted publisher'); } });

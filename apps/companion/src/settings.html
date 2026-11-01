@@ -5,7 +5,6 @@
 <body><header id="window-bar"><div class="window-drag" aria-hidden="true"></div><div class="window-controls"><button id="window-minimize" type="button" aria-label="最小化" title="最小化">—</button><button id="window-maximize" type="button" aria-label="最大化或还原" title="最大化或还原">□</button><button id="window-close" type="button" aria-label="关闭设置" title="关闭设置">×</button></div></header><div class="settings-app"><aside class="sidebar"><nav aria-label="设置分类">
 <button class="nav-item active" data-page="connection" aria-controls="page-connection" aria-current="page">连接</button>
 <button class="nav-item" data-page="voice" aria-controls="page-voice">输入</button>
-<button class="nav-item" data-page="companion" aria-controls="page-companion">人设</button>
 <button class="nav-item" data-page="records" aria-controls="page-records">历史与记忆</button>
 <button class="nav-item" data-page="appearance" aria-controls="page-appearance">外观</button></nav>
 <button class="nav-item about-nav" data-page="about" aria-controls="page-about">关于</button></aside>
@@ -20,7 +19,7 @@
 <div class="setting-row"><label for="model-name">模型</label><div class="model-controls"><select id="model-name" required disabled><option value="">未读取</option></select><button id="model-fetch" type="button" class="secondary-button">读取模型</button></div></div>
 <div class="card-actions"><span id="model-storage-note" role="status"></span><div class="row-actions"><button id="model-remove-key" type="button" class="text-button danger">清除密钥</button><button id="model-save" type="submit" class="primary-button" disabled>保存</button></div></div></form></section></section>
 <section id="page-voice" class="settings-page" aria-labelledby="page-title" hidden><section class="card"><h2>语音转文字</h2><div class="setting-row"><label for="stt-provider">转写服务</label><select id="stt-provider" disabled></select></div><div id="stt-note" role="status">状态未确认</div></section></section>
-<section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
+<section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden inert>
 <section class="card"><div class="card-heading"><h2>persona.md</h2><button id="persona-refresh" class="secondary-button">刷新</button></div><label class="sr-only" for="persona-content">人设内容</label><textarea id="persona-content" rows="10" spellcheck="false" disabled></textarea><div class="card-actions"><span id="persona-status" role="status">未读取</span><div class="row-actions"><button id="persona-open-file" class="text-button" disabled>打开文件</button><button id="persona-open-folder" class="text-button" disabled>打开文件夹</button><button id="persona-save" class="primary-button" disabled>保存</button></div></div></section>
 <section class="card"><div class="card-heading"><label for="proactivity">主动性</label><output id="proactivity-value" for="proactivity">80%</output></div><input id="proactivity" type="range" min="0" max="100" step="1" value="80"></section>
 <section class="card"><div class="setting-row first-row"><label for="expression">表情</label><select id="expression" disabled><option value="auto">跟随交互</option></select></div></section></section>

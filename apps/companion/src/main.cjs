@@ -13,6 +13,7 @@ const { createBridgeDeployment } = require('./bridge-ipc.cjs');
 const { createUpdateRecovery } = require('./update-recovery.cjs');
 const { createUpdateLifecycle } = require('./update-lifecycle.cjs');
 const updateTrust = require('./update-trust.cjs');
+const { rendererHealthy: checkRendererHealth } = require('./update-health.cjs');
 const { createInstalledUpdater } = require('./update-installed.cjs');
 const { distribution } = require('./distribution.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
@@ -433,7 +434,7 @@ async function main() {
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
   app.on('activate', () => { showPet(); openSettings().catch(() => {}); });
-  const rendererHealthy = await win.webContents.executeJavaScript("document.readyState === 'complete' && Boolean(window.companion) && Boolean(document.getElementById('pet'))").catch(() => false);
+  const rendererHealthy = await checkRendererHealth(win.webContents);
   if (bootstrapStatus.backend.state === 'ready' && rendererHealthy && !runtime.storageWarning) await updateRecovery.acknowledgeHealthy();
   else if (updateRecovery.status.state === 'awaiting_health') await updateRecovery.fail('Updated app backend or local state failed initial health check');
   updateLifecycle = createUpdateLifecycle({ installedUpdater: installedUpdates, inspectActivity: inspectUpdateActivity });
