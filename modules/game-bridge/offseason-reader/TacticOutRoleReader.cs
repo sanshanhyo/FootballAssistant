@@ -64,14 +64,15 @@ internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam,
             if(secondRoles is not null) secondRoles[i]=TacticSecondRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x478+i*0x48L)));
         }
         byte? mentalityId=TacticMentalityDecoder.Candidate(t.U8(target+0x105));
+        var instructions=TeamInstructionDecoder.Decode(unchecked((ulong)t.I64(target+0xE0)),unchecked((ulong)t.I64(target+0xE8)));
         if(!t.Stable()) return null;
-        return new TacticTreeRoles(firstRoles,secondRoles,TacticGeneration.Create(gamePid,gameStartTicks,manager,element,head,selectedNode,targetTeam,source,target),mentalityId);
+        return new TacticTreeRoles(firstRoles,secondRoles,TacticGeneration.Create(gamePid,gameStartTicks,manager,element,head,selectedNode,targetTeam,source,target),mentalityId,instructions);
     }
     catch(Exception ex) when(ex is InvalidOperationException or OverflowException or ArgumentException) { return null; }
 }
 
 }
-internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles, string Generation, byte? MentalityId);
+internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles, string Generation, byte? MentalityId, TeamInstructionCandidate? Instructions);
 public static class TacticSecondRoleDecoder
 {
 // Role names follow FMMatchLens TacticalFormationDecoder (MIT, vendor/LICENSE).
@@ -225,3 +226,18 @@ public static class TacticMentalityDecoder
     public static byte? Candidate(byte value) => value is >= 1 and <= 7 ? value : null;
 }
 
+
+// Experimental target bit IDs. Only bit 3 has a validated label in this build.
+// Phase, active state and content freshness remain unknown to the caller.
+public static class TeamInstructionDecoder
+{
+    public static TeamInstructionCandidate? Decode(ulong? low, ulong? high)
+    {
+        if (low is null || high is null) return null;
+        var ids = new List<int>();
+        for (int id=1; id<=83; id++)
+            if ((((id<64 ? low.Value : high.Value) >> (id & 63)) & 1UL) != 0) ids.Add(id);
+        return new("experimental", ids, ids.Contains(3));
+    }
+}
+public sealed record TeamInstructionCandidate(string Status, IReadOnlyList<int> Ids, bool PassingStyleShorter);

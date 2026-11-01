@@ -71,3 +71,10 @@ Check(TacticMentalityDecoder.Candidate(0) is null);
 Check(TacticMentalityDecoder.Candidate(1) == 1);
 Check(TacticMentalityDecoder.Candidate(7) == 7);
 Check(TacticMentalityDecoder.Candidate(8) is null);
+// Synthetic bitset; source and target data are not real game samples.
+Check(TeamInstructionDecoder.Decode(null, 0) is null);
+Check(TeamInstructionDecoder.Decode(0, null) is null);
+var emptyInstructions = TeamInstructionDecoder.Decode(0, 0)!;
+Check(emptyInstructions.Status == "experimental" && emptyInstructions.Ids.Count == 0 && !emptyInstructions.PassingStyleShorter);
+var syntheticInstructions = TeamInstructionDecoder.Decode((1UL << 0) | (1UL << 3) | (1UL << 63), (1UL << 0) | (1UL << 19) | (1UL << 20))!;
+Check(syntheticInstructions.Ids.SequenceEqual(new[] { 3, 63, 64, 83 }) && syntheticInstructions.PassingStyleShorter);
