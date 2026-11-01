@@ -63,13 +63,15 @@ internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam,
             if(firstRoles is not null) firstRoles[i]=TacticFirstRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x158+i*0x48L)));
             if(secondRoles is not null) secondRoles[i]=TacticSecondRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x478+i*0x48L)));
         }
+        byte? mentalityId=TacticMentalityDecoder.Candidate(t.U8(target+0x105));
         if(!t.Stable()) return null;
-        return new TacticTreeRoles(firstRoles,secondRoles,TacticGeneration.Create(gamePid,gameStartTicks,manager,element,head,selectedNode,targetTeam,source,target));    }
+        return new TacticTreeRoles(firstRoles,secondRoles,TacticGeneration.Create(gamePid,gameStartTicks,manager,element,head,selectedNode,targetTeam,source,target),mentalityId);
+    }
     catch(Exception ex) when(ex is InvalidOperationException or OverflowException or ArgumentException) { return null; }
 }
 
 }
-internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles, string Generation);
+internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles, string Generation, byte? MentalityId);
 public static class TacticSecondRoleDecoder
 {
 // Role names follow FMMatchLens TacticalFormationDecoder (MIT, vendor/LICENSE).
@@ -216,3 +218,10 @@ internal static class TacticGeneration
         return "process-local:" + Convert.ToHexString(hmac.ComputeHash(stream.ToArray()));
     }
 }
+
+// Raw experimental native ID only; UI names and active state are not inferred.
+public static class TacticMentalityDecoder
+{
+    public static byte? Candidate(byte value) => value is >= 1 and <= 7 ? value : null;
+}
+

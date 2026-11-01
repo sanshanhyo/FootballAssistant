@@ -66,3 +66,8 @@ Check(syntheticGeneration.StartsWith("process-local:") && syntheticGeneration ==
 Check(syntheticGeneration != Generation(101, 999, 18));
 Check(syntheticGeneration != Generation(102, 999, 17));
 Check(syntheticGeneration != Generation(101, 1000, 17));
+// Synthetic native mentality IDs, no sample and no assumed UI name mapping.
+Check(TacticMentalityDecoder.Candidate(0) is null);
+Check(TacticMentalityDecoder.Candidate(1) == 1);
+Check(TacticMentalityDecoder.Candidate(7) == 7);
+Check(TacticMentalityDecoder.Candidate(8) is null);
