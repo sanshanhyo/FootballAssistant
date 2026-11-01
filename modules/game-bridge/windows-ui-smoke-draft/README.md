@@ -314,3 +314,54 @@ Rendering/creation order does not identify the main menu, active page or meaning
 business content, and may change between sessions or requests. Selecting an index does
 not prove that panel is currently on screen, foreground, or relevant. No automatic
 multi-panel search, rotation, index increment, fallback or repeat is implemented.
+
+
+
+## Explicit focused-subtree infrastructure (no real path selected)
+
+This capability does **not** authorize a new game read, guessed path, automatic retry,
+or an expanded scan. Obtain evidence and explicit authorization for the exact panel/path
+before a real test. No path has been selected by this revision.
+
+Optional request `focus_path` is an immutable canonical string of child indices relative
+to the separately bound `panel_index`: empty means the original panel-root traversal;
+otherwise at most12 slash-separated ASCII decimal indices0..511, no leading zeroes,
+signs, spaces, empty segments or panel token. Nonempty focus is ui_text-only.
+The helper accepts `-FocusPath` only for ui_text (even an explicit empty argument);
+omission writes no new field. Earlier strict readers reject explicit new fields rather
+than silently ignoring focus. Request schema stays1; output Coverage schema becomes2.
+
+Each focus ancestor uses the existing protected backend: visible, actual child count,
+then exactly one selected child. No loop up to that index, sibling prefetch, alternate
+panel or fallback is performed. An explicitly selected child8..511 can be reached;
+this is distinct from the unchanged first8-child enumeration within the selected subtree.
+Actual child count must contain the index; negative counts still fail closed. There is
+no new arbitrary upper child-count limit or relaxation of a pre-existing one.
+
+Ancestors consume the same32 nodes, 250ms soft time, 384 reserved units and64 roots.
+Depth remains global from the panel root: a12-edge focus starts its target at depth12,
+so no descendant at depth13 is fetched. Ancestor text is intentionally not read: focus
+selects the subtree, not the ancestors' text. Hidden ancestors stop; there is no fallback.
+The target uses the unchanged text type/bounds/getter rules. Empty focus preserves the
+original native call/guard sequence and traversal order.
+
+Coverage remains32 preallocated numeric slots. New `ParentSlot` and `ChildIndex` describe
+the edge used to reach each visited node; root/unused slots use-1/-1. Parents precede
+children, even when DFS returns to siblings. `FocusAncestor=1` identifies explicit
+descent ancestors, whose TextType stays0 (not checked). Their child-count bucket still
+describes the existing read, but ChildrenTruncated stays0 because no sibling enumeration
+was attempted. Standard subtree nodes retain the original width/depth pruning flags.
+`RequestedFocusDepth` is0 for empty,1..12 for valid focus,-1 for invalid direct-core
+input. `FocusResolved=1` means the nonempty path reached a nonnull target, not that the
+target was visible or text; empty/unresolved focus reports0. `RootResolved` still means
+the panel root was obtained. Partial checks remain incomplete; no text, names, addresses
+or raw request paths are included in coverage. No native call is added for these fields.
+
+Malformed focus is rejected by parser/policy before any grant is consumed;
+focus_path_invalid is the direct-core validation result. Runtime outcomes after a valid
+grant is consumed include focus_ancestor_hidden, focus_child_unavailable and
+focus_root_unavailable; budget/backend failures remain possible. Those runtime outcomes
+are terminal and never restore the capture attempt.
+Tests cover strict parsing, immutable grant/replay/replacement, child511/count512,
+hidden/out-of-range ancestors, globaldepth12, node32, partial states, default call counts,
+numeric DFS edges and native-fixture cleanup on both success and failure.

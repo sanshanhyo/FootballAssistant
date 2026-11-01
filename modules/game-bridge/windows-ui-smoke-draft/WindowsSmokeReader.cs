@@ -20,38 +20,42 @@ internal sealed record UiSmokeStageDiagnostics(string Stage, int Intervals, doub
     int PrechecksCompleted, int PrechecksFailed, int GuardCalls, int GuardFailures, double GuardTotalMs, double GuardMaxMs);
 internal sealed record UiSmokeDiagnostics(int SchemaVersion, double ElapsedMs, UiSmokeStageDiagnostics[] Stages);
 
-// Numeric-only coverage; fixed slots, no names, text, pointers or paths.
+// Numeric-only coverage; fixed slots, no names, text, pointers or raw path strings.
 // Visibility/TextType: 0 not started, 1 incomplete, 2 false, 3 true.
 // ChildCountState: 0 not started, 1 incomplete, 2 completed.
 // ChildCountBucket: -1 unknown; 0..8 exact; 9 means >8.
 internal readonly record struct UiNodeCoverage(int Depth, int Visibility, int TextType,
-    int ChildCountState, int ChildCountBucket, int DepthPruned, int ChildrenTruncated);
+    int ChildCountState, int ChildCountBucket, int DepthPruned, int ChildrenTruncated,
+    int ParentSlot = -1, int ChildIndex = -1, int FocusAncestor = 0);
 internal sealed record UiSmokeCoverage(int SchemaVersion, int PanelCount, int SelectedPanelIndex,
-    int NodesRecorded, UiNodeCoverage[] Nodes, int RequestedPanelIndex = 0);
+    int NodesRecorded, UiNodeCoverage[] Nodes, int RequestedPanelIndex = 0, int RequestedFocusDepth = 0, int FocusResolved = 0);
 internal sealed class UiCoverageCollector
 {
     private readonly UiNodeCoverage[] nodes = new UiNodeCoverage[32];
     private int panelCount = -1, selectedPanelIndex = -1, nodesRecorded;
     private readonly int requestedPanelIndex;
-    internal UiCoverageCollector(int panelIndex = 0)
+    private readonly int requestedFocusDepth;
+    private int focusResolved;
+    internal UiCoverageCollector(int panelIndex = 0, int focusDepth = 0)
     {
-        requestedPanelIndex = panelIndex;
+        requestedPanelIndex = panelIndex; requestedFocusDepth = focusDepth;
         for (var i = 0; i < nodes.Length; i++) nodes[i] = new(-1, 0, 0, 0, -1, 0, 0);
     }
     // Called only AFTER the adapter has read and validated the existing count getter.
     // -1 means unknown/not read; 0 is reserved for an actual validated empty list.
     internal void RecordPanels(int count)
     { panelCount = count; selectedPanelIndex = requestedPanelIndex >= 0 && requestedPanelIndex < count ? requestedPanelIndex : -1; }
-    internal void BeginNode(int slot, int depth)
-    { nodes[slot] = new(depth, 1, 0, 0, -1, 0, 0); nodesRecorded++; }
+    internal void BeginNode(int slot, int depth, int parentSlot = -1, int childIndex = -1, bool focusAncestor = false)
+    { nodes[slot] = new(depth, 1, 0, 0, -1, 0, 0, parentSlot, childIndex, focusAncestor ? 1 : 0); nodesRecorded++; }
+    internal void MarkFocusResolved() => focusResolved = 1;
     internal void Visible(int slot, bool value) => nodes[slot] = nodes[slot] with { Visibility = value ? 3 : 2 };
     internal void BeginType(int slot) => nodes[slot] = nodes[slot] with { TextType = 1 };
     internal void Type(int slot, bool value) => nodes[slot] = nodes[slot] with { TextType = value ? 3 : 2 };
     internal void BeginChildren(int slot) => nodes[slot] = nodes[slot] with { ChildCountState = 1 };
     internal void Children(int slot, int count, int depth) => nodes[slot] = nodes[slot] with
     { ChildCountState = 2, ChildCountBucket = Math.Min(count, 9), DepthPruned = depth >= 12 && count > 0 ? 1 : 0,
-      ChildrenTruncated = count > 8 ? 1 : 0 };
-    internal UiSmokeCoverage Snapshot() => new(1, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray(), requestedPanelIndex);
+      ChildrenTruncated = nodes[slot].FocusAncestor == 0 && count > 8 ? 1 : 0 };
+    internal UiSmokeCoverage Snapshot() => new(2, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray(), requestedPanelIndex, requestedFocusDepth, focusResolved);
 }
 
 // Every export/invoke/memory access retains its existing fresh gate and reservation.
@@ -169,17 +173,19 @@ internal static class WindowsSmokeReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!policy.CheckStartedUi(grant, freshIdentity(), now())) throw new UiSmokeStopped("grant_or_window_changed");
-            }, elapsedForTest, grant.PanelIndex);
+            }, elapsedForTest, grant.PanelIndex, grant.FocusPath);
         }
         finally { policy.CompleteUi(grant); }
     }
 
     // Core separated for traversal fixtures; it cannot authorize a native backend by itself.
     internal static UiSmokeResult ReadOne(IWindowsUiSmokeBackend backend, Action verifyGrantAndWindow,
-        Func<double>? elapsedForTest = null, int panelIndex = 0)
+        Func<double>? elapsedForTest = null, int panelIndex = 0, string focusPath = "")
     {
         var watch = Stopwatch.StartNew(); // Includes all class/getter/panel resolution.
-        var coverage = new UiCoverageCollector(panelIndex); // Allocate all 32 slots before obtaining any runtime object.
+        var validFocus = UiSmokeFocusPath.Valid(focusPath);
+        var focus = validFocus && focusPath.Length > 0 ? focusPath.Split('/').Select(int.Parse).ToArray() : Array.Empty<int>();
+        var coverage = new UiCoverageCollector(panelIndex, validFocus ? focus.Length : -1); // Allocate all 32 slots before obtaining any runtime object.
         var budget = new UiSmokeBudget(elapsedForTest ?? (() => watch.Elapsed.TotalMilliseconds), verifyGrantAndWindow,
             coverage: coverage);
         var nodes = 0;
@@ -195,14 +201,42 @@ internal static class WindowsSmokeReader
         try
         {
             if (panelIndex is < 0 or > 31) return Finish(null, "panel_index_invalid");
+            if (!validFocus) return Finish(null, "focus_path_invalid");
             budget.Check();
             budget.Stage = "resolve_first_panel"; // Legacy diagnostic label; request may select another index.
             var root = backend.ResolvePanelRoot(panelIndex, budget);
             if (root == 0) return Finish(null, "root_unavailable");
             rootResolved = true;
+            var parentSlot = -1;
+            var incomingChild = -1;
+            // Explicit focus visits one chosen edge per ancestor, never enumerates siblings.
+            // All ancestors share capture budgets and global root-relative depth.
+            for (var depth = 0; depth < focus.Length; depth++)
+            {
+                budget.Check();
+                if (nodes >= 32) return Finish(null, "node_budget");
+                var slot = nodes++;
+                coverage.BeginNode(slot, depth, parentSlot, incomingChild, focusAncestor: true);
+                budget.Stage = "visible";
+                var visible = backend.Visible(root, budget);
+                coverage.Visible(slot, visible);
+                if (!visible) return Finish(null, "focus_ancestor_hidden");
+                budget.Stage = "child_count";
+                coverage.BeginChildren(slot);
+                var count = backend.ChildCount(root, budget);
+                if (count < 0) throw new InvalidOperationException("Negative child count rejected.");
+                coverage.Children(slot, count, depth);
+                if (focus[depth] >= count) return Finish(null, "focus_child_unavailable");
+                budget.Check();
+                budget.Stage = "child_index";
+                root = backend.Child(root, focus[depth], budget);
+                if (root == 0) return Finish(null, "focus_root_unavailable");
+                parentSlot = slot; incomingChild = focus[depth];
+            }
+            if (focus.Length > 0) coverage.MarkFocusResolved();
             // Lazy DFS obtains one child at a time, not an eager list of 512 child objects.
-            var stack = new Stack<(nint Element, int Depth, int NextChild, int ChildLimit)>();
-            stack.Push((root, 0, -1, 0));
+            var stack = new Stack<(nint Element, int Depth, int NextChild, int ChildLimit, int Slot, int ParentSlot, int ChildIndex)>();
+            stack.Push((root, focus.Length, -1, 0, -1, parentSlot, incomingChild));
             while (stack.Count > 0)
             {
                 budget.Check();
@@ -211,7 +245,7 @@ internal static class WindowsSmokeReader
                 {
                     if (nodes >= 32) return Finish(null, "node_budget");
                     var slot = nodes++;
-                    coverage.BeginNode(slot, frame.Depth);
+                    coverage.BeginNode(slot, frame.Depth, frame.ParentSlot, frame.ChildIndex);
                     budget.Stage = "visible";
                     var visible = backend.Visible(frame.Element, budget);
                     coverage.Visible(slot, visible);
@@ -243,14 +277,14 @@ internal static class WindowsSmokeReader
                     coverage.Children(slot, count, frame.Depth);
                     if (frame.Depth >= 12) { bounded |= count > 0; continue; }
                     bounded |= count > 8;
-                    frame = (frame.Element, frame.Depth, 0, Math.Min(count, 8));
+                    frame = (frame.Element, frame.Depth, 0, Math.Min(count, 8), slot, frame.ParentSlot, frame.ChildIndex);
                 }
                 if (frame.NextChild >= frame.ChildLimit) continue;
                 budget.Check();
                 budget.Stage = "child_index";
                 var child = backend.Child(frame.Element, frame.NextChild, budget);
-                stack.Push((frame.Element, frame.Depth, frame.NextChild + 1, frame.ChildLimit));
-                if (child != 0) stack.Push((child, frame.Depth + 1, -1, 0));
+                stack.Push((frame.Element, frame.Depth, frame.NextChild + 1, frame.ChildLimit, frame.Slot, frame.ParentSlot, frame.ChildIndex));
+                if (child != 0) stack.Push((child, frame.Depth + 1, -1, 0, -1, frame.Slot, frame.NextChild));
             }
             return Finish(null, bounded ? "bounded_no_text" : "no_eligible_text");
         }
@@ -258,3 +292,4 @@ internal static class WindowsSmokeReader
         catch (Exception error) { return Finish(null, "backend_failure", error.GetType().Name); }
     }
 }
+

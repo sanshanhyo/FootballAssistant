@@ -7,8 +7,28 @@ internal enum SmokeStage { Metadata, UiResolve, UiText }
 internal sealed record SmokeContext(int Pid, string Session, string BridgeHash, string GameHash,
     string ConfirmedWindowClass, uint EntryThread);
 internal sealed record SmokeRequest(Guid Nonce, int Pid, string Session, string BridgeHash, string GameHash,
-    string ConfirmedWindowClass, SmokeStage Stage, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, int PanelIndex = 0);
-internal sealed record SmokeGrant(Guid Nonce, SmokeStage Stage, long Window, DateTimeOffset ExpiresAt, int PanelIndex = 0);
+    string ConfirmedWindowClass, SmokeStage Stage, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, int PanelIndex = 0, string FocusPath = "");
+internal sealed record SmokeGrant(Guid Nonce, SmokeStage Stage, long Window, DateTimeOffset ExpiresAt, int PanelIndex = 0, string FocusPath = "");
+
+// Immutable canonical child-index path relative to the separately bound panel.
+// Reuses Mac UiFocusPath's canonical numeric/actual-count approach, not its environment override.
+internal static class UiSmokeFocusPath
+{
+    internal static bool Valid(string? path)
+    {
+        if (path is null || path.Length > 47) return false; // 12 * 3 digits + 11 separators.
+        if (path.Length == 0) return true;
+        var parts = path.Split('/');
+        if (parts.Length > 12) return false;
+        foreach (var part in parts)
+        {
+            if (part.Length is < 1 or > 3 || (part.Length > 1 && part[0] == '0') ||
+                part.Any(c => c is < '0' or > '9') || !int.TryParse(part, out var index) || index > 511)
+                return false;
+        }
+        return true;
+    }
+}
 
 internal sealed class WindowsSmokePolicy
 {
@@ -52,7 +72,8 @@ internal sealed class WindowsSmokePolicy
     {
         lock (gate)
         {
-            if (request.PanelIndex is < 0 or > 31 || (request.Stage != SmokeStage.UiText && request.PanelIndex != 0)) return null;
+            if (request.PanelIndex is < 0 or > 31 || !UiSmokeFocusPath.Valid(request.FocusPath) ||
+                (request.Stage != SmokeStage.UiText && (request.PanelIndex != 0 || request.FocusPath.Length != 0))) return null;
             if (request.Nonce == Guid.Empty || consumed.Count >= 64 || consumed.Contains(request.Nonce) ||
                 request.Pid != context.Pid || request.Session != context.Session || request.BridgeHash != context.BridgeHash ||
                 request.GameHash != context.GameHash || request.ConfirmedWindowClass != context.ConfirmedWindowClass ||
@@ -65,7 +86,7 @@ internal sealed class WindowsSmokePolicy
             var window = SelectWindow(freshIdentity);
             if (window is null) return null;
             consumed.Add(request.Nonce); // Always before any external call. Failure never restores an attempt.
-            var grant = new SmokeGrant(request.Nonce, request.Stage, window.Value, request.ExpiresAt, request.PanelIndex);
+            var grant = new SmokeGrant(request.Nonce, request.Stage, window.Value, request.ExpiresAt, request.PanelIndex, request.FocusPath);
             armed.Add(grant.Nonce, grant);
             if (request.Stage == SmokeStage.Metadata) { metadataAttempted = true; pendingMetadata = grant; }
             else if (request.Stage == SmokeStage.UiResolve) { resolveAttempted = true; pendingResolve = grant; }
@@ -146,3 +167,4 @@ internal sealed class WindowsSmokePolicy
         }
     }
 }
+

@@ -271,7 +271,7 @@ Check(coveragePair.NativeOperations == 9 && coverageGuardChecks == 13 &&
     coveragePair.Coverage is { NodesRecorded: 2, Nodes.Length: 32, PanelCount: -1, SelectedPanelIndex: -1 },
     "coverage adds no native reservations or fresh guard calls; fake backend leaves unread panel count unknown");
 var coverageJson = System.Text.Json.JsonSerializer.Serialize(coveragePair.Coverage);
-Check(!coverageJson.Contains("fixture text") && coverageJson.Length < 6000,
+Check(!coverageJson.Contains("fixture text") && coverageJson.Length < 10000,
     "coverage output is bounded and contains no captured text");
 var beforeRoot = Read(new FakeBackend(), elapsed: () => 251);
 Check(beforeRoot.Coverage is { PanelCount: -1, SelectedPanelIndex: -1, NodesRecorded: 0 } &&
@@ -451,6 +451,134 @@ using (var unavailable = new NativeUiAdapterFixture { PanelCount = 2 })
         elapsedForTest: () => 0) is null && unavailable.Invocations.Count == calls,
         "unavailable panel consumes the only capture; even a new nonce cannot retry panel0");
 }
+// Explicit focus is canonical, immutable and terminal; default remains the old traversal.
+foreach (var invalid in new[] { "/", "/0", "0/", "00", "01", "-1", "+1", "1.0", "1e0", " 1", "1 ", "512", "0//1", "０", string.Join("/", Enumerable.Repeat("0", 13)) })
+{
+    Check(!UiSmokeFocusPath.Valid(invalid), "malformed/out-of-range/too-deep focus rejects");
+    var f = new FakeBackend();
+    Check(WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(), Request(SmokeStage.UiText) with { FocusPath = invalid },
+        f, () => identity, () => now, elapsedForTest: () => 0) is null && f.Calls == 0,
+        "invalid focus rejected before any backend call");
+    Check(WindowsSmokeReader.ReadOne(f, () => { }, () => 0, focusPath: invalid).StopReason == "focus_path_invalid" && f.Calls == 0,
+        "direct core also fails closed on invalid focus");
+}
+Check(!UiSmokeFocusPath.Valid(null), "null focus is not omitted default");
+foreach (var stage in new[] { SmokeStage.Metadata, SmokeStage.UiResolve })
+    Check(new WindowsSmokePolicy(context).TryConsume(Request(stage) with { FocusPath = "0" }, identity, now) is null,
+        "noncapture stage rejects focus");
+var focusPolicy = ReadyPanelPolicy();
+var focusRequest = Request(SmokeStage.UiText) with { PanelIndex = 4, FocusPath = "511" };
+var focusGrant = focusPolicy.TryConsume(focusRequest, identity, now)!;
+Check(!focusPolicy.TryBeginCall(focusGrant with { FocusPath = "0" }, identity, now) &&
+    focusPolicy.TryBeginCall(focusGrant, identity, now) &&
+    !focusPolicy.CheckStartedUi(focusGrant with { FocusPath = "" }, identity, now),
+    "focus string is bound to both armed and active immutable grant");
+focusPolicy.CompleteUi(focusGrant);
+Check(focusPolicy.TryConsume(focusRequest with { FocusPath = "0" }, identity, now) is null,
+    "consumed nonce cannot select another focus");
+var replacementPolicy = ReadyPanelPolicy();
+var replacementRequest = Request(SmokeStage.UiText) with { PanelIndex = 4, FocusPath = "511" };
+var focusReplacementBackend = new FakeBackend { Children = 512, OnlyTextChildIndex = 511 };
+var replacementChecks = 0;
+var focusReplacementResult = WindowsSmokeReader.TryReadAuthorized(replacementPolicy, replacementRequest, focusReplacementBackend,
+    () => { if (++replacementChecks == 2) replacementRequest = replacementRequest with { PanelIndex = 0, FocusPath = "0" }; return identity; },
+    () => now, elapsedForTest: () => 0);
+Check(focusReplacementResult?.Text == "fixture text" && focusReplacementBackend.ResolvedPanelIndex == 4 &&
+    focusReplacementBackend.ChildReads == 1 && focusReplacementResult.Coverage!.Nodes[1] is { ParentSlot: 0, ChildIndex: 511, Depth: 1 },
+    "replacement request cannot redirect captured grant; index511 fetches one child, not512 siblings");
+Check(focusReplacementResult!.Coverage!.Nodes[0] is { FocusAncestor: 1, TextType: 0, ChildrenTruncated: 0, ChildCountBucket: 9 } &&
+    focusReplacementResult.Coverage is { RequestedFocusDepth: 1, FocusResolved: 1 },
+    "focus ancestor reports numeric path and explicit-selection status, not fictitious width pruning");
+foreach (var hidden in new[] { true, false })
+{
+    var f = new FakeBackend { RootVisible = !hidden, Children = 1 };
+    var pFocus = ReadyPanelPolicy();
+    var outcome = WindowsSmokeReader.TryReadAuthorized(pFocus, Request(SmokeStage.UiText) with { FocusPath = "1" },
+        f, () => identity, () => now, elapsedForTest: () => 0)!;
+    Check(outcome.StopReason == (hidden ? "focus_ancestor_hidden" : "focus_child_unavailable") &&
+        f.ChildReads == 0 && f.TextReads == 0 && outcome.Coverage!.FocusResolved == 0,
+        "hidden or unavailable focus stops before child, no fallback/ancestor text");
+    var calls = f.Calls;
+    Check(WindowsSmokeReader.TryReadAuthorized(pFocus, Request(SmokeStage.UiText), f, () => identity, () => now,
+        elapsedForTest: () => 0) is null && f.Calls == calls, "failed focus consumes the only capture");
+}
+foreach (var stale in new[] { focusRequest with { Session = "stale" }, focusRequest with { ExpiresAt = now } })
+{
+    var f = new FakeBackend();
+    Check(WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(), stale, f, () => identity, () => now,
+        elapsedForTest: () => 0) is null && f.Calls == 0, "focused stale/expired authorization reaches no backend");
+}
+var nullFocus = WindowsSmokeReader.ReadOne(new FakeBackend { NullChild = true }, () => { }, () => 0, focusPath: "0");
+Check(nullFocus.StopReason == "focus_root_unavailable" && nullFocus.Coverage!.FocusResolved == 0 &&
+    nullFocus.Nodes == 1, "null selected child fails terminally without fabricated target/fallback");
+var negativeFocus = WindowsSmokeReader.ReadOne(new FakeBackend { Children = -1 }, () => { }, () => 0, focusPath: "0");
+Check(negativeFocus.StopReason == "backend_failure" && negativeFocus.Coverage!.Nodes[0].ChildCountState == 1,
+    "negative focus child count preserves original fail-closed check");
+var focusedGuards = 0;
+var focusedCounts = WindowsSmokeReader.ReadOne(new FakeBackend(), () => focusedGuards++, () => 0, focusPath: "0");
+Check(focusedCounts.NativeOperations == 8 && focusedGuards == 12 &&
+    focusedCounts.Diagnostics!.Stages.Sum(stage => stage.GuardCalls) == 12,
+    "focus diagnostics add no native work: exact8 fake reservations/12 fresh guards");
+var focusBudget = new FakeBackend { ResolutionCalls = 384 };
+Check(WindowsSmokeReader.ReadOne(focusBudget, () => { }, () => 200, focusPath: "0").StopReason == "native_call_budget" &&
+    focusBudget.Calls == 384 && focusBudget.ChildReads == 0, "focus ancestor work cannot exceed shared384 operation cap");
+var focusTime = new FakeBackend();
+Check(WindowsSmokeReader.ReadOne(focusTime, () => { }, () => 250.001, focusPath: "0").StopReason == "time_budget" &&
+    focusTime.Calls == 0, "focus retains shared250ms soft deadline");
+foreach (var depth in new[] { 12, 13 })
+{
+    using var f = new NativeUiAdapterFixture { TextDepth = depth };
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), f.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var guards = 0;
+    var outcome = WindowsSmokeReader.ReadOne(b, () => guards++, () => 0,
+        focusPath: string.Join("/", Enumerable.Repeat("0", 12)));
+    Check(outcome.Nodes == 13 && outcome.Coverage!.Nodes[12] is { Depth: 12, ParentSlot: 11, ChildIndex: 0, FocusAncestor: 0 } &&
+        outcome.Coverage.Nodes.Take(12).All(n => n.FocusAncestor == 1 && n.TextType == 0),
+        "ancestors count toward global depth/nodes; target starts at depth12, not0");
+    Check(depth == 12 ? outcome.Text == "fixture-native-path" : outcome.Text is null &&
+        outcome.StopReason == "bounded_no_text" && outcome.Coverage!.Nodes[12].DepthPruned == 1,
+        "depth12 target eligible but depth13 descendant remains pruned after focus");
+    Check(outcome.NativeOperations <= 384 && f.RootCreates <= 64 &&
+        f.PanelIndices.SequenceEqual(new[] { 0 }) && guards == outcome.Diagnostics!.Stages.Sum(stage => stage.GuardCalls),
+        "focus uses original protected adapter with sharedcaps and fresh guards");
+    b.Dispose();
+    Check(f.LiveRoots == 0 && f.RootFrees == f.RootCreates, "focused native path cleans every retained root");
+}
+using (var failedFocus = new NativeUiAdapterFixture { TextDepth = 12 })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), failedFocus.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0, focusPath: "1");
+    Check(outcome.StopReason == "focus_child_unavailable" && outcome.Coverage!.FocusResolved == 0,
+        "native-adapter focus failure stops at actual child count");
+    b.Dispose();
+    Check(failedFocus.LiveRoots == 0 && failedFocus.RootFrees == failedFocus.RootCreates,
+        "failed focus also frees all temporary roots");
+}
+var branchingFocus = new FocusTreeBackend();
+var nodeCappedFocus = WindowsSmokeReader.ReadOne(branchingFocus, () => { }, () => 0, focusPath: "0");
+Check(nodeCappedFocus.StopReason == "node_budget" && nodeCappedFocus.Nodes == 32 &&
+    nodeCappedFocus.Coverage!.NodesRecorded == 32 && nodeCappedFocus.NativeOperations <= 384,
+    "focus ancestor and branching subtree share the32-node cap");
+for (var slot = 1; slot < nodeCappedFocus.Nodes; slot++)
+{
+    var n = nodeCappedFocus.Coverage!.Nodes[slot];
+    Check(n.ParentSlot >= 0 && n.ParentSlot < slot && n.Depth == nodeCappedFocus.Coverage.Nodes[n.ParentSlot].Depth + 1 &&
+        n.ChildIndex is >= 0 and < 8, "numeric parent slots reconstruct actual DFS edges including sibling returns");
+}
+var partialFocusGuards = 0;
+var partialFocus = WindowsSmokeReader.ReadOne(new FakeBackend(), () => {
+    if (++partialFocusGuards == 5) throw new UiSmokeStopped("fixture_guard_stop");
+}, () => 0, focusPath: "0");
+Check(partialFocus.StopReason == "fixture_guard_stop" &&
+    partialFocus.Coverage!.Nodes[0] is { FocusAncestor: 1, Visibility: 3, ChildCountState: 1 } &&
+    partialFocus.Coverage.FocusResolved == 0, "interrupted ancestor count remains incomplete, never resolved/false");
+var defaultEdges = WindowsSmokeReader.ReadOne(new FakeBackend(), () => { }, () => 0);
+Check(defaultEdges.NativeOperations == 9 && defaultEdges.Coverage!.Nodes[0] is { ParentSlot: -1, ChildIndex: -1, FocusAncestor: 0 } &&
+    defaultEdges.Coverage.Nodes[1] is { ParentSlot: 0, ChildIndex: 0, FocusAncestor: 0 },
+    "empty focus preserves old calls while recording existing DFS edges");
+
 // Strict stage request parsing, without launching a host or using a game module.
 var parserRoot = Path.Combine(Path.GetTempPath(), "football-ui-request-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(parserRoot);
@@ -466,6 +594,27 @@ try
         File.WriteAllText(path, json);
         Check(UiCandidateConfiguration.ReadRequest(path).Stage == stage, "only explicit supported stage parses");
         Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 0, "legacy omitted panel_index defaults to0");
+        Check(UiCandidateConfiguration.ReadRequest(path).FocusPath == "", "omitted focus is backwards-compatible empty path");
+        foreach (var token in new[] { "null", "0", "true", "\"00\"", "\"512\"", "\"0/\"" })
+        {
+            File.WriteAllText(path, json[..^1] + ",\"focus_path\":" + token + "}");
+            var rejectedFocus = false;
+            try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { rejectedFocus = true; }
+            Check(rejectedFocus, "focus JSON rejects wrongtype/noncanonical values");
+        }
+        File.WriteAllText(path, json[..^1] + ",\"focus_path\":\"0/511\"}");
+        if (stage == SmokeStage.UiText) Check(UiCandidateConfiguration.ReadRequest(path).FocusPath == "0/511", "canonical focus parses");
+        else
+        {
+            var rejectedFocus = false;
+            try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { rejectedFocus = true; }
+            Check(rejectedFocus, "noncapture focus rejects");
+        }
+        File.WriteAllText(path, json[..^1] + ",\"focus_path\":\"\",\"focus_path\":\"0\"}");
+        var duplicateFocus = false;
+        try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { duplicateFocus = true; }
+        Check(duplicateFocus, "duplicate focus rejected");
+
         File.WriteAllText(path, json[..^1] + ",\"panel_index\":0}");
         Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 0, "explicit default index remains valid");
         foreach (var token in new[] { "-1", "32", "2147483648", "1.0", "1e0", "-0", "\"1\"", "true", "null" })
@@ -505,7 +654,7 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
 {
     public string VerifiedModuleHash => new('b', 64);
     public void Dispose() { }
-    public bool RootVisible = true, RootBoundsPositive = true, TextBoundsPositive = true, RootIsText, ExcessiveText, NoText, EmptyText;
+    public bool RootVisible = true, RootBoundsPositive = true, TextBoundsPositive = true, RootIsText, ExcessiveText, NoText, EmptyText, NullChild;
     public int OnlyTextChildIndex = -1, ResolvedPanelIndex = -1;
     public int ResolutionCalls = 1, Calls, ChildReads, BoundsReads, TypeReads, TextReads, Children = 8;
     private void Touch(UiSmokeBudget budget) { budget.BeforeNative(); Calls++; }
@@ -518,5 +667,21 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
     public string ReadText(nint element, int maximumCodeUnits, UiSmokeBudget budget)
     { Touch(budget); TextReads++; return EmptyText ? "" : ExcessiveText ? new string('x', 129) : "fixture text"; }
     public int ChildCount(nint element, UiSmokeBudget budget) { Touch(budget); return element == 1 ? Children : 0; }
-    public nint Child(nint element, int index, UiSmokeBudget budget) { Touch(budget); ChildReads++; return index + 2; }
+    public nint Child(nint element, int index, UiSmokeBudget budget) { Touch(budget); ChildReads++; return NullChild ? 0 : index + 2; }
+}
+
+
+
+// All native-like actions reserve via the same budget, but this tree owns no runtime objects.
+sealed class FocusTreeBackend : IWindowsUiSmokeBackend
+{
+    public string VerifiedModuleHash => new('b', 64);
+    public void Dispose() { }
+    public nint ResolvePanelRoot(int panelIndex, UiSmokeBudget budget) { budget.BeforeNative(); return 1; }
+    public bool Visible(nint element, UiSmokeBudget budget) { budget.BeforeNative(); return true; }
+    public bool IsTextElement(nint element, UiSmokeBudget budget) { budget.BeforeNative(); return false; }
+    public UiSmokeBounds Bounds(nint element, UiSmokeBudget budget) => throw new Exception("Nontext bounds must not run.");
+    public string ReadText(nint element, int maximumCodeUnits, UiSmokeBudget budget) => throw new Exception("Nontext getter must not run.");
+    public int ChildCount(nint element, UiSmokeBudget budget) { budget.BeforeNative(); return 2; }
+    public nint Child(nint element, int index, UiSmokeBudget budget) { budget.BeforeNative(); return element * 2 + index; }
 }

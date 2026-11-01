@@ -4,9 +4,13 @@ param(
     [Parameter(Mandatory=$true)][string]$CandidateDirectory,
     [Parameter(Mandatory=$true)][ValidateSet('metadata','ui_resolve','ui_text')][string]$Stage,
     [Parameter(Mandatory=$true)][switch]$StableCurrentSessionPageConfirmed,
-    [ValidatePattern('\A(0|[1-9]|[12][0-9]|3[01])\z')][string]$PanelIndex = '0'
+    [ValidatePattern('\A(0|[1-9]|[12][0-9]|3[01])\z')][string]$PanelIndex = '0',
+    [AllowEmptyString()][string]$FocusPath = ''
 )
 $ErrorActionPreference = 'Stop'
+if ($PSBoundParameters.ContainsKey('FocusPath') -and $Stage -ne 'ui_text') { throw 'Explicit -FocusPath is supported only for ui_text.' }
+if ($FocusPath.Length -gt 47 -or ($FocusPath -ne '' -and
+    $FocusPath -cnotmatch '\A(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])(?:/(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])){0,11}\z')) { throw 'Canonical focus path of at most12 child indices0..511 required.' }
 if ($PSBoundParameters.ContainsKey('PanelIndex') -and $Stage -ne 'ui_text') { throw 'Explicit -PanelIndex is supported only for ui_text.' }
 if (-not $StableCurrentSessionPageConfirmed) { throw 'Current-session stable-page confirmation required.' }
 if (-not ($CandidateDirectory -match '^[A-Za-z]:[\\/]')) { throw 'Absolute private candidate directory required.' }
@@ -50,6 +54,7 @@ $request = [ordered]@{
     requested_at = $now.ToString('O'); expires_at = $now.AddSeconds(30).ToString('O')
 }
 if ($PSBoundParameters.ContainsKey('PanelIndex')) { $request['panel_index'] = [int]$PanelIndex }
+if ($PSBoundParameters.ContainsKey('FocusPath')) { $request['focus_path'] = $FocusPath }
 $path = Join-Path $root 'ui-stage-request.json'
 foreach ($p in @($path, ($path + '.tmp'))) {
     if ([IO.File]::Exists($p) -and (([IO.File]::GetAttributes($p) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'Reparse request refused.' }
@@ -58,6 +63,8 @@ foreach ($p in @($path, ($path + '.tmp'))) {
 Move-Item -LiteralPath ($path + '.tmp') -Destination $path -Force
 Write-Output "Wrote one 30-second $Stage request for PID $($session.pid), session $($session.session_id). No subsequent stage is automatic."
 if ($Stage -eq 'ui_text') {
+    Write-Output 'Focus selects only the explicitly authorized child path, with actual child-count/ancestor-visibility checks, no sibling prefetch or fallback; ancestors share all budgets. No real path is authorized by this helper.'
     Write-Output "Requested panel index: $PanelIndex. One panel only; unavailable index is terminal, with no fallback."
     Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 12, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
 }
+
