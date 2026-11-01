@@ -20,6 +20,7 @@ import uvicorn
 
 from football_assistant_contracts.validation import validate_observation
 from .business_store import BusinessSnapshotStore
+from .windows_discovery_import import IMPORT_ROUTE, MAX_IMPORT_BYTES, empty_snapshot, parse_import
 from .config import Settings
 from .display_profile import MAX_FACTS, project_display_profile
 from .storage import ObservationConflict, ObservationStore, private_directory, utc_now
@@ -70,6 +71,10 @@ class BodyLimitMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        # This authenticated endpoint enforces its dedicated streaming cap itself.
+        # Never preempt authentication or clear its snapshot for an unauthorized body.
+        if scope.get("method") == "POST" and scope.get("path") == IMPORT_ROUTE:
             return await self.app(scope, receive, send)
         messages, total = [], 0
         while True:
@@ -123,6 +128,8 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
         app.state.business_snapshots = BusinessSnapshotStore()
+        app.state.windows_discovery = empty_snapshot()
+        app.state.windows_discovery_generation = 0
         from .ui_capture_control import UiCaptureController
         app.state.ui_capture_control = UiCaptureController(settings.bridge_private_root)
         companion = None
@@ -135,6 +142,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             yield
         finally:
             app.state.business_snapshots.invalidate()
+            app.state.windows_discovery = empty_snapshot()
             observations.close()
             if companion is not None:
                 companion.close()
@@ -194,6 +202,36 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     @app.get("/v1/reader/business/snapshot",dependencies=[Depends(authorized)])
     async def business_reader_snapshot():
         return app.state.business_snapshots.read()
+
+    @app.get("/v1/reader/windows-discovery", dependencies=[Depends(authorized)])
+    async def windows_discovery_snapshot():
+        return app.state.windows_discovery
+
+    @app.delete("/v1/reader/windows-discovery", dependencies=[Depends(authorized)])
+    async def clear_windows_discovery():
+        app.state.windows_discovery_generation += 1
+        app.state.windows_discovery = empty_snapshot()
+        return app.state.windows_discovery
+
+    @app.post(IMPORT_ROUTE, dependencies=[Depends(authorized)])
+    async def import_windows_discovery(request: Request):
+        # Clear before parsing: malformed/new evidence can never preserve an older display.
+        app.state.windows_discovery_generation += 1
+        generation = app.state.windows_discovery_generation
+        app.state.windows_discovery = empty_snapshot()
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_IMPORT_BYTES:
+                raise HTTPException(413, detail={"code": "request_too_large"})
+            raw.extend(chunk)
+        try:
+            snapshot = parse_import(bytes(raw), utc_now())
+        except ValueError:
+            raise HTTPException(422, detail={"code": "invalid_windows_discovery_import"}) from None
+        if generation != app.state.windows_discovery_generation:
+            raise HTTPException(409, detail={"code": "superseded_windows_discovery_import"})
+        app.state.windows_discovery = snapshot
+        return snapshot
 
     @app.get("/v1/reader/profile",dependencies=[Depends(authorized)])
     async def reader_profile():

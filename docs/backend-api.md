@@ -264,3 +264,56 @@ Neither a category such as goalkeeper nor a name seen in another capture binds
 these rows to a player. No historical joining, navigation-name caching, player ID,
 individual advice or provider call is added. Unrelated raw UI text is not included
 in this endpoint. Capture digests detect content changes only, never identity.
+
+### Windows manual discovery import (intermediate integration proof, not live Reader)
+
+All three endpoints require the existing local bearer token:
+
+- `POST /v1/reader/windows-discovery/import`: strict UTF-8 JSON, at most32768actual
+  bytes, exact top-level `{capture, expected_source, operator_context?}`. `capture`
+  is one complete `single_shot_raw_discovery_result` event. `expected_source` has
+  exactly `pid`, `entry_tid`, `session_id`, `bridge_sha256`, `game_sha256`, copied
+  from independently retained approved session evidence, not inferred from UI text.
+- `GET /v1/reader/windows-discovery`: returns the current in-memory manual snapshot
+  or `status=unavailable`. This does not query or refresh the game.
+- `DELETE /v1/reader/windows-discovery`: clears the snapshot and invalidates earlier
+  in-flight imports. Restarting the backend also clears it.
+
+A successful response has `status=manual_import_snapshot`,
+`import_mode=manual_single_event`, `imported_at` (server receipt time), and
+`projection`. The projection preserves `partial_display_state`, displayed position,
+exact label/value/container paths, unverified identity, null entity ID, unknown
+freshness and null capture timestamp. `imported_at` is **not** capture time. Manual
+JSON is not authenticated native evidence; source checks detect mismatches, not
+fabrication. Optional operator context remains separate and cannot supply identity.
+
+No observation/business store, default reader support, current-page live status,
+model context or native capability is promoted. Invalid authenticated imports,
+including malformed/duplicate JSON, wrong source/layout and over-size streams,
+clear earlier imported data; unauthorized requests cannot clear it. Overlapping
+imports/DELETE use a generation fence, so an old upload cannot repopulate cleared
+state. Errors do not echo raw evidence or credentials.
+
+Companion settings provide two explicit paste boxes: the event and expected source.
+No file paths, token or network options are accepted by the renderer. Raw JSON is
+preserved to backend validation. Local-invalid import attempts explicitly clear
+old server data once; a failed clear warns that prior data may remain. There is no
+startup query, background polling, auto-import or new native capture. After import,
+asking the pet `查看导入诊断` in real-service mode performs one deterministic read
+of this endpoint and returns the position display and source paths with unknown
+freshness/identity warnings. It makes no model/advice request. Ordinary queries
+and normal unsupported-reader behavior are unchanged.
+
+This is an executable **intermediate** end-to-end slice, not macOS-parity acceptance
+or a real-time MVP. Live timestamps/session invalidation, trustworthy automatic
+capture transport, wider same-capture field coverage and real packaged-app testing
+remain separate work. The synthetic proof is:
+
+```text
+python scripts/diagnostics/windows_discovery_import_e2e.py
+```
+
+It starts a temporary local reader-only HTTP service and uses the actual controlled
+Node transport and pet reader client: import invented TEST evidence, read the
+labelled position, reject duplicate raw JSON and clear previous state, reimport,
+then DELETE. No FM, Electron, private real evidence or model provider is invoked.

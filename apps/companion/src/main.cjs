@@ -194,6 +194,9 @@ function registerIpc() {
   handle('update-check', () => updateController.check());
   handle('update-download', () => updateController.download());
   handle('get-state', () => runtime.state());
+  handle('windows-discovery-import', (...args) => { if (args.length !== 1) throw Error('仅接受一个诊断导入对象。'); return runtime.realClient.importWindowsDiscoveryText(args[0]); });
+  handle('windows-discovery-get', (...args) => { if (args.length) throw Error('此操作不接受参数。'); return runtime.realClient.windowsDiscovery(); });
+  handle('windows-discovery-clear', (...args) => { if (args.length) throw Error('此操作不接受参数。'); return runtime.realClient.clearWindowsDiscovery(); });
   handle('refresh-reader-previews', () => runtime.refreshReaderPreviews());
   handle('set-capture-profile', profile => runtime.setCaptureProfile(profile));
   handle('set-mode', mode => { speech.stop(); return runtime.setMode(mode); });

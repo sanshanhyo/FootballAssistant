@@ -1,4 +1,5 @@
 'use strict';
+const { asksImportedDiagnostic } = require('./windows-discovery.cjs');
 
 const { UiChangeTracker } = require('./ui-changes.cjs');
 const { EventEmitter } = require('node:events');
@@ -241,7 +242,7 @@ class CompanionRuntime extends EventEmitter {
     const id = `${request.id}:snapshot`;
     const labels = { running: '读取模拟观测', completed: '模拟观测读取完成', cancelled: '模拟读取已取消', error: '模拟读取失败' };
     if (this.mode === 'real') Object.assign(labels, { running: '请求真实服务', completed: '真实服务已回复', cancelled: '真实请求已取消', error: '真实请求失败' });
-    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.capability ? (request.adviceMode === 'ui_evidence' ? 'agent.ui-advice' : 'agent.business-advice') : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
+    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.diagnostic ? 'reader.windows-discovery' : request.capability ? (request.adviceMode === 'ui_evidence' ? 'agent.ui-advice' : 'agent.business-advice') : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
     this.tools.set(id, event);
     if (this.tools.size > 100) this.tools.delete(this.tools.keys().next().value);
     this.publish(event);
@@ -253,10 +254,11 @@ class CompanionRuntime extends EventEmitter {
     if (this.mode !== 'mock' && typeof this.realClient.reply !== 'function') throw new Error('真实后端尚未接入，消息没有发送；可显式切换到模拟模式演示。');
     if (this.mockDisconnected) throw new Error('模拟连接已失效；请选择其他模拟场景恢复连接。');
     if (this.pending.size >= 4) throw new Error('已有 4 个请求在处理，请稍候或取消。');
-    const capability = this.mode === 'real' ? adviceCapability(message, input?.capability) : null;
+    const diagnostic = this.mode === 'real' && asksImportedDiagnostic(message);
+    const capability = this.mode === 'real' && !diagnostic ? adviceCapability(message, input?.capability) : null;
     const adviceMode = input?.adviceMode ?? 'ui_evidence';
     if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
-    const request = { capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const request = { diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {
       // Previous cards are historical, not current values after a new read or failure.
       for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];

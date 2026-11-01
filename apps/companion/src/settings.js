@@ -462,6 +462,7 @@
   if (!api || !UI) { showError('设置桥接未就绪，请从桌宠菜单打开设置。'); return; }
   bind();
   window.CompanionBridgeSettings?.mountBridgeSettings({ document, api }).refresh();
+  window.CompanionDiscoverySettings?.mountDiscoverySettings({ document, api });
   unsubscribe = api.subscribe(onEvent);
   perform(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeech();

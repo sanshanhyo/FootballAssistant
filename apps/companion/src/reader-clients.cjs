@@ -1,4 +1,5 @@
 'use strict';
+const { validateImport, asksImportedDiagnostic, diagnosticReply } = require('./windows-discovery.cjs');
 
 const MOCK_LIMITATIONS = Object.freeze([
   '这是前端模拟数据，没有连接游戏、Reader 或模型服务。',
@@ -184,6 +185,24 @@ class RealReaderClient {
     }
     return { metadata: meta, readiness: envelope, cards: fields.length ? [{ id: snapshot.snapshot_id, title: '已读取业务事实', metadata: meta, fields }] : [] };
   }
+  async windowsDiscovery({ signal } = {}) {
+    return this.request('/v1/reader/windows-discovery', undefined, { signal });
+  }
+  async importWindowsDiscovery(input, { signal } = {}) {
+    return this.request('/v1/reader/windows-discovery/import', validateImport(input), { signal, timeoutMs: 5_000 });
+  }
+  async importWindowsDiscoveryText(rawJson, { signal } = {}) {
+    if (typeof rawJson !== 'string' || !rawJson.trimStart().startsWith('{') || Buffer.byteLength(rawJson, 'utf8') > 32768) {
+      try { await this.clearWindowsDiscovery({ signal }); }
+      catch { throw new Error('导入文本无效，且清除失败；服务端可能仍保留上次导入。'); }
+      throw new Error('诊断导入仅接受不超过 32 KiB 的 JSON 文本，不接受文件路径；上次导入已清除。');
+    }
+    // Preserve duplicate keys exactly for the backend strict JSON parser.
+    return this.request('/v1/reader/windows-discovery/import', undefined, { signal, timeoutMs: 5_000, rawJson });
+  }
+  async clearWindowsDiscovery({ signal } = {}) {
+    return this.request('/v1/reader/windows-discovery', undefined, { signal, method: 'DELETE' });
+  }
   async setCaptureProfile(profile, { signal } = {}) {
     if (!['schedule', 'current_page_attributes', 'tactics', 'next_match'].includes(profile)) throw new Error('不支持的页面读取类型。');
     return this.request('/v1/reader/capture-profile', { profile }, { signal, timeoutMs: 5_000 });
@@ -211,6 +230,8 @@ class RealReaderClient {
     }));
   }
   async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
+    // Explicit diagnostic questions are deterministic read-only tooling, never model context.
+    if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
     if (capability && adviceMode === 'ui_evidence') {
       const result = await this.request('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability }, { signal });
       const provenance = result.provenance;

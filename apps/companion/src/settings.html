@@ -53,6 +53,17 @@
           </form>
         </section>
         <section class="card"><div class="card-heading"><h2>Reader 当前页面预览</h2><button id="refresh-reader" class="secondary-button">刷新</button></div><p class="muted">先在游戏里打开对应页面，再点该卡的“读取当前页”。这只切换本机采样范围，不是全局 FM API，不修改游戏，也不调用模型。必须等采样范围已应用且新鲜内容确认后才算完成；属性不绑定球员身份。向桌宠输入“看看我的赛程”或“分析我的战术”才会请求建议。</p><div id="reader-previews" class="stack" aria-live="polite"></div></section>
+        <section class="card" aria-labelledby="discovery-title">
+          <div class="card-heading"><h2 id="discovery-title">Windows 手动诊断导入</h2><span class="badge">局部显示 · 非业务数据</span></div>
+          <p class="muted">只粘贴一次已授权采集的 Discovery JSON 与对应 expected_source JSON。不会读取文件路径、监听游戏、重新采集或调用模型。导入时间不是采集时间；球员身份与内容新鲜度始终未知。每次点击导入都会替换旧诊断；新输入无效时也会清除旧导入，连接失败时会明确提示。</p>
+          <label for="discovery-capture">单条 Discovery 采集 JSON</label><textarea id="discovery-capture" rows="5" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴单条 capture JSON 对象"></textarea>
+          <label for="discovery-source">预期来源 expected_source JSON</label><textarea id="discovery-source" rows="3" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴与本次采集对应的 expected_source JSON 对象"></textarea>
+          <div class="row-actions"><button id="discovery-import" class="primary-button">校验并导入这一次</button><button id="discovery-refresh" class="secondary-button">查看已导入诊断</button><button id="discovery-clear" class="text-button danger">清除导入</button></div>
+          <p id="discovery-status" class="service-note" role="status">尚未查询；只有点击按钮才会访问本机诊断接口。</p>
+          <p id="discovery-warning" class="muted">手动导入、局部显示；身份未验证，新鲜度未知。不能据此确认当前球员、完整资料或提供个体建议。</p>
+          <dl id="discovery-fields" class="metadata-fields"></dl>
+          <p class="muted">导入后，在真实服务模式中对桌宠说“查看导入诊断”，可获得同一份显示字段与来源路径的确定性回复；不会发送给模型。</p>
+        </section>
         <section class="card"><div class="card-heading"><h2>模拟数据演示</h2><span class="badge synthetic">仅演示</span></div><p class="muted">示例会显示在桌宠气泡中，不读取游戏，也不调用模型。</p><div class="inline-controls"><label class="sr-only" for="scenario">模拟数据场景</label><select id="scenario"><option value="default">默认观测</option><option value="missing">缺失数据</option><option value="stale">过期数据</option><option value="partial">不完整数据</option><option value="disconnected">连接中断</option></select><button id="simulate-scenario" class="primary-button">发送示例</button></div></section>
         <section class="card"><div class="card-heading"><h2>任务进度</h2><span id="task-count" class="subtle-label">暂无任务</span></div><div id="tasks" class="stack" aria-live="polite"></div></section>
         <section class="card"><div class="card-heading"><h2>最近观测与信息卡</h2><span id="observation-count" class="subtle-label">暂无观测</span></div><div id="observations" class="stack"></div></section>
@@ -81,6 +92,7 @@
   </div>
   <script src="ui-state.js"></script>
   <script src="bridge-settings.js"></script>
+  <script src="discovery-settings.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>
