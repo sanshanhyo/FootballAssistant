@@ -174,8 +174,17 @@ sealed class BatchTreeFixture : IDisposable
         var focus = SiblingFocus(profile); EnsurePath(focus);
         foreach (var path in relativePaths) EnsurePath(focus + "/" + path);
     }
+    internal const string FrontierRoot = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/1";
+    internal readonly HashSet<nint> ZeroBoundsNodes = new();
+    internal void BuildFrontier(bool census, params string[] suffixes)
+    {
+        Children[103]=new(); var root=census?"0":FrontierRoot;
+        EnsurePath(root); if(census)EnsurePath("0/19");
+        foreach(var suffix in suffixes)EnsurePath(root+"/"+suffix);
+    }
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
+    { "tactics_root_census" => "0", "tactics_frontier35" => FrontierRoot,
+      "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
       "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
        _ when profile.StartsWith("schedule_row",StringComparison.Ordinal) => SchedulePageRoot,
        _ => throw new ArgumentException() };
@@ -312,7 +321,7 @@ sealed class BatchTreeFixture : IDisposable
         if (name == "get_Count") { Marshal.WriteInt32(panelCountPayload, 1); return 205; }
         if (name == "get_visualTree") return 103;
         if (name == "get_visible") { Marshal.WriteByte(boolPayload, HiddenNodes.Contains(instance) ? (byte)0 : (byte)1); return 202; }
-        if (name == "get_worldBound") return 203;
+        if (name == "get_worldBound") { Marshal.Copy(new float[]{0,0,ZeroBoundsNodes.Contains(instance)?0:10,10},0,rectPayload,4); return 203; }
         if (name == "get_childCount") { Marshal.WriteInt32(countPayload, Children[instance].Count); return 201; }
         if (name == "get_text") { TextReads.Add(instance); return ChangePostAnchor && panelOpens >= 4 && instance == anchor1 ? changedAnchor : nodeTexts[instance]; }
         if (name == "get_Item")

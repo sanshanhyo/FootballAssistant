@@ -16,7 +16,8 @@ internal readonly record struct DiscoveryFocusEdge(int Depth, int RequestedChild
 // Numeric existing-read topology; -1 means unknown/not read. Stages: entered1,
 // visibility2, type3, count4. Parent -1/edge -1 denotes the selected subtree root.
 internal readonly record struct DiscoveryTopologyNode(int ParentRecordIndex, int ChildEdge,
-    int GlobalDepth, int Visible, int TextElement, int ChildCount, int Stage);
+    int GlobalDepth, int Visible, int TextElement, int ChildCount, int Stage,
+    int BoundsEligible = -1, int TextReadCompleted = -1, int TextLength = -1);
 internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryText[] Observations,
     int NativeOperations, double ElapsedMilliseconds, int Nodes, int TotalRoots, int PeakRoots,
     bool TraversalBounded, DiscoveryRequest Request, int PanelIndex, string FocusPath)
@@ -82,10 +83,13 @@ internal static class DiscoveryCollector
             var alignment = policy.Approval.SelectionProfile == "tactics_alignment_candidate";
             var siblingDepth = policy.Approval.SelectionProfile switch {
                 "tactics_sibling12" => 12, "tactics_sibling7" => 7, "tactics_sibling4" => 4, _ => -1 };
+            var census = policy.Approval.SelectionProfile == "tactics_root_census";
+            var frontier = policy.Approval.SelectionProfile == "tactics_frontier35";
+            var diagnostic = siblingDepth >= 0 || census || frontier;
             var sibling = siblingDepth >= 0;
-            var topology = sibling ? new DiscoveryTopologyNode[MaximumNodes] : null;
+            var topology = diagnostic ? new DiscoveryTopologyNode[MaximumNodes] : null;
             var topologyCount = 0;
-            var focusTrace = alignment || sibling ? new DiscoveryFocusEdge[35] : null;
+            var focusTrace = alignment || diagnostic ? new DiscoveryFocusEdge[35] : null;
             var focusTraceCount = 0;
             void TraceFocus()
             {
@@ -125,24 +129,28 @@ internal static class DiscoveryCollector
                     Charge();
                     var record = topology is null ? -1 : topologyCount++;
                     var visible = -1; var textElement = -1; var childCount = -1; var stage = 1;
+                    var boundsEligible = -1; var textRead = -1; var textLength = -1;
                     void TraceNode() {
                         if (topology is not null) topology[record] = new(parentRecord, childEdge,
-                            depth, visible, textElement, childCount, stage);
+                            depth, visible, textElement, childCount, stage, boundsEligible, textRead, textLength);
                     }
                     TraceNode();
                     visible = backend.Visible(node, budget) ? 1 : 0; stage = 2; TraceNode();
-                    if (visible == 0) { if (sibling) bounded = true; return; }
+                    if (visible == 0) { if (diagnostic) bounded = true; return; }
                     textElement = backend.IsTextElement(node, budget) ? 1 : 0; stage = 3; TraceNode();
-                    if (textElement == 1 && backend.Bounds(node, budget).PositiveFinite)
+                    if (textElement == 1) { boundsEligible = backend.Bounds(node, budget).PositiveFinite ? 1 : 0; TraceNode(); }
+                    if (boundsEligible == 1)
                     {
                         // Complete text only. No silently truncated name/anchor candidates.
+                        textRead = 0; TraceNode();
                         var text = backend.ReadAnchorText(node, budget);
+                        textRead = 1; textLength = text.Length; TraceNode();
                         if (!string.IsNullOrWhiteSpace(text)) texts.Add(new(path, text));
                     }
                     if (StopWork()) return;
                     var count = backend.ChildCount(node, budget);
                     childCount = count; stage = 4; TraceNode();
-                    var maximumDepth = sibling ? TargetedDiscoveryCollector.MaximumDepth : MaximumDepth;
+                    var maximumDepth = diagnostic ? TargetedDiscoveryCollector.MaximumDepth : MaximumDepth;
                     if (count > 8 || (depth >= maximumDepth && count > 0)) bounded = true;
                     if (depth >= maximumDepth) return;
                     // Single-pass child0-first DFS. Global depth32 (fixed probe48);
@@ -154,6 +162,38 @@ internal static class DiscoveryCollector
                         using var child = backend.Child(node, index, budget);
                         if (child is null) throw new UiSmokeStopped("discovery_child_unavailable");
                         Visit(child, depth + 1, Join(path, index), record, index);
+                    }
+                }
+                void Census(BatchObject node, int depth)
+                {
+                    if (StopWork()) return;
+                    Charge();
+                    var rootRecord = topologyCount++;
+                    topology![rootRecord] = new(-1,-1,depth,-1,-1,-1,1);
+                    var visible = backend.Visible(node,budget) ? 1 : 0;
+                    topology[rootRecord] = new(-1,-1,depth,visible,-1,-1,2);
+                    if (visible == 0) { bounded = true; return; }
+                    var count = backend.ChildCount(node,budget);
+                    topology[rootRecord] = new(-1,-1,depth,1,-1,count,4);
+                    if (count != 20) throw new UiSmokeStopped("census_root_shape_changed");
+                    // Fixed census only: no recursive Visit, text getter, name or sibling prefetch.
+                    for (var index=0; index<20; index++)
+                    {
+                        if (StopWork()) return;
+                        using var child = backend.Child(node,index,budget);
+                        if (child is null) throw new UiSmokeStopped("discovery_child_unavailable");
+                        Charge();
+                        var record=topologyCount++; var bounds=-1; var type=-1; var childCount=-1;
+                        topology[record]=new(rootRecord,index,depth+1,-1,-1,-1,1);
+                        var childVisible=backend.Visible(child,budget)?1:0;
+                        topology[record]=new(rootRecord,index,depth+1,childVisible,-1,-1,2);
+                        if(childVisible==0){bounded=true;continue;}
+                        bounds=backend.Bounds(child,budget).PositiveFinite?1:0;
+                        topology[record]=new(rootRecord,index,depth+1,1,-1,-1,2,bounds);
+                        type=backend.IsTextElement(child,budget)?1:0;
+                        topology[record]=new(rootRecord,index,depth+1,1,type,-1,3,bounds);
+                        childCount=backend.ChildCount(child,budget);
+                        topology[record]=new(rootRecord,index,depth+1,1,type,childCount,4,bounds);
                     }
                 }
                 void VisitTargets(BatchObject node, int depth, string path, int[][] suffixes)
@@ -210,6 +250,8 @@ internal static class DiscoveryCollector
                             throw new UiSmokeStopped("alignment_parent_shape_changed");
                         if (sibling && focusDepth == siblingDepth && focusCount != 2)
                             throw new UiSmokeStopped("sibling_parent_shape_changed");
+                        if (frontier && focusDepth == 21 && focusCount != 2)
+                            throw new UiSmokeStopped("frontier_parent_shape_changed");
                         if (index >= focusCount) throw new UiSmokeStopped("discovery_focus_unavailable");
                         focusStage = 4; TraceFocus();
                         var child = backend.Child(current, index, budget);
@@ -220,13 +262,14 @@ internal static class DiscoveryCollector
                     }
                     focusStage = 5; // Exact approved focus resolved; later failure is outside focus traversal.
                     focusEdge = -1; focusIndex = -1; focusCount = -1;
-                    if (targetedRow && !sibling)
+                    if (census) Census(current,edges.Length);
+                    else if (targetedRow && !diagnostic)
                         VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets(policy.Approval.SelectionProfile));
                     else Visit(current, edges.Length, policy.Approval.FocusPath);
                 }
                 finally { current?.Dispose(); }
                 success = true;
-                reason = targetedRow && !sibling ? (policy.Approval.SelectionProfile == "single" ?
+                reason = targetedRow && !diagnostic ? (policy.Approval.SelectionProfile == "single" ?
                     "approved_row_targets_complete" : "approved_group_targets_complete") :
                     bounded ? "bounded_raw_diagnostics" : "approved_prefix_exhausted";
             }

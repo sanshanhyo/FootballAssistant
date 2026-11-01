@@ -322,12 +322,80 @@ internal static class PageDiscoveryTests
                 Check(publication.Result is null && ReferenceEquals(publication.Topology,result.Topology),"failure publication preserves numeric topology only");
                 using(var json=System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(publication)))
                     foreach(var node in json.RootElement.GetProperty("topology").EnumerateArray())
-                        Check(node.EnumerateObject().Count()==7 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"topology is seven integers only");
+                        Check(node.EnumerateObject().Count()==10 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"topology is ten integers only");
                 Clean(fixture,policy,result);
                 Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
                     ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"probe cannot retry in consumed request");
                 Console.WriteLine($"Sibling {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},guards={guards}; owned fixture only.");
             }
+        }
+        foreach(var profile in new[]{"tactics_root_census","tactics_frontier35"})
+        foreach(var scenario in new[]{"complete","empty","blank","zero","hidden","countlow","counthigh","work","hard","guard","cleanup"})
+        {
+            var census=profile=="tactics_root_census";var focus=census?"0":BatchTreeFixture.FrontierRoot;
+            Check(FiniteCaptureSelection.TryGet(profile,out var selected) && selected.Kind=="tactics_frontier_probe" && selected.FocusRoot==focus,
+                "two fixed frontier plans use independent literal roots");
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};
+            fixture.BuildFrontier(census,census?"0/0":"0");
+            var root=fixture.NodeAt(focus);var target=fixture.NodeAt(focus+"/0");
+            fixture.SetNodeText(focus+"/0",scenario=="blank"?"   ":"TEST RAW DISPLAY");
+            if(!census&&scenario=="empty"){fixture.Children[root].Clear();fixture.SetNodeText(focus,null);}
+            if(scenario=="zero")fixture.ZeroBoundsNodes.Add(target);
+            if(scenario=="hidden")fixture.HiddenNodes.Add(target);
+            var gated=census?root:fixture.NodeAt(focus[..focus.LastIndexOf('/')]);
+            if(scenario=="countlow")fixture.Children[gated].RemoveAt(fixture.Children[gated].Count-1);
+            if(scenario=="counthigh")fixture.Children[gated].Add(fixture.NodeAt("0/0"));
+            if(scenario=="cleanup")fixture.FailFirstFree=true;
+            var policy=Policy(profile);var guards=0;
+            var result=Capture(policy,fixture,elapsed:()=>scenario=="work"&&fixture.Invocations.Count(x=>x=="get_worldBound")>0?801:
+                scenario=="hard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?1001:0,
+                fresh:()=>{guards++;return scenario=="guard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?
+                    identity with{WindowScanStatus="failed"}:identity;});
+            var failed=scenario is "countlow" or "counthigh" or "hard" or "guard" or "cleanup";
+            Check(result.Status==(failed?"terminal_failure":"raw_diagnostics"),"frontier status: "+profile+"/"+scenario);
+            Check(PageDiscoveryValidation.TryValidate(result,profile)==!failed &&
+                !PageDiscoveryValidation.TryValidate(result,"tactics_current"),"host validates raw frontier envelope only, never normal tactics");
+            if(census && !failed)Check(!PageDiscoveryValidation.TryValidate(result with
+                { Observations=new[]{new DiscoveryText("0/0","FORBIDDEN CENSUS TEXT")} },profile),
+                "census publication cannot accidentally admit text observations");
+            Check(result.Topology is not null && result.Topology.Length<=96 && result.FocusEdges is not null,"bounded numeric publication always available");
+            if(failed)Check(result.Observations.Length==0,"all hard failures discard raw texts");
+            if(scenario is "countlow" or "counthigh")Check(!fixture.ChildEdges.Any(e=>e.Parent==gated) &&
+                result.Reason==(census?"census_root_shape_changed":"frontier_parent_shape_changed"),"shape gate occurs before any selected child");
+            if(census)
+            {
+                Check(fixture.TextReads.Count==0 && result.Observations.Length==0,"census never calls text getters even for eligible text nodes");
+                Check(fixture.ChildEdges.All(e=>e.Parent==fixture.NodeAt("")||e.Parent==root),"census never obtains descendants");
+                if(scenario is "complete" or "empty" or "blank" or "zero" or "hidden")
+                    Check(result.Topology!.Length==21 && fixture.ChildEdges.Where(e=>e.Parent==root).Select(e=>e.Index).SequenceEqual(Enumerable.Range(0,20)),
+                        "exactly20 immediate children sequentially scoped, not generic width growth");
+                Check(result.Topology!.All(n=>n.TextReadCompleted==-1&&n.TextLength==-1),"census never invents text eligibility reads");
+            }
+            else
+            {
+                Check(fixture.ChildEdges.All(e=>e.Parent!=gated||e.Index==1),"frontier never samples original child0 or another frontier");
+                if(scenario=="complete")Check(result.Observations.Length==1 && result.Observations[0].Text=="TEST RAW DISPLAY" &&
+                    result.Topology!.Last().BoundsEligible==1 && result.Topology.Last().TextReadCompleted==1 &&
+                    result.Topology.Last().TextLength==16,"existing getter length is copied UTF16 length, not semantic eligibility");
+                if(scenario=="blank")Check(result.Observations.Length==0 && result.Topology!.Last().TextReadCompleted==1 &&
+                    result.Topology.Last().TextLength==3,"blank getter completion distinguished from unattempted getter");
+                if(scenario=="empty")Check(result.Observations.Length==0 && !result.TraversalBounded && result.Topology![0].ChildCount==0,
+                    "actual count0 empty frontier is complete only within approved subtree");
+            }
+            if(scenario=="zero")Check(result.Topology!.Single(n=>n.ParentRecordIndex==0&&n.ChildEdge==0).BoundsEligible==0 &&
+                fixture.TextReads.Count==0,"zero bounds prevents text getter and records ineligibility");
+            if(scenario=="hidden")Check(result.TraversalBounded && result.Topology!.Single(n=>n.ParentRecordIndex==0&&n.ChildEdge==0).BoundsEligible==-1,
+                "hidden bounds unknown, traversal explicitly partial");
+            if(scenario=="work")Check(result.TraversalBounded,"cooperative stop returns explicitly bounded raw diagnostics");
+            var publication=DiscoveryPublication.Create(result,false);
+            using(var json=System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(publication)))
+                foreach(var node in json.RootElement.GetProperty("topology").EnumerateArray())
+                    Check(node.EnumerateObject().Count()==10 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"all10 topology fields numeric on rejected publication");
+            Clean(fixture,policy,result);
+            Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"fixed frontier request cannot replay");
+            if(!failed)Check(guards==result.NativeOperations+result.Nodes+3,"numeric diagnostics add no fresh checks or hidden native calls");
+            Console.WriteLine($"Frontier {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; inherited owned fixture only.");
         }
     }
 }

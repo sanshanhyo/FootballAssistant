@@ -175,3 +175,43 @@ native calls. Visibility pruning, width/depth/text/node/cooperative limits set
 TraversalBounded; partial records explicitly retain unknown counts. Failure also
 preserves numeric topology/focus diagnostics but discards all raw text. No standalone
 "complete" flag promotes a partial or hidden subtree to full page coverage.
+
+## Two-chunk layout/eligibility diagnostic
+
+`tactics_layout_diagnostic` explicitly selects exactly two profiles, in order:
+
+1. `tactics_root_census`: focus panel0/0. Freshly require childCount==20 before
+   obtaining any child. Inspect only those20 immediate children0..19, one scoped
+   handle at a time: visibility, positive-finite bounds flag, text type, child count.
+   Never obtain grandchildren, read text/names, or extend the generic DFS width8.
+2. `tactics_frontier35`: fixed focus
+   `0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/1` (22 edges).
+   This is the previously observed but unvisited child1 of the recorded depth21
+   node, not a guessed semantic root. Freshly require that parent has count2.
+   Reuse bounded DFS below this one subtree, excluding the seven previously visited
+   text-type leaves in its sibling branch. No other remaining frontier is enabled.
+
+Both profiles use raw `source_kind=tactics_frontier_probe`, never normal tactics.
+The finite manifest is two chunks, at least2s cooldown, maximum4096 reserved units
+and2000ms summed soft capture time. Each retains the existing1000ms/2048 ceiling,
+800ms/1792 cooperative cutoff, node96, globaldepth48, text8/128each/1024total,
+live64/allocated512 roots. A native call is not preemptible. No six-chunk manifest,
+automatic root substitution, generic cursor or cross-request handles are introduced.
+
+Topology additionally records three integers from existing DFS read results:
+`BoundsEligible`=-1 unknown,0 not positive-finite,1 positive-finite;
+`TextReadCompleted`=-1 not attempted,0 getter attempt begun,1 returned;
+`TextLength`=-1 unknown or the actual returned/copied UTF16 length. A nonzero length
+may still be whitespace; it is not semantic acceptance. Getter attempts include
+prechecks and resolution, so begun does not assert native invocation completed.
+Census deliberately never calls the getter: its text read state/length stay-1,
+even if type and bounds are eligible. Hidden nodes keep unknown bounds, not zero.
+These fields distinguish layout-ineligible text types from blank getters without
+relaxing bounds or obtaining any additional DFS native values. Existing bounds
+and complete-string/UTF16 checks remain mandatory. Failed captures retain only
+numeric metadata; raw strings are still discarded.
+
+The census can establish layout eligibility, not identify which top-level slot is
+semantically current. A zero-bounds slot suggests an inactive layout but does not
+prove a cached scene or authorize another slot. The frontier may still yield no
+eligible text. Neither outcome is promoted to page/team facts or tactical values.

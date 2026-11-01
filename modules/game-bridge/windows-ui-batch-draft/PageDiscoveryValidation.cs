@@ -9,7 +9,7 @@ internal static class PageDiscoveryValidation
 {
     internal static bool TryValidate(DiscoveryResult? result,string profile)
     {
-        if (FiniteCaptureSelection.TryGet(profile,out var probe) && probe.Kind=="tactics_sibling_probe")
+        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe"))
             return ValidateProbe(result,probe);
         if(!FiniteCaptureSelection.TryGet(profile,out var selection) || selection.Kind=="attributes" || result is null ||
             result.Status!="raw_diagnostics" || result.Reason!="approved_group_targets_complete" ||
@@ -41,6 +41,7 @@ internal static class PageDiscoveryValidation
             result.TotalRoots is <0 or >512 || result.PeakRoots is <0 or >64 ||
             !double.IsFinite(result.ElapsedMilliseconds) || result.ElapsedMilliseconds is <0 or >1000 ||
             result.Observations is null || result.Observations.Length>8) return false;
+        if(selection.Profile=="tactics_root_census" && result.Observations.Length!=0) return false;
         var paths=new HashSet<string>(StringComparer.Ordinal);var characters=0;
         foreach(var item in result.Observations)
         {

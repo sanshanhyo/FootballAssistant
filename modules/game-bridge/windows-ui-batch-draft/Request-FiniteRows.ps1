@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory=$true)][switch]$StableProfileAsserted,
     [switch]$FiniteManifestConfirmed,
     [switch]$FiniteTwoChunksConfirmed,
-    [ValidateSet('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','next_match_card','schedule_rows0_9')][string]$Scope = 'goalkeeper_rows0_3'
+    [ValidateSet('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','tactics_layout_diagnostic','next_match_card','schedule_rows0_9')][string]$Scope = 'goalkeeper_rows0_3'
 )
 $ErrorActionPreference = 'Stop'
 if (-not $StableProfileAsserted -or (-not $FiniteManifestConfirmed -and
@@ -62,7 +62,7 @@ if ($bytes.Length -gt 4096) { throw 'Request exceeds bound.' }
 $stream = [IO.File]::Open(($path + '.tmp'), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
 Move-Item -LiteralPath ($path + '.tmp') -Destination $path
-$chunks = switch ($Scope) { 'goalkeeper_rows0_3' { 2 } 'profile_rows0_3' { 6 } 'profile_all_rows' { 18 } 'tactics_current' { 1 } 'tactics_alignment_candidate' { 1 } 'tactics_sibling_inventory' { 3 } 'next_match_card' { 1 } 'schedule_rows0_9' { 10 } }
+$chunks = switch ($Scope) { 'goalkeeper_rows0_3' { 2 } 'profile_rows0_3' { 6 } 'profile_all_rows' { 18 } 'tactics_current' { 1 } 'tactics_alignment_candidate' { 1 } 'tactics_sibling_inventory' { 3 } 'tactics_layout_diagnostic' { 2 } 'next_match_card' { 1 } 'schedule_rows0_9' { 10 } }
 Write-Output "Wrote one fixed manifest: $Scope; maximum $chunks chunks, at least2s cooldown; no retries or further chunks."
 Write-Output "Each chunk: 2048 units /1000ms soft; manifest totals:$($chunks * 2048) units /$($chunks * 1000)ms soft. Expires120s. Stop on any failure."
 Write-Output 'Stable-profile and page-epoch are operator assertions, NOT verified page/player identity. Keep the explicitly selected page open; no navigation during this finite capture.'
