@@ -4,7 +4,7 @@ namespace FootballAssistant.OffseasonReader;
 // Caller must validate game hash and team, and recheck its complete root after reading.
 internal static class TacticOutRoleReader
 {
-internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam)
+internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam, int gamePid, long gameStartTicks)
 {
     try
     {
@@ -28,7 +28,7 @@ internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam)
         if(tb<65536 || (tb&7)!=0 || te<tb || (te-tb)%8!=0 || (te-tb)/8>1_048_575) return null;
         var stack=new Stack<(long Node,long Parent)>(); var seen=new HashSet<long>();
         if (size>0) stack.Push((treeRoot,head));
-        int matches=0, targets=0; long target=0;
+        int matches=0, targets=0; long target=0, selectedNode=0;
         while(stack.Count>0)
         {
             var (node,parent)=stack.Pop();
@@ -40,6 +40,7 @@ internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam)
             if(idx>=0 && t.I64(tb+idx*8L)==targetTeam)
             {
                 if(++matches>1 || t.U8(node+0x1050)!=0) return null;
+                selectedNode=node;
                 long b=t.I64(node+0x1038), e=t.I64(node+0x1040), c=t.I64(node+0x1048);
                 if(b==0 && e==0 && c==0) targets=0;
                 else { if(b<65536 || (b&7)!=0 || e<b || c<e || (e-b)%8!=0 || (c-b)%8!=0 || (c-b)/8>64) return null; targets=checked((int)((e-b)/8)); if(targets!=1) return null; target=t.I64(b); if(target<65536 || (target&7)!=0) return null; }
@@ -63,12 +64,12 @@ internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam)
             if(secondRoles is not null) secondRoles[i]=TacticSecondRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x478+i*0x48L)));
         }
         if(!t.Stable()) return null;
-        return new TacticTreeRoles(firstRoles,secondRoles);    }
+        return new TacticTreeRoles(firstRoles,secondRoles,TacticGeneration.Create(gamePid,gameStartTicks,manager,element,head,selectedNode,targetTeam,source,target));    }
     catch(Exception ex) when(ex is InvalidOperationException or OverflowException or ArgumentException) { return null; }
 }
 
 }
-internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles);
+internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles, string Generation);
 public static class TacticSecondRoleDecoder
 {
 // Role names follow FMMatchLens TacticalFormationDecoder (MIT, vendor/LICENSE).
@@ -199,4 +200,19 @@ public static string Decode(ulong mask)
     return name == "unknown" ? "unknown" : name + " / " + duty;
 }
 
+}
+
+// Opaque process-local identity only. New host instance has a new random key.
+// A matching token does not exclude ABA (address reuse) within the host lifetime.
+internal static class TacticGeneration
+{
+    private static readonly byte[] Key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    internal static string Create(int gamePid, long gameStartTicks, long manager, long element, long head, long node, long team, long source, long target)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen:true))
+        { writer.Write(gamePid); writer.Write(gameStartTicks); writer.Write(manager); writer.Write(element); writer.Write(head); writer.Write(node); writer.Write(team); writer.Write(source); writer.Write(target); }
+        using var hmac = new System.Security.Cryptography.HMACSHA256(Key);
+        return "process-local:" + Convert.ToHexString(hmac.ComputeHash(stream.ToArray()));
+    }
 }

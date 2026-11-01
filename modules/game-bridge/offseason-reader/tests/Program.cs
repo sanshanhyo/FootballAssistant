@@ -57,3 +57,12 @@ Check(TacticSecondRoleDecoder.Decode(0xE00002) == "0xE00002: Sweeper Keeper / un
 Check(TacticFirstRoleDecoder.Decode(0x401000) == "Ball-Playing Goalkeeper / Support");
 Check(TacticFirstRoleDecoder.Decode(0x1000000000000000) == "unknown");
 Check(TacticFirstRoleDecoder.Decode(0xE01000) == "Ball-Playing Goalkeeper / unknown");
+// Synthetic process-local generation checks: no process or game data accessed.
+var generationType = typeof(TacticCandidateLookup).Assembly.GetType("FootballAssistant.OffseasonReader.TacticGeneration")!;
+var generationMethod = generationType.GetMethod("Create", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+string Generation(int pid, long start, long target) => (string)generationMethod.Invoke(null, new object[] { pid, start, 11L, 12L, 13L, 14L, 15L, 16L, target })!;
+var syntheticGeneration = Generation(101, 999, 17);
+Check(syntheticGeneration.StartsWith("process-local:") && syntheticGeneration == Generation(101, 999, 17));
+Check(syntheticGeneration != Generation(101, 999, 18));
+Check(syntheticGeneration != Generation(102, 999, 17));
+Check(syntheticGeneration != Generation(101, 1000, 17));
