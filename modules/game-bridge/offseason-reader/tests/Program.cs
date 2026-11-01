@@ -14,4 +14,7 @@ Check(PlayerValueDecoder.Affiliation(1, 2, new byte[] { 65, 0 }) == new Candidat
 Check(PlayerValueDecoder.Affiliation(0, 2, new byte[] { 65, 0 }) is null);
 Check(PlayerValueDecoder.Affiliation(1, 2, new byte[] { 0xFF, 0 }) is null);
 Check(PlayerValueDecoder.Affiliation(1, 2, new byte[] { 65 }) is null);
+// Invalid requests must fail before touching any process.
+Check(TeamCandidateLookup.Read(0, 1).Status == "invalid_input");
+Check(TeamCandidateLookup.Read(1, 0).Players is null);
 Console.WriteLine("Decoder checks passed");

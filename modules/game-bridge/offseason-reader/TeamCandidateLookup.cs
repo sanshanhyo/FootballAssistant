@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace FootballAssistant.OffseasonReader;
@@ -33,25 +34,32 @@ public static class TeamCandidateLookup
             var entries = new long[inspected];
             var classes = new int[inspected];
             var ids = new uint[inspected];
+            var snapshots = new PlayerSnapshot?[inspected];
             var seen = new HashSet<uint>();
             for (int i = 0; i < inspected; i++)
             {
                 entries[i] = reader.I64(checked(header.Begin + 8L * i));
                 classes[i] = reader.Classify(entries[i], out ids[i]);
-                if (classes[i] == 1) { if (!seen.Add(ids[i])) return new("unavailable"); exact++; }
+                if (classes[i] == 1) { if (!seen.Add(ids[i])) return new("unavailable"); exact++; snapshots[i] = reader.Player(entries[i], ids[i]); }
                 if (timer.ElapsedMilliseconds >= 2000) return new("unavailable");
             }
             if (reader.FindTeam() != root || reader.Header(root.Team) != header) return new("changed_during_read");
             for (int i = 0; i < inspected; i++)
+            {
                 if (reader.I64(checked(header.Begin + 8L * i)) != entries[i] || reader.Classify(entries[i], out uint id) != classes[i] || id != ids[i]) return new("changed_during_read");
+                if (classes[i] == 1 && reader.Player(entries[i], id) != snapshots[i]) return new("changed_during_read");
+            }
             if (reader.FindTeam() != root || reader.Header(root.Team) != header || timer.ElapsedMilliseconds >= 2000) return new("changed_during_read");
-            return new("experimental_candidates_incomplete", total, inspected, exact, inspected - exact, total > inspected, DateTimeOffset.UtcNow);
+            var players = snapshots.Where(p => p is not null).Select(p => new TeamPlayerCandidate(p!.Uid, p.Name, p.LinkStatus, p.TeamUid, p.ClubUid)).ToArray();
+            return new("experimental_candidates_incomplete", total, inspected, exact, inspected - exact, total > inspected, DateTimeOffset.UtcNow, players);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
         { return new("unavailable"); }
     }
     private readonly record struct Root(long Manager, long Person, long Contract, long Team, long Club);
     private readonly record struct Vector(long Begin, long End, long Capacity);
+    // Addresses stay internal and participate in the second-read comparison.
+    private sealed record PlayerSnapshot(uint Uid, string? Name, string LinkStatus, long Team, long Club, uint? TeamUid, uint? ClubUid);
     private sealed class Reader
     {
         private readonly SafeProcessHandle process;
@@ -111,6 +119,34 @@ public static class TeamCandidateLookup
             if (uid == 0 || uid > int.MaxValue) throw new InvalidOperationException();
             return 1;
         }
+        private string NamePart(long person, long offset)
+        {
+            long obj = I64(checked(person + offset));
+            if (obj == 0) return "";
+            long buffer = I64(obj);
+            byte[] bytes = Bytes(checked(buffer + 4), 64);
+            int end = Array.IndexOf(bytes, (byte)0);
+            if (end < 0) throw new InvalidOperationException();
+            return new UTF8Encoding(false, true).GetString(bytes, 0, end).Trim();
+        }
+        public PlayerSnapshot Player(long entry, uint uid)
+        {
+            long person = checked(entry + 0x288);
+            string first = NamePart(person, 0x50), last = NamePart(person, 0x58), common = NamePart(person, 0x60);
+            string display = string.IsNullOrWhiteSpace(common) ? $"{first} {last}".Trim() : common;
+            string? name = string.IsNullOrWhiteSpace(display) ? null : display;
+            long team = I64(checked(entry + 0x130));
+            if (team == 0) return new(uid, name, "no_team", 0, 0, null, null);
+            if (team < 65536 || !V(team, 0x04CE1108)) return new(uid, name, "unsupported_team", team, 0, null, null);
+            uint teamUid = U32(team + 0x0C);
+            if (teamUid is 0 or uint.MaxValue) throw new InvalidOperationException();
+            long club = I64(team + 0x30);
+            if (club == 0) return new(uid, name, "no_club", team, 0, teamUid, null);
+            if (club < 65536 || !V(club, 0x04CDA1F8)) return new(uid, name, "unsupported_club", team, club, teamUid, null);
+            uint clubUid = U32(club + 0x0C);
+            if (clubUid is 0 or uint.MaxValue) throw new InvalidOperationException();
+            return new(uid, name, "exact_types", team, club, teamUid, clubUid);
+        }
     }
     private static class Native
     {
@@ -118,4 +154,5 @@ public static class TeamCandidateLookup
         [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool ReadProcessMemory(SafeProcessHandle process, IntPtr address, byte[] buffer, nuint size, out nuint read);
     }
 }
-public sealed record TeamCandidateResult(string Status, int? EntriesTotal = null, int? Inspected = null, int? ExactPlayerType = null, int? OtherOrUnresolved = null, bool? Truncated = null, DateTimeOffset? ObservedAt = null);
+public sealed record TeamCandidateResult(string Status, int? EntriesTotal = null, int? Inspected = null, int? ExactPlayerType = null, int? OtherOrUnresolved = null, bool? Truncated = null, DateTimeOffset? ObservedAt = null, IReadOnlyList<TeamPlayerCandidate>? Players = null);
+public sealed record TeamPlayerCandidate(uint Uid, string? Name, string LinkStatus, uint? TeamUid, uint? ClubUid);
