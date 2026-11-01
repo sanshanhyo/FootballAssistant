@@ -9,6 +9,22 @@ from collect_backend_licenses import collect, cpython_framework_metadata, openss
 
 
 class LicenseInventoryTests(unittest.TestCase):
+    def test_gpl_module_rejected_without_reusing_project_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            analysis = root / 'Analysis-00.toc'
+            output = root / 'output'
+            output.mkdir()
+            receipt = output / 'manifest.json'
+            for entry in [('rfc3987', str(root / 'rfc3987.py'), 'PYMODULE'),
+                          ('renamed', str(root / 'rfc3987.py'), 'DATA')]:
+                receipt.write_text('{"old": true}')
+                analysis.write_text(repr([entry]))
+                with patch('collect_backend_licenses.metadata.distributions', return_value=[]):
+                    with self.assertRaisesRegex(ValueError, 'rfc3987 is not approved'):
+                        collect(analysis, output)
+                self.assertFalse(receipt.exists())
+
     def test_nested_analysis_entries(self):
         value = ([('fastapi', '/tmp/fastapi.py', 'PYMODULE')], ('not', 'an', 'entry'))
         self.assertEqual(list(entries(value)), [('fastapi', '/tmp/fastapi.py', 'PYMODULE')])
@@ -70,6 +86,7 @@ class LicenseInventoryTests(unittest.TestCase):
             project, stdlib = root / 'project', root / 'stdlib'
             project.mkdir(); stdlib.mkdir()
             (project / 'LICENSE').write_text('Project test license')
+            (project / 'LICENSE-SCOPE.md').write_text('Project test scope')
             (stdlib / 'LICENSE.txt').write_text('Runtime test license')
             analysis = root / 'Analysis-00.toc'
             analysis.write_text(repr([

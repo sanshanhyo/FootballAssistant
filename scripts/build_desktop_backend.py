@@ -29,6 +29,8 @@ command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--one
     "--collect-all", "football_assistant_contracts", "--collect-all", "pydantic_ai",
     "--recursive-copy-metadata", "pydantic-ai-slim", "--collect-all", "genai_prices",
     "--collect-all", "uvicorn", "--collect-all", "jsonschema_specifications",
+    # format-nongpl loads this grammar at import time (not a Python module).
+    "--collect-data", "rfc3987_syntax",
     "--add-data", str(ROOT / "modules/game-bridge/scripts/wire_decoder.py") + ":game-bridge-scripts",
     "--add-data", str(ROOT / "modules/game-bridge/scripts/prepare_isolated.py") + ":game-bridge-scripts",
     "--add-data", str(ROOT / "modules/game-bridge/scripts/launch_isolated.py") + ":game-bridge-scripts",
