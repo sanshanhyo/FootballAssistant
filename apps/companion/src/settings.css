@@ -4,3 +4,9 @@
 @media(max-width:760px){.settings-app{grid-template-columns:145px minmax(0,1fr)}.sidebar{padding:25px 10px}.nav-item{padding:12px}main{padding:28px 22px}.card{padding:20px}.setting-row{gap:16px}.setting-row>input,.setting-row>select,.model-controls{width:65%}.character-card{grid-template-columns:100px minmax(0,1fr);gap:16px}.character-card img{width:100px;height:160px}}
 @media(max-width:520px){.settings-app{grid-template-columns:104px minmax(0,1fr)}.sidebar{padding:20px 6px}.nav-item{padding:11px 7px;font-size:.85rem}main{padding:22px 14px}.card{padding:16px}.setting-row{flex-direction:column;align-items:stretch;gap:10px}.setting-row>input,.setting-row>select,.model-controls{width:100%}.card-heading{align-items:flex-start;flex-wrap:wrap}.character-card{grid-template-columns:1fr}.character-card img{justify-self:center;width:140px;height:180px}.record-header{flex-wrap:wrap}.about-content h2{font-size:1.3rem}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+#window-bar{height:36px;display:flex;position:sticky;top:0;z-index:10;background:var(--sidebar);border-bottom:1px solid var(--line)}
+.window-drag{flex:1;min-width:40px;-webkit-app-region:drag}.window-controls{display:flex;-webkit-app-region:no-drag}
+.window-controls button{width:46px;height:35px;background:transparent;color:var(--text);font-family:"Segoe UI",sans-serif;font-size:17px;border-radius:0;line-height:1}
+.window-controls button:hover{background:var(--active)}#window-close:hover{background:#c42b1c;color:#fff}
+.settings-app{min-height:calc(100vh - 36px)}.sidebar{top:36px;height:calc(100vh - 36px)}

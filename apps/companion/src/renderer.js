@@ -111,8 +111,6 @@
     const expression = manual !== 'auto' ? manual : next;
     $('pet').dataset.expression = UI.EXPRESSIONS[expression] ? expression : 'idle';
     motion?.setState($('pet').dataset.expression);
-    // Static discussion artwork is independent of this interaction-state label.
-    $('expression-label').textContent = UI.EXPRESSIONS[next] || UI.EXPRESSIONS.idle;
   }
 
   function refreshExpression() {

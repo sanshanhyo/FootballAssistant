@@ -50,7 +50,8 @@ function createUpdateController(options) {
   }
   function check() { return run(async () => {
     // Keep an already verified download ready until the user installs it.
-    if (status.state === 'downloaded') return snapshot();
+    if (['downloaded', 'ready_for_safe_exit', 'deferred', 'installing'].includes(status.state) ||
+        ['ready_for_safe_exit', 'deferred', 'installing'].includes(options.installedUpdater?.status.state)) return snapshot();
     candidate = null; signedEnvelope = null;
     publish({ state: 'checking', reason: null, availableVersion: null, downloadedPath: null, releaseUrl: null });
     if (!signedMode) {
@@ -70,6 +71,8 @@ function createUpdateController(options) {
     return publish({ state: 'update_available', availableVersion: candidate.version, releaseUrl: candidate.releaseUrl, reason: automaticInstallEnabled ? 'Verified update available; background download and idle restart enabled' : 'Verified update available; manual installation required' });
   }); }
   function download() { return run(async () => {
+    if (['downloaded', 'ready_for_safe_exit', 'deferred', 'installing'].includes(status.state) ||
+        ['ready_for_safe_exit', 'deferred', 'installing'].includes(options.installedUpdater?.status.state)) return snapshot();
     if (!signedMode) return publish({ state: 'manual_required', reason: 'No signed download feed configured. Review the official release page and install manually; the app will not download or execute this package.' });
     if (!candidate) throw new Error('Check for a compatible update first');
     if (options.installedUpdater?.status.automaticInstallEnabled) {

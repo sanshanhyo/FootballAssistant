@@ -301,6 +301,9 @@
     } catch { showError('外观保存失败'); }
   }
   function bind() {
+    for (const [id, action] of [['window-minimize','minimize'],['window-maximize','toggle-maximize'],['window-close','close']]) {
+      $(id).addEventListener('click', () => perform(() => api.controlSettingsWindow(action)));
+    }
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     Object.entries(UI.EXPRESSIONS).forEach(([value,label]) => { if (value === 'auto') return; const option=node('option','',label); option.value=value; $('expression').append(option); });
     $('proactivity').addEventListener('input', () => { proactivityEditing=true; $('proactivity-value').textContent=`${$('proactivity').value}%`; });

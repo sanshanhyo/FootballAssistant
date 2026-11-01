@@ -8,6 +8,22 @@ const vm = require('node:vm');
 // collaborators, without booting Electron or touching any real backend process.
 const source = fs.readFileSync(path.join(__dirname, '../src/main.cjs'), 'utf8');
 const recoveryFunction = source.slice(source.indexOf('async function recoverFailedUpdate(error) {'), source.indexOf('async function main() {'));
+const prepareFunction = source.slice(source.indexOf('async function prepareUpdateRestart({ targetVersion }) {'), source.indexOf('async function recoverFailedUpdate(error) {'));
+
+test('update checkpoint follows UI flush and owned helper stop; failed flush never snapshots', async () => {
+  for (const failFlush of [false, true]) {
+    const events=[];
+    const context={detectGame:async()=>({state:'not_detected'}),updateSafeNow:()=>true,lastGameClearAt:0,updateQuiescing:false,updateBackendStopped:false,updateSessionEnding:false,
+      runtime:{storageWarning:null,async persist(){events.push('flush');if(failFlush)this.storageWarning='failed';}},
+      win:{webContents:{session:{flushStorageData(){events.push('appearance-flush');}}}},
+      backendSupervisor:{status:{owned:true},async stop(){events.push('stop');}},
+      updateRecovery:{async prepare(){events.push('snapshot');return {state:'prepared'};}}};
+    vm.createContext(context);
+    const promise=vm.runInContext(prepareFunction+';prepareUpdateRestart({targetVersion:"0.0.2"})',context);
+    if(failFlush) { await assert.rejects(promise,/could not be saved/);assert.deepEqual(events,['flush']); }
+    else {await promise;assert.deepEqual(events,['flush','appearance-flush','stop','snapshot']);}
+  }
+});
 function fixture(stopped, startFailure = false) {
   const events = []; let rebuilds = 0, stoppedTimers = 0;
   const original = { ownedMarker: true };

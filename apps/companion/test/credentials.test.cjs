@@ -82,6 +82,12 @@ test('UI uses masked input, no secret readback, and preloads expose only sanitiz
   assert.doesNotMatch(src('preload.cjs'), /backendEnv/);
 });
 // Six-page UI secret lifecycle is exercised by settings-pages.test.cjs.
+test('external account configuration changes are not overwritten by an old instance',t=>{
+  const options=fixture(t),store=createCredentialConfig(options);store.save(input);
+  const file=path.join(options.userData,'model-config.json');const external={schema_version:1,provider:'openai-compatible',baseUrl:'https://new.test/v1',model:'changed'};
+  fs.writeFileSync(file,JSON.stringify(external));assert.throws(()=>store.save(input),/changed outside/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)),external);
+});
 test('legacy nonstandard preset is custom and cannot reuse the old bound secret', t => {
   const options=fixture(t); const store=createCredentialConfig(options);
   store.save(input);

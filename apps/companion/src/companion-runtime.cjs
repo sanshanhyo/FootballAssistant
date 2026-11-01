@@ -5,8 +5,7 @@ const { UiChangeTracker } = require('./ui-changes.cjs');
 const { matchView, matchCard, MatchChangeTracker } = require('./match-reader.cjs');
 const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
-const fs = require('node:fs/promises');
-const path = require('node:path');
+const { readStateFile, writeStateFile } = require('./state-file.cjs');
 const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS, businessMetadata, adviceCapability } = require('./reader-clients.cjs');
 const { DEFAULT_CHARACTER_ID, storedCharacterId, characterPresentation } = require('./character.cjs');
 const PREFERENCE_VALUES = Object.freeze({
@@ -38,14 +37,15 @@ class CompanionRuntime extends EventEmitter {
     this.savedEnvelope = {};
     this.messages = []; this.memories = []; this.pending = new Map();
     this.tools = new Map();
-    this.writeQueue = Promise.resolve(); this.closed = false;
+    this.writeQueue = Promise.resolve(); this.storageRevision = null; this.closed = false;
   }
   async init() {
     if (!this.file) return this.state();
     try {
-      const stat = await fs.stat(this.file);
-      if (!stat.isFile() || stat.size > 2_000_000) throw new Error('本地记录过大。');
-      const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      const stored = await readStateFile(this.file);
+      this.storageRevision = stored.revision;
+      if (!stored.bytes) return this.state();
+      const saved = JSON.parse(stored.bytes.toString('utf8'));
       if (saved.version !== 1) {
         this.storageWarning = '本地记录版本暂不支持；原文件保持不变，当前更改不会写入该文件。';
         return this.state();
@@ -92,10 +92,8 @@ class CompanionRuntime extends EventEmitter {
     if (!this.file || this.storageWarning) return Promise.resolve();
     const value = JSON.stringify({ ...this.savedEnvelope, version: 1, characterId: this.characterId, proactivity: this.proactivity, preferences: { ...this.savedEnvelope.preferences, ...this.preferences }, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
     this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
-      await fs.mkdir(path.dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.tmp`;
-      await fs.writeFile(temporary, value, { mode: 0o600 });
-      await fs.rename(temporary, this.file);
+      if (this.storageWarning) return;
+      this.storageRevision = await writeStateFile(this.file, value, this.storageRevision);
     }).catch(() => { this.storageWarning = '本地记录保存失败。'; this.changed(); });
     return this.writeQueue;
   }
