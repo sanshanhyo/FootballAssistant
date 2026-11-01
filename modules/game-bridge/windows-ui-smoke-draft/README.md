@@ -25,7 +25,7 @@ been read by this candidate; fake tests do not establish game success.
    roots, observer or registry in this phase. Successful methods cache only in this held
    module lease and session. Inspect the terminal result before proceeding.
 5. Reconfirm the stable page and explicitly request `-Stage ui_text`. One capture is allowed:
-   100ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth8,
+   250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth8,
    8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
    retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
 
@@ -42,13 +42,28 @@ Cleanup is mandatory outside the sampling cap: up to64 root frees, before module
 `no_eligible_text`, `bounded_no_text`, budget and `backend_failure` are distinct; none means
 that the game contains no data. Only a nonempty returned text is an actual field result.
 
-## Narrow capture-budget revision
+## Authorized one-shot 250ms capture experiment
+
+For this explicitly authorized experiment, only the capture soft elapsed cap changes
+from 100 to 250ms. The 384 reserved-unit limit, one panel, 32 nodes, depth8,
+8 children/node, 64 temporary roots, 128 UTF-16 units and every fresh ownership/grant
+check remain unchanged. Resolve-only warm-up remains 250ms/2048 units. Diagnostics
+remain enabled. A consumed capture is still terminal; no automatic retry or additional
+restart is authorized by this revision.
+
+This may briefly stall the game main thread. The limit is cooperative, not preemptive:
+an individual native call, JIT or mandatory cleanup can make wall time exceed 250ms.
+The unchanged operation/root/traversal limits may stop the attempt before a text getter;
+this experiment does not promise text or improved performance. Review its one result
+before deciding on any further experiment.
+
+### Earlier budget history
 
 The first real staged attempt resolved metadata/classes successfully, then capture stopped
 at `text_type`: 25.5497ms, 38 reserved operations, root resolved, no text getter success.
-This revision changes the capture soft elapsed cap from25 to100ms for first-use/JIT costs
+An earlier revision changed the capture soft elapsed cap from25 to100ms for first-use/JIT costs
 and reserved native-boundary units from128 to384 for the already bounded depth8 path.
-Cache-hit visible/bounds/type checks cost16 reserved units, child count7 and descent4:
+Before the later type-first optimization, cache-hit visible/bounds/type checks cost16 reserved units, child count7 and descent4:
 about27 per non-text ancestor/edge, then about24 for a text leaf, plus initial panel and
 cold method lookup. Thus128 was not enough for a depth8 diagnostic. The384 cap is not
 a promise of32 nodes: the independent64-root cap can stop earlier. Root/node/depth/
@@ -126,7 +141,7 @@ Both staged operations start their stopwatch BEFORE their work. Every native exp
 memory read in the adapter calls BeforeNative (not once around a multi-call method).
 It caps one panel, 32 nodes, depth 8, 8 children/node, one text of 128 code units; lazy DFS
 obtains one child at a time rather than eagerly fetching all siblings. Capture
-budget is 100ms soft elapsed / 384 reserved native boundary units, explicitly a conservative experiment,
+budget is 250ms soft elapsed / 384 reserved native boundary units, explicitly a conservative experiment,
 not proof that cold resolution will fit. Results record elapsed, stopped stage, operation/
 node count, root-resolution and text-getter success. `no_eligible_text`/`bounded_no_text`/
 `time_budget` are NOT real fields and not evidence the game has no data. `backend_failure`

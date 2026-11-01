@@ -31,12 +31,12 @@ Check(diagnostic.Stages.Sum(x => x.GuardTotalMs) == 8 && visibleTiming.GuardMaxM
     diagnostic.Stages.Sum(x => x.PrechecksCompleted) == 2 && diagnosticBudget.Operations == 1,
     "failed guard duration counted but failed reservation not charged as completed");
 Check(diagnosticBudget.Snapshot().Stages.Sum(x => x.TotalMs) == 14, "snapshots never double-count final interval");
-diagnosticClock = 101;
+diagnosticClock = 251;
 try { diagnosticBudget.BeforeNative(); } catch (UiSmokeStopped diagnosticStopped) { Check(diagnosticStopped.Message == "time_budget", "original stop reason retained"); }
 var deadlineTiming = diagnosticBudget.Snapshot().Stages.Single(x => x.Stage == "visible");
 Check(deadlineTiming.PrechecksFailed == 2 && deadlineTiming.GuardCalls == 1 && diagnosticBudget.Operations == 1,
     "failed deadline precheck is distinct from a guard call and reserves nothing");
-diagnosticClock = 102;
+diagnosticClock = 252;
 diagnosticBudget.Stage = "fixture-secret-text-or-path";
 var boundedJson = System.Text.Json.JsonSerializer.Serialize(diagnosticBudget.Snapshot());
 Check(!boundedJson.Contains("fixture-secret-text-or-path") && boundedJson.Length < 6000 &&
@@ -73,13 +73,16 @@ Check(backend.BoundsReads == 0 && backend.TypeReads == 0, "hidden ancestor is pr
 backend = new FakeBackend { RootBoundsPositive = false, RootIsText = true };
 Check(Read(backend).Text == "fixture text", "invalid parent bounds do not hide valid descendant");
 backend = new FakeBackend();
-Check(Read(backend, elapsed: () => 101).StopReason == "time_budget" && backend.Calls == 0, "initial resolution inside time budget");
+Check(Read(backend, elapsed: () => 250.001).StopReason == "time_budget" && backend.Calls == 0, "initial resolution rejects elapsed above the 250ms soft budget");
 backend = new FakeBackend();
 Check(Read(backend, elapsed: () => 25.5497).Text == "fixture text", "observed first-capture elapsed no longer prematurely stops fixture");
 backend = new FakeBackend();
-Check(Read(backend, elapsed: () => 100).Text == "fixture text", "100ms boundary retains soft-budget semantics");
+Check(Read(backend, elapsed: () => 250).Text == "fixture text", "250ms boundary retains soft-budget semantics");
+backend = new FakeBackend();
+Check(Read(backend, elapsed: () => 100.4476).Text == "fixture text", "previous observed elapsed is within the authorized 250ms experiment");
 backend = new FakeBackend { ResolutionCalls = 400 };
-Check(Read(backend).StopReason == "native_call_budget" && backend.Calls == 384, "resolution cannot escape native call budget");
+Check(Read(backend, elapsed: () => 200).StopReason == "native_call_budget" && backend.Calls == 384,
+    "unchanged 384-unit cap stops work even while within the new time budget");
 backend = new FakeBackend();
 var guardCalls = 0;
 var stopped = Read(backend, () => { if (++guardCalls > 4) throw new UiSmokeStopped("window_changed"); });

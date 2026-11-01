@@ -59,7 +59,7 @@ internal sealed class UiSmokeBudget
     }
     internal double ElapsedMs => elapsedMilliseconds();
     internal UiSmokeBudget(Func<double> elapsedMilliseconds, Action verifyGrantAndWindow,
-        double maximumMilliseconds = 100, int maximumOperations = 384)
+        double maximumMilliseconds = 250, int maximumOperations = 384)
     { this.elapsedMilliseconds = elapsedMilliseconds; this.verifyGrantAndWindow = verifyGrantAndWindow;
       this.maximumMilliseconds = maximumMilliseconds; this.maximumOperations = maximumOperations; }
     internal void Check()
