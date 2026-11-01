@@ -6,3 +6,11 @@ test('pet applies saved family/size/theme on reload and receives bounded cross-w
 test('malformed, missing and untrusted appearance values cannot inject CSS or oversized sizes',()=>{for(const value of ['bad json','null',JSON.stringify({fontFamily:'url(https://invalid)',fontSize:999,darkMode:'false'})]){const f=fixture(value);Appearance.bindPet(f);assert.equal(f.properties.get('--font'),Appearance.FONTS.system);assert.equal(f.properties.get('--font-scale'),'1');assert.equal(f.document.documentElement.dataset.theme,'dark');}const f=fixture(null);Appearance.bindPet(f);assert.match(f.properties.get('--bubble-font'),/851 GBai Marker/);f.set('{}');f.events.get('storage')({key:null});assert.equal(f.properties.get('--font-scale'),'1');});
 test('both windows load shared appearance script and pet CSS retains responsive bubble sizing',()=>{const src=name=>fs.readFileSync(path.join(__dirname,'../src',name),'utf8');for(const name of ['index.html','settings.html'])assert.match(src(name),/src="appearance.js"/);assert.match(src('renderer.js'),/CompanionAppearance\?\.bindPet/);assert.match(src('settings.js'),/Appearance\.apply/);assert.match(src('style.css'),/5cqw \* var\(--font-scale,1\)/);assert.match(src('style.css'),/data-theme="light"\] #chat-form/);});
 test('Whisper license is exact hash protected from Windows newline conversion',()=>{const crypto=require('node:crypto');const root=path.join(__dirname,'..','..','..');const p=path.join(__dirname,'../packaging/WHISPER-MODEL-LICENSE.txt');assert.equal(crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'),'b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d');assert.match(fs.readFileSync(path.join(root,'.gitattributes'),'utf8'),/\/apps\/companion\/packaging\/WHISPER-MODEL-LICENSE\.txt -text/);});
+
+test('light motion defaults on and cross-window changes propagate the stored boolean',()=>{
+  const f=fixture('{}'); const values=[];
+  const stop=Appearance.bindPet({...f,onChange:prefs=>values.push(prefs.lightMotion)});
+  f.set(JSON.stringify({lightMotion:false}));f.events.get('storage')({key:Appearance.KEY});
+  f.set(JSON.stringify({lightMotion:true}));f.events.get('storage')({key:Appearance.KEY});
+  assert.deepEqual(values,[true,false,true]);stop();
+});

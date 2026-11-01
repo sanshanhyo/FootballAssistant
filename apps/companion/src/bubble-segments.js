@@ -31,6 +31,9 @@
           if (softBreak.test(parts[i])) { end = i + 1; break; }
         }
       }
+      // Forty is a reading target, not a cut through closing punctuation.
+      // Bound the allowance so malformed punctuation cannot create a huge page.
+      while (end < parts.length && end < limit + 4 && (closer.test(parts[end]) || /^[.,，、；;：:…]+$/u.test(parts[end]))) end++;
       const chunk = parts.slice(start, end).join('').trim();
       if (chunk) result.push(chunk);
       start = end;
