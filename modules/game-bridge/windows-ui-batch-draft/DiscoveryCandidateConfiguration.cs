@@ -8,6 +8,8 @@ internal sealed record DiscoveryHostRequest(Guid Nonce, int Pid, string Session,
     string WindowClass, int PanelIndex, string FocusPath, DateTimeOffset RequestedAt, DateTimeOffset ExpiresAt);
 internal static class DiscoveryCandidateConfiguration
 {
+    internal const string GoalkeeperRow0FocusPath = "0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0";
+    internal static bool IsAllowedFocusPath(string? path) => path is "0/6" or GoalkeeperRow0FocusPath;
     internal const string ConfigName = "footballassistant.windows-discovery.json";
     internal const string RequestName = "discovery-request.json";
     internal const string Checkpoint = "unverified_profile_body_diagnostics";
@@ -42,7 +44,7 @@ internal static class DiscoveryCandidateConfiguration
     {
         var r = Exact(value, "schema_version", "nonce", "pid", "session_id", "bridge_sha256", "game_sha256", "window_class", "checkpoint", "panel_index", "focus_path", "requested_at", "expires_at");
         Integer(r, "schema_version", 3, 3);
-        if (String(r, "checkpoint", 64) != Checkpoint || Integer(r, "panel_index", 0, 0) != 0 || String(r, "focus_path", 127) != "0/6" ||
+        if (String(r, "checkpoint", 64) != Checkpoint || Integer(r, "panel_index", 0, 0) != 0 || !IsAllowedFocusPath(String(r, "focus_path", 127)) ||
             String(r, "window_class", 126) != "UnityWndClass") throw new InvalidOperationException("Only the fixed approved discovery scope is accepted.");
         var nonceText = String(r, "nonce", 36);
         if (!Guid.TryParseExact(nonceText, "D", out var nonce) || nonce == Guid.Empty || nonce.ToString("D") != nonceText)
@@ -50,19 +52,19 @@ internal static class DiscoveryCandidateConfiguration
         var requested = Date(r, "requested_at"); var expires = Date(r, "expires_at");
         if (expires <= requested || expires - requested > TimeSpan.FromSeconds(120)) throw new InvalidOperationException("Invalid request lifetime.");
         return new(nonce, Integer(r, "pid", 1, int.MaxValue), String(r, "session_id", 128), Hash(r, "bridge_sha256"), Hash(r, "game_sha256"),
-            "UnityWndClass", 0, "0/6", requested, expires);
+            "UnityWndClass", 0, String(r, "focus_path", 127), requested, expires);
     }
     internal static DiscoveryApproval? TryApproval(DiscoveryHostRequest pending, SmokeContext current, DateTimeOffset now)
     {
         if (pending is null || current is null || pending.Nonce == Guid.Empty || pending.Pid != current.Pid ||
             pending.Session != current.Session || pending.BridgeHash != current.BridgeHash || pending.GameHash != current.GameHash ||
             pending.WindowClass != current.ConfirmedWindowClass || pending.WindowClass != "UnityWndClass" ||
-            pending.PanelIndex != 0 || pending.FocusPath != "0/6" || pending.RequestedAt > now || pending.ExpiresAt <= now ||
+            pending.PanelIndex != 0 || !IsAllowedFocusPath(pending.FocusPath) || pending.RequestedAt > now || pending.ExpiresAt <= now ||
             pending.ExpiresAt <= pending.RequestedAt || pending.ExpiresAt - pending.RequestedAt > TimeSpan.FromSeconds(120)) return null;
         // Validate even directly constructed records; parsed requests are not a separate trust boundary.
         if (pending.Session is null || pending.Session.Length is < 1 or > 128 || string.IsNullOrWhiteSpace(pending.Session) ||
             !ValidHash(pending.BridgeHash) || !ValidHash(pending.GameHash) || current.Pid <= 0 || current.EntryThread == 0) return null;
-        return new(current, pending.Nonce, 0, "0/6", pending.RequestedAt, pending.ExpiresAt, true);
+        return new(current, pending.Nonce, 0, pending.FocusPath, pending.RequestedAt, pending.ExpiresAt, true);
     }
     private static bool ValidHash(string? s) => s is { Length: 64 } && s.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private static string Hash(JsonElement r, string name)

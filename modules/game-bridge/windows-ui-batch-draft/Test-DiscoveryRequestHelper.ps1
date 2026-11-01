@@ -45,6 +45,22 @@ try {
     $refused = $false
     try { & $helper -CandidateDirectory $directory -UnverifiedProfileBodyDiagnosticsConfirmed | Out-Null } catch { $refused = $true }
     Check ($refused -and [IO.File]::ReadAllText($path) -ceq $original) 'existing request cannot be replaced'
+    Reset-Fixture
+    $missingScopeRefused = $false
+    try { & $helper -CandidateDirectory $directory -UnverifiedProfileBodyDiagnosticsConfirmed -Scope goalkeeper_row0 | Out-Null }
+    catch { $missingScopeRefused = $true }
+    Check ($missingScopeRefused -and -not [IO.File]::Exists($path)) 'old session cannot opt into row scope'
+    $script:Session['allowed_scopes'] = @('profile_body','goalkeeper_row0'); Save 'session.json' $script:Session
+    & $helper -CandidateDirectory $directory -UnverifiedProfileBodyDiagnosticsConfirmed -Scope goalkeeper_row0 | Out-Null
+    $row = [IO.File]::ReadAllText($path) | ConvertFrom-Json
+    Check ($row.focus_path -ceq '0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0' -and
+        $row.panel_index -eq 0 -and $row.schema_version -eq 3) 'explicit row0 maps only to exact category root'
+    Check (([DateTimeOffset]::Parse($row.expires_at) - [DateTimeOffset]::Parse($row.requested_at)).TotalSeconds -eq 30) 'row0 keeps 30-second lifetime'
+    Reset-Fixture
+    $unknownScopeRefused = $false
+    try { & $helper -CandidateDirectory $directory -UnverifiedProfileBodyDiagnosticsConfirmed -Scope other | Out-Null }
+    catch { $unknownScopeRefused = $true }
+    Check ($unknownScopeRefused -and -not [IO.File]::Exists($path)) 'arbitrary scope rejected'
     foreach ($case in @('terminal','consumed','scope','panel','module','session','confirmation')) {
         Reset-Fixture
         switch ($case) {

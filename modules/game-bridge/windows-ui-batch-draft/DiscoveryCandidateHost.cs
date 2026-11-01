@@ -56,7 +56,7 @@ internal sealed class DiscoveryCandidateHost : IDisposable
             bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash,
             exe_sha256 = VerifiedWindowsBuild.ExecutableSha256, window_class = context.ConfirmedWindowClass,
             entry_tid = context.EntryThread, mode = "ui_discovery_once", discovery_enabled_by_default = false,
-            panel_index = 0, focus_path = "0/6", raw_diagnostics_only = true });
+            panel_index = 0, focus_path = "0/6", allowed_scopes = new[] { "profile_body", "goalkeeper_row0" }, raw_diagnostics_only = true });
         WriteState();
         _ = Task.Run(WriteEvidence);
         timer = platform.Start(Tick, 1000);

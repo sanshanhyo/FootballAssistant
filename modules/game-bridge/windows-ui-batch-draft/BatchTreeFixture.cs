@@ -64,6 +64,49 @@ sealed class BatchTreeFixture : IDisposable
         }
         if (CycleBody) { Children[body].Clear(); Children[body].Add(body); }
     }
+    // Synthetic first-row topology. These labels/values are not captured game content.
+    internal const string GoalkeeperCategoryPath = "0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0";
+    internal const string GoalkeeperRowPath = GoalkeeperCategoryPath + "/2/0/0/0/0";
+    internal const string GoalkeeperTitlePath = GoalkeeperCategoryPath + "/0";
+    internal const string GoalkeeperLabelPath = GoalkeeperRowPath + "/0/0/0/0/0/0/0/0/0";
+    internal const string GoalkeeperValuePath = GoalkeeperRowPath + "/0/0/0/0/0/0/1/1/0/0/0/0/0/0";
+    internal readonly List<(nint Parent, int Index)> ChildEdges = new();
+    internal readonly List<nint> TextReads = new();
+    internal readonly HashSet<nint> ThrowingTextNodes = new();
+    internal nint NodeAt(string path)
+    {
+        nint current = 103;
+        if (path.Length != 0)
+            foreach (var part in path.Split('/')) current = Children[current][int.Parse(part)];
+        return current;
+    }
+    private nint EnsurePath(string path)
+    {
+        nint current = 103;
+        foreach (var part in path.Split('/'))
+        {
+            var index = int.Parse(part);
+            while (Children[current].Count <= index)
+            { nint sibling = nextNode++; Children[sibling] = new(); Children[current].Add(sibling); }
+            current = Children[current][index];
+        }
+        return current;
+    }
+    internal void SetNodeText(string path, string? text)
+    {
+        var node = NodeAt(path);
+        if (text is null) nodeTexts.Remove(node); else nodeTexts[node] = TextObject(text);
+    }
+    internal void BuildGoalkeeperRow0()
+    {
+        Children[103] = new();
+        EnsurePath(GoalkeeperTitlePath); EnsurePath(GoalkeeperLabelPath); EnsurePath(GoalkeeperValuePath);
+        // A real-count second row exists but must never be fetched by the target plan.
+        EnsurePath(GoalkeeperCategoryPath + "/2/0/0/0/1");
+        SetNodeText(GoalkeeperTitlePath, "TEST-GROUP");
+        SetNodeText(GoalkeeperLabelPath, "TEST-ATTRIBUTE");
+        SetNodeText(GoalkeeperValuePath, "17");
+    }
     private readonly List<nint> allocations = new();
     private readonly Dictionary<nint, nint> names = new();
     private readonly Dictionary<(nint, string, int), nint> methodIds = new();
@@ -83,6 +126,7 @@ sealed class BatchTreeFixture : IDisposable
     private readonly Dictionary<nuint, nint> roots = new();
     private nuint nextHandle = IntPtr.Size == 8 ? unchecked((nuint)0x100000001UL) : 1;
     public int RootCreates, RootTargets, RootFrees;
+    internal int ObjectClassReads, UnboxReads, MethodLookups, AssignableChecks, StringLengthReads, StringCharReads;
     public int LiveRoots => roots.Count;
     public nuint il2cpp_gchandle_new(nint value, bool pinned)
     {
@@ -128,7 +172,7 @@ sealed class BatchTreeFixture : IDisposable
     { if (!roots.Values.Contains(value)) throw new Exception("Unrooted fixture object used after invocation: " + value); }
     public nint il2cpp_object_get_class(nint value)
     {
-        RequireRoot(value);
+        ObjectClassReads++; RequireRoot(value);
         if (Children.ContainsKey(value)) return nodeTexts.ContainsKey(value) ? 22 : 33;
         if (textObjects.ContainsKey(value)) return 25;
         return value switch { 101 => 31, 102 => 32, 103 => 33, 104 => DerivedText ? 34 : 22, 105 => 32, 106 => DerivedText ? 34 : 22,
@@ -136,13 +180,14 @@ sealed class BatchTreeFixture : IDisposable
     }
     public nint il2cpp_class_get_parent(nint value) => 0;
     public nint il2cpp_object_unbox(nint value)
-    { RequireRoot(value); if (value == 205) PanelCountUnboxes++; return value switch { 201 => countPayload, 205 => panelCountPayload, 206 => zeroPayload, 202 => boolPayload, 203 => rectPayload, _ => 0 }; }
-    public nint il2cpp_string_chars(nint value) { RequireRoot(value); return textObjects[value].Chars; }
-    public int il2cpp_string_length(nint value) { RequireRoot(value); return textObjects[value].Text.Length; }
-    public bool il2cpp_class_is_assignable_from(nint parent, nint child) => parent == 22 && (child == 22 || child == 34);
+    { UnboxReads++; RequireRoot(value); if (value == 205) PanelCountUnboxes++; return value switch { 201 => countPayload, 205 => panelCountPayload, 206 => zeroPayload, 202 => boolPayload, 203 => rectPayload, _ => 0 }; }
+    public nint il2cpp_string_chars(nint value) { StringCharReads++; RequireRoot(value); return textObjects[value].Chars; }
+    public int il2cpp_string_length(nint value) { StringLengthReads++; RequireRoot(value); return textObjects[value].Text.Length; }
+    public bool il2cpp_class_is_assignable_from(nint parent, nint child)
+    { AssignableChecks++; return parent == 22 && (child == 22 || child == 34); }
     public nint il2cpp_class_get_method_from_name(nint type, string name, int count)
     {
-        var key = (type, name, count);
+        MethodLookups++; var key = (type, name, count);
         if (!methodIds.TryGetValue(key, out var id)) { id = 1000 + methodIds.Count; methodIds[key] = id; methodNames[id] = name; }
         return id;
     }
@@ -150,19 +195,19 @@ sealed class BatchTreeFixture : IDisposable
     {
         if (instance != 0) RequireRoot(instance);
         var name = methodNames[method]; Invocations.Add(name);
-        exception = GetterThrows ? 999 : 0;
+        exception = GetterThrows || (name == "get_text" && ThrowingTextNodes.Contains(instance)) ? 999 : 0;
         if (name == "GetSortedPlayerPanels") { panelOpens++; return 101; }
         if (name == "get_Count") { Marshal.WriteInt32(panelCountPayload, 1); return 205; }
         if (name == "get_visualTree") return 103;
         if (name == "get_visible") { Marshal.WriteByte(boolPayload, HiddenNodes.Contains(instance) ? (byte)0 : (byte)1); return 202; }
         if (name == "get_worldBound") return 203;
         if (name == "get_childCount") { Marshal.WriteInt32(countPayload, Children[instance].Count); return 201; }
-        if (name == "get_text") return ChangePostAnchor && panelOpens >= 4 && instance == anchor1 ? changedAnchor : nodeTexts[instance];
+        if (name == "get_text") { TextReads.Add(instance); return ChangePostAnchor && panelOpens >= 4 && instance == anchor1 ? changedAnchor : nodeTexts[instance]; }
         if (name == "get_Item")
         {
             var index = Marshal.ReadInt32(Marshal.ReadIntPtr(args));
             if (instance == 101) { PanelIndices.Add(index); if (index != 0) throw new Exception("Wrong panel."); return 102; }
-            ChildIndices.Add(index); return Children[instance][index];
+            ChildIndices.Add(index); ChildEdges.Add((instance, index)); return Children[instance][index];
         }
         throw new Exception("Unexpected getter.");
     }

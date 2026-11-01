@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$CandidateDirectory,
-    [Parameter(Mandatory=$true)][switch]$UnverifiedProfileBodyDiagnosticsConfirmed
+    [Parameter(Mandatory=$true)][switch]$UnverifiedProfileBodyDiagnosticsConfirmed,
+    [ValidateSet('profile_body','goalkeeper_row0')][string]$Scope = 'profile_body'
 )
 $ErrorActionPreference = 'Stop'
 if (-not $UnverifiedProfileBodyDiagnosticsConfirmed) { throw 'Explicit raw profile-body diagnostic confirmation required.' }
@@ -30,6 +31,11 @@ $session = Read-Bounded $sessionPath
 if ($session.schema_version -ne 3 -or $session.mode -cne 'ui_discovery_once' -or
     $session.discovery_enabled_by_default -ne $false -or $session.raw_diagnostics_only -ne $true -or
     $session.panel_index -ne 0 -or $session.focus_path -cne '0/6' -or $session.window_class -cne 'UnityWndClass') { throw 'Unexpected discovery session scope.' }
+$focusPath = '0/6'
+if ($Scope -eq 'goalkeeper_row0') {
+    if (@($session.allowed_scopes) -cnotcontains 'goalkeeper_row0') { throw 'This session does not advertise the explicit goalkeeper row0 scope.' }
+    $focusPath = '0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0'
+}
 if ([string]$session.bridge_sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or [string]$session.game_sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
     [string]::IsNullOrWhiteSpace([string]$session.session_id) -or ([string]$session.session_id).Length -gt 128 -or
     [string]$session.pid -cnotmatch '\A[1-9][0-9]*\z') { throw 'Invalid session binding.' }
@@ -46,7 +52,7 @@ $request = [ordered]@{
     schema_version = 3; nonce = [Guid]::NewGuid().ToString('D'); pid = [int]$session.pid
     session_id = $session.session_id; bridge_sha256 = $session.bridge_sha256; game_sha256 = $session.game_sha256
     window_class = $session.window_class; checkpoint = 'unverified_profile_body_diagnostics'
-    panel_index = 0; focus_path = '0/6'
+    panel_index = 0; focus_path = $focusPath
     requested_at = $now.ToString('O'); expires_at = $now.AddSeconds(30).ToString('O')
 }
 $path = Join-Path $root 'discovery-request.json'
@@ -58,5 +64,10 @@ if ($bytes.Length -gt 4096) { throw 'Request exceeds bound.' }
 $stream = [IO.File]::Open(($path + '.tmp'), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
 Move-Item -LiteralPath ($path + '.tmp') -Destination $path
-Write-Output 'Wrote one 30-second request: panel 0, focus 0/6, 1000ms soft / 2048 reserved units. No retry or next chunk.'
+Write-Output "Wrote one 30-second request: scope $Scope, panel 0, focus $focusPath, 1000ms soft / 2048 reserved units. No retry or next chunk."
 Write-Output 'Raw unverified profile-body diagnostics only; no page identity, complete profile, business-field or speed guarantee.'
+if ($Scope -eq 'goalkeeper_row0') {
+    Write-Output 'Fixed category title + row0 label/value only; global depth48, at most3 complete texts, same96nodes/64live/512total roots. No other row, fallback or retry.'
+} else {
+    Write-Output 'Original profile-body DFS remains global depth32, first8children, at most8texts; no scope fallback.'
+}

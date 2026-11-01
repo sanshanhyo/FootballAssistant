@@ -13,13 +13,16 @@ internal sealed partial class WindowsLoadedModuleLease
         {
             if (!string.Equals(VerifiedHash, policy.Approval.Context.GameHash, StringComparison.Ordinal))
             { policy.Stop(); return null; }
-            return DiscoveryCollector.Run(policy, request, () =>
+            BatchNativeBackend CreateBackend()
             {
                 EnsureExports(BatchNativeBackend.RequiredExports.ToArray());
                 return new BatchNativeBackend(VerifiedHash,
                     (name, type) => Marshal.GetDelegateForFunctionPointer(exports[name], type));
-            }, () => MainThreadGuard.ReadWindowsScanIdentity(policy.Approval.Context.EntryThread),
-                () => DateTimeOffset.UtcNow, cancellationToken);
+            }
+            WindowsThreadIdentity Identity() => MainThreadGuard.ReadWindowsScanIdentity(policy.Approval.Context.EntryThread);
+            return policy.Approval.FocusPath == TargetedDiscoveryCollector.FocusRoot
+                ? TargetedDiscoveryCollector.Run(policy, request, CreateBackend, Identity, () => DateTimeOffset.UtcNow, cancellationToken)
+                : DiscoveryCollector.Run(policy, request, CreateBackend, Identity, () => DateTimeOffset.UtcNow, cancellationToken);
         }
     }
 }

@@ -7,6 +7,7 @@
     <Compile Include="DiscoveryCandidateHost.cs" />
     <Compile Include="DiscoveryCandidateConfiguration.cs" />
     <Compile Include="DiscoveryPolicy.cs" /><Compile Include="DiscoveryCollector.cs" />
+    <Compile Include="TargetedDiscoveryCollector.cs" />
     <Compile Include="BatchNativeBackend.cs" /><Compile Include="WindowsLoadedModuleLease.Discovery.cs" />
     <Compile Include="../windows-ui-smoke-draft/WindowsSmokeReader.cs" Link="WindowsSmokeReader.cs" />
     <Compile Include="../windows-smoke-draft/WindowsSmokePolicy.cs" Link="WindowsSmokePolicy.cs" />

@@ -26,6 +26,27 @@ internal static class DiscoveryCandidateConfigurationTests
         var json = Json(); var parsed = DiscoveryCandidateConfiguration.ParseRequest(json);
         var approval = DiscoveryCandidateConfiguration.TryApproval(parsed, context, now)!;
         Check(approval is not null && approval.ModeEnabled && approval.FocusPath == "0/6" && approval.PanelIndex == 0 && approval.Nonce == nonce, "fixed immutable approval");
+        fields["focus_path"] = DiscoveryCandidateConfiguration.GoalkeeperRow0FocusPath;
+        var rowJson = Json(); var rowRequest = DiscoveryCandidateConfiguration.ParseRequest(rowJson);
+        var rowApproval = DiscoveryCandidateConfiguration.TryApproval(rowRequest, context, now)!;
+        Check(rowApproval.FocusPath.Split('/').Length == 25 && rowApproval.FocusPath == DiscoveryCandidateConfiguration.GoalkeeperRow0FocusPath,
+            "only exact 25-edge row0 root accepted and retained");
+        var rowPolicy = new DiscoveryPolicy(rowApproval);
+        var bodyPolicy = new DiscoveryPolicy(approval);
+        Check(rowPolicy.ApprovalSha256 != bodyPolicy.ApprovalSha256 &&
+            rowPolicy.TryBegin(new DiscoveryRequest(3, nonce, bodyPolicy.ApprovalSha256), default, now) is null && !rowPolicy.Consumed,
+            "body authorization cannot become row authorization");
+        var sessionGate = new DiscoverySessionGate(context);
+        Check(sessionGate.TryTake(rowRequest, now) is not null && sessionGate.TryTake(parsed, now) is null &&
+            sessionGate.TryTake(rowRequest with { Nonce = Guid.NewGuid() }, now) is null, "row attempt consumes session; no scope replacement or nonce replay");
+        foreach (var badPath in new[] { DiscoveryCandidateConfiguration.GoalkeeperRow0FocusPath + "/0",
+            DiscoveryCandidateConfiguration.GoalkeeperRow0FocusPath[..^1] + "1", "0/6/0", "0/6/00" })
+        {
+            fields["focus_path"] = badPath; Reject(Json());
+            Check(DiscoveryCandidateConfiguration.TryApproval(rowRequest with { FocusPath = badPath }, context, now) is null,
+                "nearby/unapproved scopes denied before authorization");
+        }
+        fields["focus_path"] = "0/6";
         foreach (var pair in new (string Key, object Value)[] {
             ("schema_version",1), ("schema_version","3"), ("nonce",Guid.Empty.ToString("D")), ("nonce",nonce.ToString("N")),
             ("pid",0), ("pid","12"), ("session_id",""), ("session_id",new string('s',129)),
@@ -55,6 +76,12 @@ internal static class DiscoveryCandidateConfigurationTests
             var oldRejected = false;
             try { _ = UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { oldRejected = true; }
             Check(oldRejected, "old parser rejects discovery request");
+            var oldRow = new Dictionary<string, object>(fields) { ["schema_version"] = 1, ["stage"] = "ui_text",
+                ["checkpoint"] = "stable_current_session_page", ["focus_path"] = DiscoveryCandidateConfiguration.GoalkeeperRow0FocusPath };
+            File.WriteAllText(path, JsonSerializer.Serialize(oldRow));
+            var oldRowRejected = false;
+            try { _ = UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { oldRowRejected = true; }
+            Check(oldRowRejected, "old consumer rejects 25-edge row path rather than truncating");
             var oldFields = new Dictionary<string, object>(fields) { ["schema_version"] = 1, ["stage"] = "ui_text", ["checkpoint"] = "stable_current_session_page" };
             var oldJson = JsonSerializer.Serialize(oldFields); File.WriteAllText(path, oldJson);
             Check(UiCandidateConfiguration.ReadRequest(path).Stage == SmokeStage.UiText, "old fixture valid for old parser");

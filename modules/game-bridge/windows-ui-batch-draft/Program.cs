@@ -8,3 +8,5 @@ DiscoveryCollectorTests.Run();
 
 DiscoveryCandidateConfigurationTests.Run();
 DiscoverySessionGateTests.Run();
+
+TargetedDiscoveryCollectorTests.Run();

@@ -24,6 +24,11 @@ internal static class DiscoveryCollector
     internal static DiscoveryResult? Run(DiscoveryPolicy policy, DiscoveryRequest request,
         Func<BatchNativeBackend> createBackend, Func<WindowsThreadIdentity> freshIdentity,
         Func<DateTimeOffset> now, CancellationToken cancellation = default, Func<double>? elapsedForTest = null)
+        => RunCore(policy, request, createBackend, freshIdentity, now, cancellation, elapsedForTest, targetedRow: false);
+
+    internal static DiscoveryResult? RunCore(DiscoveryPolicy policy, DiscoveryRequest request,
+        Func<BatchNativeBackend> createBackend, Func<WindowsThreadIdentity> freshIdentity,
+        Func<DateTimeOffset> now, CancellationToken cancellation, Func<double>? elapsedForTest, bool targetedRow)
     {
         // Admission full-scan time is part of this request, not hidden pre-budget work.
         var started = Stopwatch.GetTimestamp();
@@ -47,6 +52,9 @@ internal static class DiscoveryCollector
             try
             {
                 budget.Check();
+                if (targetedRow && (policy.Approval.PanelIndex != 0 ||
+                    policy.Approval.FocusPath != TargetedDiscoveryCollector.FocusRoot))
+                    throw new UiSmokeStopped("target_scope_mismatch");
                 backend = createBackend();
                 if (backend.VerifiedModuleHash != policy.Approval.Context.GameHash)
                     throw new UiSmokeStopped("discovery_module_mismatch");
@@ -89,6 +97,38 @@ internal static class DiscoveryCollector
                         Visit(child, depth + 1, Join(path, index));
                     }
                 }
+                void VisitTargets(BatchObject node, int depth, string path, int[][] suffixes)
+                {
+                    // This is a fixed selector trie, never a caller-provided list or DFS fallback.
+                    if (depth > TargetedDiscoveryCollector.MaximumDepth || StopWork())
+                        throw new UiSmokeStopped("target_work_limit");
+                    Charge();
+                    if (!backend.Visible(node, budget)) throw new UiSmokeStopped("target_hidden");
+                    if (suffixes.Any(suffix => suffix.Length == 0))
+                    {
+                        if (!backend.IsTextElement(node, budget) || !backend.Bounds(node, budget).PositiveFinite)
+                            throw new UiSmokeStopped("target_text_unavailable");
+                        var text = backend.ReadAnchorText(node, budget);
+                        if (string.IsNullOrWhiteSpace(text)) throw new UiSmokeStopped("target_text_unavailable");
+                        texts.Add(new(path, text));
+                    }
+                    var indices = suffixes.Where(suffix => suffix.Length > 0)
+                        .Select(suffix => suffix[0]).Distinct().OrderBy(index => index).ToArray();
+                    if (indices.Length == 0) return;
+                    if (depth >= TargetedDiscoveryCollector.MaximumDepth)
+                        throw new UiSmokeStopped("target_depth_budget"); // Never obtain a depth49 child.
+                    var count = backend.ChildCount(node, budget);
+                    foreach (var index in indices)
+                    {
+                        if (StopWork()) throw new UiSmokeStopped("target_work_limit");
+                        if (index >= count) throw new UiSmokeStopped("target_child_unavailable");
+                        var remaining = suffixes.Where(suffix => suffix.Length > 0 && suffix[0] == index)
+                            .Select(suffix => suffix.Skip(1).ToArray()).ToArray();
+                        using var child = backend.Child(node, index, budget);
+                        if (child is null) throw new UiSmokeStopped("target_child_unavailable");
+                        VisitTargets(child, depth + 1, Join(path, index), remaining);
+                    }
+                }
                 BatchObject? current = backend.OpenPanel(policy.Approval.PanelIndex, budget);
                 if (current is null) throw new UiSmokeStopped("discovery_panel_unavailable");
                 try
@@ -104,11 +144,14 @@ internal static class DiscoveryCollector
                         if (child is null) throw new UiSmokeStopped("discovery_focus_unavailable");
                         current.Dispose(); current = child;
                     }
-                    Visit(current, edges.Length, policy.Approval.FocusPath);
+                    if (targetedRow)
+                        VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets());
+                    else Visit(current, edges.Length, policy.Approval.FocusPath);
                 }
                 finally { current?.Dispose(); }
                 success = true;
-                reason = bounded ? "bounded_raw_diagnostics" : "approved_prefix_exhausted";
+                reason = targetedRow ? "approved_row_targets_complete" :
+                    bounded ? "bounded_raw_diagnostics" : "approved_prefix_exhausted";
             }
             catch (Exception error)
             {
@@ -134,7 +177,7 @@ internal static class DiscoveryCollector
             if (!success)
             {
                 observations = Array.Empty<DiscoveryText>();
-                if (reason is "bounded_raw_diagnostics" or "approved_prefix_exhausted") reason = "discovery_accounting_rejected";
+                if (reason is "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete") reason = "discovery_accounting_rejected";
             }
             return new(success ? "raw_diagnostics" : "terminal_failure", reason, observations,
                 budget.Operations, spent, nodes, roots, peak, bounded, request,
