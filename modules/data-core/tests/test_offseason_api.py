@@ -20,7 +20,7 @@ def test_offseason_forwards_explicit_selectors_to_configured_reader(tmp_path, mo
     calls = []
     async def fake_reader(path, club_uid, person_uid):
         calls.append((path, club_uid, person_uid))
-        return {"status": "partial", "snapshot": {"schema": "fa-offseason/0.1"}}
+        return {"status": "partial", "snapshot": {"schema": "fa-offseason/0.1", "tactic": {"status": "experimental", "phase": "unknown"}}}
 
     monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_EXE", str(tmp_path / "reader.exe"))
     monkeypatch.setattr(offseason_snapshot, "read_offseason", fake_reader)
@@ -30,4 +30,5 @@ def test_offseason_forwards_explicit_selectors_to_configured_reader(tmp_path, mo
         response = client.get("/v1/reader/offseason?club_uid=42&person_uid=7", headers=AUTH)
         assert response.status_code == 200
         assert response.json()["status"] == "partial"
+        assert response.json()["snapshot"]["tactic"] == {"status": "experimental", "phase": "unknown"}
         assert calls == [(tmp_path / "reader.exe", 42, 7)]
