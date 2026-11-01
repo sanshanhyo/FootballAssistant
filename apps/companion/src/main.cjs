@@ -15,7 +15,7 @@ const updateTrust = require('./update-trust.cjs');
 const { createInstalledUpdater } = require('./update-installed.cjs');
 const { distribution } = require('./distribution.cjs');
 const { createUpdateController } = require('./update-controller.cjs');
-const { loadSettings, detectGame, BackendSupervisor } = require('./bootstrap.cjs');
+const { loadSettings, detectGame, BackendSupervisor, initializeCompanion } = require('./bootstrap.cjs');
 const { RealReaderClient } = require('./reader-clients.cjs');
 const { request, defaultRuntimeFile } = require('./backend.cjs');
 const { CompanionRuntime } = require('./companion-runtime.cjs');
@@ -408,7 +408,7 @@ async function main() {
     isManaged: () => app.isPackaged && !backendSupervisor.external && backendSupervisor.status.owned === true && backendSupervisor.status.state === 'ready',
     getMetadata: () => request(runtimeFile, '/v1/agent/persona'), openPath: target => shell.openPath(target) });
   runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
-  await runtime.init(); runtime.on('event', emit);
+  await initializeCompanion(runtime); runtime.on('event', emit);
   registerIpc();
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
     { label: '显示桌宠', click: showPet }, { label: '隐藏桌宠', click: hidePet },

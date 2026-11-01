@@ -38,6 +38,10 @@ require(${JSON.stringify(path.join(appRoot, 'src', 'main.cjs'))});
     page.on('pageerror', error => report.errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') report.errors.push(message.text()); });
     await page.waitForFunction(() => window.companion && document.querySelector('#character-image')?.naturalWidth > 0);
+    await check('normal app starts real before the offline fixture explicitly selects mock', async () => {
+      const initial = await page.evaluate(async () => (await window.companion.getState()).value);
+      assert.equal(initial.mode, 'real'); assert.equal(initial.synthetic, false);
+    });
     await check('explicit mock fixture state, speech-only bubble and isolated renderer', async () => {
       const selected = await page.evaluate(async () => await window.companion.setMode('mock'));
       assert.equal(selected.ok, true);

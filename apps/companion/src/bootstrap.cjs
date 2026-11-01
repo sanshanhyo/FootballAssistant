@@ -33,6 +33,13 @@ async function detectGame(platform = process.platform, run = promisify(execFile)
     return { state: found ? 'running' : 'not_detected', dataConnected: false, note: '进程检测不代表游戏数据已连接。' };
   } catch { return { state: 'unknown', dataConnected: false, note: '无法检测游戏进程；不会启动或修改游戏。' }; }
 }
+async function initializeCompanion(runtime) {
+  await runtime.init();
+  // Normal desktop use is always real: missing backend/model configuration must
+  // surface its actual error, never select synthetic game answers as a fallback.
+  // Offline fixtures can still opt in explicitly with runtime.setMode('mock').
+  return runtime.setMode('real');
+}
 class BackendSupervisor {
   constructor({ userData, resourcesPath, packaged, runtimeFile, external = false, settings, backendEnv = {}, spawnProcess = spawn, probe = request, timeoutMs = 30000 }) {
     Object.assign(this, { userData, resourcesPath, packaged, runtimeFile, external, settings, backendEnv, spawnProcess, probe, timeoutMs });
@@ -82,4 +89,4 @@ class BackendSupervisor {
     });
   }
 }
-module.exports = { DEFAULT_SETTINGS, validateSettings, loadSettings, detectGame, BackendSupervisor };
+module.exports = { DEFAULT_SETTINGS, validateSettings, loadSettings, detectGame, BackendSupervisor, initializeCompanion };
