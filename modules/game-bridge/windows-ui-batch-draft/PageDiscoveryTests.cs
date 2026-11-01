@@ -44,7 +44,7 @@ internal static class PageDiscoveryTests
                 result.PeakRoots==(profile=="tactics_current"?11:profile=="next_match_card"?15:33) && guards==units+nodes+3,
                 "single-pass native trie exact units/nodes/roots/fresh guards");
             Check(PageDiscoveryValidation.TryValidate(result,profile),"all selected complete synthetic displays pass pinned semantics");
-            Check(result.FocusEdges is null,"normal page profiles never acquire candidate-only edge traces");
+            Check(result.FocusEdges is null && result.Topology is null,"normal page profiles never acquire candidate-only edge traces");
             DiscoveryResult TextAt(string path,string text)=>result with {Observations=result.Observations
                 .Select(o=>o.Path==path?o with {Text=text}:o).ToArray()};
             if(profile=="tactics_current")
@@ -244,6 +244,90 @@ internal static class PageDiscoveryTests
             var rejected=false;
             try { _=Policy(alignment,BatchTreeFixture.TacticsAlignmentRoot+"/0"); } catch(ArgumentException) { rejected=true; }
             Check(rejected,"candidate request cannot override the fixed remaining suffix/root");
+        }
+        // Independent fixed diagnostic roots; no reuse of production selector construction.
+        foreach(var profile in new[]{"tactics_sibling12","tactics_sibling7","tactics_sibling4"})
+        {
+            var focus=BatchTreeFixture.SiblingFocus(profile);var depth=focus.Split('/').Length;
+            Check(FiniteCaptureSelection.TryGet(profile,out var probe) && probe.Kind=="tactics_sibling_probe" &&
+                probe.FocusRoot==focus,"only three literal approved sibling roots");
+            foreach(var scenario in new[]{"empty","text","count0","count1","count3","hiddenancestor","nullchild",
+                "hiddennode","width","depth","textcap","work","operations","cleanup","guard","finalguard","hard"})
+            {
+                using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};
+                var relative=scenario=="width"?new[]{"8"}:scenario=="depth"?
+                    new[]{string.Join("/",Enumerable.Repeat("0",49-depth))}:
+                    scenario=="textcap"?Enumerable.Range(0,8).Select(i=>i.ToString()).ToArray():
+                    scenario=="operations"?Enumerable.Range(0,8).SelectMany(i=>Enumerable.Range(0,8).SelectMany(j=>Enumerable.Range(0,8).Select(k=>$"{i}/{j}/{k}"))).ToArray():
+                    scenario is "text" or "work" or "finalguard" or "hard"?new[]{"0"}:Array.Empty<string>();
+                fixture.BuildSiblingProbe(profile,relative);
+                var parent=fixture.NodeAt(focus[..focus.LastIndexOf('/')]);var root=fixture.NodeAt(focus);
+                if(scenario=="count0")fixture.Children[parent].Clear();
+                if(scenario=="count1")fixture.Children[parent].RemoveAt(1);
+                if(scenario=="count3")fixture.Children[parent].Add(fixture.NodeAt("0/0"));
+                if(scenario=="hiddenancestor")fixture.HiddenNodes.Add(parent);
+                if(scenario=="nullchild")fixture.NullChildEdges.Add((parent,1));
+                if(scenario=="hiddennode")fixture.HiddenNodes.Add(root);
+                if(scenario is "text" or "work" or "finalguard" or "hard")fixture.SetNodeText(focus+"/0","TEST RAW ANCHOR");
+                if(scenario=="textcap")foreach(var path in relative)fixture.SetNodeText(focus+"/"+path,"TEST RAW "+path);
+                if(scenario=="cleanup")fixture.FailFirstFree=true;
+                var policy=Policy(profile);var guards=0;
+                var result=Capture(policy,fixture,elapsed:()=>scenario=="work"&&fixture.TextReads.Count>0?801:
+                    scenario=="hard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?1001:0,
+                    fresh:()=>{guards++;return (scenario=="guard"&&fixture.ChildEdges.Count>=depth ||
+                        scenario=="finalguard"&&fixture.RootCreates>0&&fixture.LiveRoots==0)?
+                        identity with{WindowScanStatus="failed"}:identity;});
+                var failed=scenario is "count0" or "count1" or "count3" or "hiddenancestor" or "nullchild" or "cleanup" or "guard" or "finalguard" or "hard";
+                Check(result.Status==(failed?"terminal_failure":"raw_diagnostics"),"sibling scenario status: "+scenario);
+                Check(PageDiscoveryValidation.TryValidate(result,profile)==!failed &&
+                    !PageDiscoveryValidation.TryValidate(result,"tactics_current"),
+                    "host accepts only bounded raw probe envelope, never normal tactical fields");
+                if(!failed)
+                {
+                    Check(!PageDiscoveryValidation.TryValidate(result with { FocusPath="0/6" },profile) &&
+                        !PageDiscoveryValidation.TryValidate(result with { Observations=new[]{new DiscoveryText("0/6","TEST")} },profile) &&
+                        !PageDiscoveryValidation.TryValidate(result with { TraversalBounded=!result.TraversalBounded },profile),
+                        "probe validation binds exact scope and truthful bounded reason");
+                }
+                Check(result.Topology is not null && result.Topology.Length<=96 && result.FocusEdges is not null && result.FocusEdges.Length<=35,
+                    "numeric traces allocated only within fixed bounds");
+                if(failed)Check(result.Observations.Length==0,"failed probes discard provisional text");
+                if(scenario is "count0" or "count1" or "count3")
+                    Check(result.Reason=="sibling_parent_shape_changed" && !fixture.ChildEdges.Any(e=>e.Parent==parent) &&
+                        result.FocusEdges!.Last().ObservedChildCount==int.Parse(scenario[^1..]) && result.FocusEdges.Last().Stage==3,
+                        "actual parent count must be exactly2 before obtaining child1");
+                if(scenario=="empty")Check(result.Observations.Length==0 && !result.TraversalBounded &&
+                    result.Topology is {Length:1} && result.Topology[0]==new DiscoveryTopologyNode(-1,-1,depth,1,0,0,4),
+                    "empty success requires actual visible/type/count reads, not absence of text alone");
+                if(scenario=="text")Check(result.Observations.Length==1 && result.Observations[0].Path==focus+"/0" &&
+                    result.Topology is {Length:2} && result.Topology[1].ParentRecordIndex==0 && result.Topology[1].ChildEdge==0,
+                    "raw arbitrary text and numeric parent edge retained without tactical semantic claims");
+                if(scenario is "hiddennode" or "width" or "depth" or "textcap" or "work" or "operations")
+                    Check(result.TraversalBounded,"uninspected visible/hidden contents always explicitly partial: "+scenario);
+                if(scenario=="hiddennode")Check(result.Topology![0].Visible==0 && result.Topology[0].TextElement==-1 &&
+                    result.Topology[0].ChildCount==-1 && result.Topology[0].Stage==2,"hidden fields remain unknown");
+                if(scenario=="width")Check(result.Topology![0].ChildCount==9 && !fixture.ChildEdges.Contains((root,8)),"first8 only, no child8 prefetch");
+                if(scenario=="depth")Check(result.Topology!.Max(n=>n.GlobalDepth)==48 &&
+                    result.Topology.Last().ChildCount==1 && !fixture.ChildEdges.Any(e=>e.Parent==fixture.NodeAt(focus+"/"+string.Join("/",Enumerable.Repeat("0",48-depth)))) ,
+                    "depth48 inspected; depth49 child never obtained");
+                if(scenario=="textcap")Check(result.Observations.Length==8 && result.Topology!.Last().ChildCount==-1 &&
+                    result.Topology.Last().Stage==3,"text cap stops before count without invented zero");
+                if(scenario=="operations")Check(result.NativeOperations>=1792 && result.NativeOperations<2048 && result.Nodes<96,
+                    "cooperative operations stop distinct from hard failure");
+                Check(!fixture.ChildEdges.Contains((parent,0)),"never fallback to original child0 spine or another root");
+                foreach(var node in result.Topology!)Check(node.ParentRecordIndex>=-1 && node.ParentRecordIndex<result.Topology.Length &&
+                    node.GlobalDepth>=depth && node.GlobalDepth<=48 && node.Visible is >=-1 and <=1 && node.TextElement is >=-1 and <=1,
+                    "bounded numeric topology values");
+                var publication=DiscoveryPublication.Create(result,false);
+                Check(publication.Result is null && ReferenceEquals(publication.Topology,result.Topology),"failure publication preserves numeric topology only");
+                using(var json=System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(publication)))
+                    foreach(var node in json.RootElement.GetProperty("topology").EnumerateArray())
+                        Check(node.EnumerateObject().Count()==7 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"topology is seven integers only");
+                Clean(fixture,policy,result);
+                Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                    ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"probe cannot retry in consumed request");
+                Console.WriteLine($"Sibling {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},guards={guards}; owned fixture only.");
+            }
         }
     }
 }

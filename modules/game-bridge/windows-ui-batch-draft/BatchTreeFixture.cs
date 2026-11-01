@@ -164,8 +164,19 @@ sealed class BatchTreeFixture : IDisposable
     internal readonly HashSet<(nint Parent,int Index)> NullChildEdges = new();
     internal const string NextMatchPageRoot = "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2";
     internal const string SchedulePageRoot = "0/4/0/0/0/0/0/1/0/0/0/0/0/0/1/0/5";
+    internal static string SiblingFocus(string profile) => profile switch {
+        "tactics_sibling12" => "0/4/0/0/0/0/0/0/0/0/0/0/1",
+        "tactics_sibling7" => "0/4/0/0/0/0/0/1",
+        "tactics_sibling4" => "0/4/0/0/1", _ => throw new ArgumentException() };
+    internal void BuildSiblingProbe(string profile, params string[] relativePaths)
+    {
+        Children[103] = new();
+        var focus = SiblingFocus(profile); EnsurePath(focus);
+        foreach (var path in relativePaths) EnsurePath(focus + "/" + path);
+    }
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
+    { "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
+      "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
        _ when profile.StartsWith("schedule_row",StringComparison.Ordinal) => SchedulePageRoot,
        _ => throw new ArgumentException() };
     internal static string[] PagePaths(string profile)

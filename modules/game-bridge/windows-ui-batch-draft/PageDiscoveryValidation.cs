@@ -9,6 +9,8 @@ internal static class PageDiscoveryValidation
 {
     internal static bool TryValidate(DiscoveryResult? result,string profile)
     {
+        if (FiniteCaptureSelection.TryGet(profile,out var probe) && probe.Kind=="tactics_sibling_probe")
+            return ValidateProbe(result,probe);
         if(!FiniteCaptureSelection.TryGet(profile,out var selection) || selection.Kind=="attributes" || result is null ||
             result.Status!="raw_diagnostics" || result.Reason!="approved_group_targets_complete" ||
             result.SelectionProfile!=profile || result.PageIdentityVerified || result.TraversalBounded ||
@@ -28,6 +30,29 @@ internal static class PageDiscoveryValidation
         }
         return selection.Kind switch { "tactics"=>Tactics(raw), "tactics_alignment"=>Tactics(raw), "next_match"=>NextMatch(raw),
             "schedule"=>Schedule(raw), _=>false };
+    }
+    // A raw bounded inventory is NOT tactical-field validation or page identity.
+    private static bool ValidateProbe(DiscoveryResult? result,FiniteCaptureSelection selection)
+    {
+        if(result is null || result.Status!="raw_diagnostics" || result.SelectionProfile!=selection.Profile ||
+            result.PageIdentityVerified || result.PanelIndex!=0 || result.FocusPath!=selection.FocusRoot ||
+            result.Reason!=(result.TraversalBounded?"bounded_raw_diagnostics":"approved_prefix_exhausted") ||
+            result.NativeOperations is <0 or >2048 || result.Nodes is <1 or >96 ||
+            result.TotalRoots is <0 or >512 || result.PeakRoots is <0 or >64 ||
+            !double.IsFinite(result.ElapsedMilliseconds) || result.ElapsedMilliseconds is <0 or >1000 ||
+            result.Observations is null || result.Observations.Length>8) return false;
+        var paths=new HashSet<string>(StringComparer.Ordinal);var characters=0;
+        foreach(var item in result.Observations)
+        {
+            if(item is null || item.Path is null || item.Text is null || item.Text.Length is <1 or >128 ||
+                string.IsNullOrWhiteSpace(item.Text) || !paths.Add(item.Path) ||
+                (item.Path!=selection.FocusRoot && !item.Path.StartsWith(selection.FocusRoot+"/",StringComparison.Ordinal))) return false;
+            var edges=item.Path.Split('/');
+            if(edges.Length>48 || edges.Any(part=>part.Length is <1 or >3 || (part.Length>1 && part[0]=='0') ||
+                part.Any(c=>c<'0'||c>'9') || !int.TryParse(part,out var index) || index>511)) return false;
+            characters+=item.Text.Length;
+        }
+        return characters<=1024;
     }
     private static bool Letter(char c)=>char.IsLetter(c);
     private static bool Number(char c)=>char.IsNumber(c);

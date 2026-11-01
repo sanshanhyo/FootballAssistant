@@ -128,3 +128,50 @@ not proof of page/team identity or business facts. Output stays raw, identityfal
 non-atomic, and outside the normal tactics adapter. Actual Windows paths and texts
 must be reviewed against the visible page before a subsequent explicit fixed
 Windows selector can be accepted. Synthetic fixtures are not real page evidence.
+
+## Fixed three-sibling raw inventory
+
+The alignment attempt reached an actual empty container at global depth16. It did
+not locate tactical fields. The observed ancestry had exactly three earlier forks,
+at depths12,7,4, each with two children; all chosen edges were child0. The explicit
+`tactics_sibling_inventory` manifest therefore samples only the three previously
+unread child1 subtrees, nearest first:
+
+1. `tactics_sibling12`: `0/4/0/0/0/0/0/0/0/0/0/0/1`
+2. `tactics_sibling7`: `0/4/0/0/0/0/0/1`
+3. `tactics_sibling4`: `0/4/0/0/1`
+
+These are disjoint numeric scopes, not claims about their semantic roles. Each
+request reacquires the panel/focus and requires its corresponding parent still
+has exactly two children before obtaining child1. A mismatch is a safety stop,
+not a request to skip to another scope. No other top-level panel0/0 children are
+selected, no pointers/cursors survive chunks, and no alternate focus is accepted.
+
+One explicit invocation schedules exactly three chunks with at least2s cooldown;
+maximum total6144 reserved operations and3000ms summed soft capture time. Each
+chunk retains1000ms/2048 hard-accounting ceilings,800ms/1792 cooperative stop,
+globaldepth48/node96 (including ancestors), first8children per node,8complete
+texts of128UTF16 units each/1024total, live64/allocated512 roots. A single native
+call is not preempted and wall-clock pause is not guaranteed below1s. Traversal
+is the existing child0-first DFS, not a new unbounded search or speculative
+breadth-first native-handle prefetch. The three disjoint branches are scheduled
+fairly as separate chunks, avoiding repeated restarts or a giant one-frame scan.
+
+`source_kind=tactics_sibling_probe` is raw diagnostic only, not a tactics adapter.
+Texts are sparse possible anchors; none are automatically associated as fields,
+team identity, game date or page identity. Empty output is not evidence that the
+page has no tactical data. A bounded chunk may complete the finite manifest step
+without exhausting its subtree; the terminal manifest means all three attempts
+finished, not that the page was completely read.
+
+Candidate-only top-level `topology` (also in an accepted result) contains at most96
+numeric records from existing reads: ParentRecordIndex(-1 for selected root),
+ChildEdge(-1 at selected root), GlobalDepth, Visible, TextElement, ChildCount,
+and Stage. Unknown values are -1. Stages mark completed work:1 entered,
+2 visibility completed,3 type completed,4 child count completed. The graph contains
+only visited nodes, not fabricated nodes for unvisited siblings. Parent references
+plus approved focus reconstruct numeric paths without names, pointers or extra
+native calls. Visibility pruning, width/depth/text/node/cooperative limits set
+TraversalBounded; partial records explicitly retain unknown counts. Failure also
+preserves numeric topology/focus diagnostics but discards all raw text. No standalone
+"complete" flag promotes a partial or hidden subtree to full page coverage.

@@ -46,7 +46,7 @@ def main():
     assert 'FiniteRowsCandidateHost' in entry and 'DiscoveryCandidateHost' not in entry
     host = (HERE/'FiniteRowsCandidateHost.cs').read_text()
     assert 'var publication = DiscoveryPublication.Create(result, accepted);' in host
-    assert 'result = publication.Result, focus_diagnostic = publication.FocusDiagnostic, focus_edges = publication.FocusEdges, accepted' in host
+    assert 'result = publication.Result, focus_diagnostic = publication.FocusDiagnostic, focus_edges = publication.FocusEdges, topology = publication.Topology, accepted' in host
     assert 'result = accepted ? result : null' not in host  # Cannot discard the separate diagnostic.
     prepare = (HERE/'Prepare-FiniteRowsCandidate.ps1').read_text()
     assert "schema_version = 4; mode = 'goalkeeper_rows0_3'" in prepare
