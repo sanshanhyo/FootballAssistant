@@ -1,3 +1,4 @@
+#nullable enable
 using FootballAssistant.OffseasonReader;
 
 static void Check(bool value) { if (!value) throw new Exception("Decoder check failed"); }
@@ -22,6 +23,16 @@ Check(ManagerCandidateLookup.Read(1, 0).Status == "unknown");
 Check(PlayerValueDecoder.Contract(0, 0, 0).WageRaw is null);
 Check(PlayerValueDecoder.Contract(-1, 0, 0).StartDate is null);
 Check(PlayerValueDecoder.Contract(1234, (2023u << 16) | 365u, (2027u << 16) | 365u) == new PlayerContractCandidate("experimental", "2023-12-31", "2027-12-31", 1234));
+var ids = Enumerable.Repeat(byte.MaxValue, 44).ToArray();
+var numbers = Enumerable.Repeat(byte.MaxValue, 11).ToArray();
+BitConverter.GetBytes(123u).CopyTo(ids, 0); numbers[0] = 7;
+var identity = new TacticIdentity(123, 456, "Synthetic", "Synthetic", "", "");
+Check(TacticPlayerAssociations.Match(ids, numbers, new TacticIdentity?[] { identity }, false)[0] == new TacticPlayerCandidate("experimental_candidate", 456, "Synthetic", 7));
+Check(TacticPlayerAssociations.Match(ids, numbers, Array.Empty<TacticIdentity?>(), false)[0].Status == "unknown");
+Check(TacticPlayerAssociations.Match(ids, numbers, new TacticIdentity?[] { identity, identity }, false)[0].Status == "unknown");
+Check(TacticPlayerAssociations.Match(ids, numbers, new TacticIdentity?[] { identity }, true)[0].Status == "unknown");
+BitConverter.GetBytes(123u).CopyTo(ids, 4);
+Check(TacticPlayerAssociations.Match(ids, numbers, new TacticIdentity?[] { identity }, false)[0].Status == "unknown");
 Console.WriteLine("Decoder checks passed");
 // Synthetic packed positions and roles: no real game samples.
 Check(TacticCandidateLookup.Read(0, 1).Status == "invalid_input");
