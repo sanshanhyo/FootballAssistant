@@ -50,10 +50,12 @@ public static class PersonLookup
             if (!Read64(memory, item, out long personVtable)) return new("unavailable", null, null);
             PlayerDetails? details = null;
             CandidateAffiliation? affiliation = null;
+            ContractSnapshot? contract = null;
             if (personVtable == image + 0x04D27758 && item >= 0x288)
             {
                 details = ReadDetails(memory, item, item - 0x288);
                 affiliation = ReadAffiliation(memory, image, item, item - 0x288);
+                contract = ReadContract(memory, image, item, item - 0x288);
             }
             var after = ReadHeader(memory, image);
             if (after != header || !Read64(memory, header.Value.Begin + index * 8, out long same) || same != item ||
@@ -61,10 +63,11 @@ public static class PersonLookup
                 !Read64(memory, item, out long sameVtable) || sameVtable != personVtable ||
                 (details is not null && ReadDetails(memory, item, item - 0x288) != details) ||
                 (affiliation is not null && ReadAffiliation(memory, image, item, item - 0x288) != affiliation) ||
+                (contract is not null && ReadContract(memory, image, item, item - 0x288) != contract) ||
                 clock.ElapsedMilliseconds >= 2000)
                 return new("changed_during_read", null, null);
             var display = string.IsNullOrWhiteSpace(common) ? $"{first} {last}".Trim() : common;
-            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details, affiliation);
+            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details, affiliation, contract?.Value);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
         { return new("unavailable", null, null); }
@@ -129,6 +132,19 @@ public static class PersonLookup
         uint teamUid = BitConverter.ToUInt32(teamId, 0), clubUid = BitConverter.ToUInt32(clubId, 0);
         return PlayerValueDecoder.Affiliation(teamUid, clubUid, nameBytes);
     }
+    private static ContractSnapshot? ReadContract(SafeProcessHandle p, long image, long person, long player)
+    {
+        if (!Read32(p, person - 4, out int displacement) || displacement != 0 ||
+            !Read64(p, player, out long playerType) || playerType != image + 0x04D27228 ||
+            !Read64(p, player + 8, out long vbtable) || vbtable != image + 0x04D2720C ||
+            !Read64(p, person + 0xA8, out long contract) || contract <= 0 ||
+            !Read64(p, contract, out long type) || type != image + 0x04B00AE8 ||
+            !Read64(p, contract + 8, out long owner) || owner != person ||
+            !Read32(p, contract + 0x20, out int wage) || !Read32(p, contract + 0x44, out int start) ||
+            !Read32(p, contract + 0x48, out int end)) return null;
+        return new(contract, wage, start, end, PlayerValueDecoder.Contract(wage, unchecked((uint)start), unchecked((uint)end)));
+    }
+    private sealed record ContractSnapshot(long Address, int Wage, int Start, int End, PlayerContractCandidate Value);
     private static bool Read32(SafeProcessHandle p, long address, out int value)
     { value = 0; if (!ReadBytes(p, address, 4, out var b)) return false; value = BitConverter.ToInt32(b, 0); return true; }
     private static bool Read64(SafeProcessHandle p, long address, out long value)
@@ -147,7 +163,8 @@ public static class PersonLookup
 }
 
 public sealed record PersonResult(string Status, int? Uid, string? DisplayName, PlayerDetails? Details = null,
-    CandidateAffiliation? Affiliation = null);
+    CandidateAffiliation? Affiliation = null, PlayerContractCandidate? Contract = null);
 public sealed record PlayerDetails(byte? ReflexesRaw, byte? HandlingRaw, byte? AnticipationRaw,
     byte? JumpingRaw, int? HeightCm, string? DateOfBirth);
 public sealed record CandidateAffiliation(uint TeamUid, uint ClubUid, string ClubShortName);
+public sealed record PlayerContractCandidate(string Status, string? StartDate, string? EndDate, int? WageRaw);

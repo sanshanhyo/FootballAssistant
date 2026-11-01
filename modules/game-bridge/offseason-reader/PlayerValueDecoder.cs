@@ -5,6 +5,8 @@ public static class PlayerValueDecoder
 {
     public static byte? Attribute(byte value) => value is 0 or > 100 ? null : value;
     public static int? Height(int value) => value is >= 100 and <= 250 ? value : null;
+    public static PlayerContractCandidate Contract(int rawWage, uint rawStart, uint rawEnd) =>
+        new("experimental", Date(rawStart), Date(rawEnd), rawWage > 0 ? rawWage : null);
     public static CandidateAffiliation? Affiliation(uint teamUid, uint clubUid, byte[] nameBytes)
     {
         int length = Array.IndexOf(nameBytes, (byte)0);
