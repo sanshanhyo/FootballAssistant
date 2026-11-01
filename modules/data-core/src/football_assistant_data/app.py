@@ -195,6 +195,14 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             return {"status": "unavailable", "reason": "match_file_not_configured", "snapshot": None}
         return read_match_snapshot(Path(configured))
 
+    @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
+    async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647)):
+        from .offseason_snapshot import read_offseason, unavailable
+        configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+        if not configured:
+            return unavailable("producer_not_configured")
+        return await read_offseason(Path(configured), club_uid, person_uid)
+
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
