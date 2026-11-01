@@ -1,3 +1,7 @@
 node_modules/
 dist/
 *.heapsnapshot
+
+
+# Rebuilt from pinned, verified sources by packaging/build-local-stt.py
+local-stt/

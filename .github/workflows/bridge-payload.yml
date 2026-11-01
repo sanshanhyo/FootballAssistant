@@ -1,0 +1,45 @@
+name: Bridge payload candidate
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - modules/game-bridge/**
+      - scripts/build_bridge_payload.py
+      - .github/workflows/bridge-payload.yml
+  pull_request:
+    paths:
+      - modules/game-bridge/**
+      - scripts/build_bridge_payload.py
+      - .github/workflows/bridge-payload.yml
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: arm64
+      - name: Run existing isolated bridge self tests (no game)
+        run: dotnet run --project modules/game-bridge/tests/SelfTest.csproj
+      - name: Inspect direct-host assembly without invoking game/native code
+        run: dotnet run --project modules/game-bridge/tests/DirectHostSmoke.csproj
+      - name: Build existing direct Doorstop entry without optional BepInEx Plugin
+        run: dotnet build modules/game-bridge/FootballAssistant.DirectBridge.csproj --configuration Release --output build/direct-bridge
+      - name: Collect pinned official loader/runtime and full licenses/source
+        run: python scripts/build_bridge_payload.py --plugin build/direct-bridge/FootballAssistant.GameBridge.dll
+      - name: Confirm candidate remains blocked pending isolated game acceptance
+        run: python -c "import json; p=json.load(open('build/bridge-macos-arm64-candidate/payload.json')); assert p['reviewed'] is False and p['validation']=='pending_isolated_game_acceptance'"
+      - name: Archive candidate preserving modes (does not install or launch anything)
+        run: tar -czf build/FootballAssistant-bridge-macos-arm64-CANDIDATE.tar.gz -C build bridge-macos-arm64-candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-macos-arm64-candidate-NOT-DEPLOYABLE
+          path: build/FootballAssistant-bridge-macos-arm64-CANDIDATE.tar.gz
+          if-no-files-found: error
+          retention-days: 7

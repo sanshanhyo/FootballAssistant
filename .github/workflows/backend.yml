@@ -5,6 +5,9 @@ on:
     paths:
       - 'modules/**'
       - 'contracts/**'
+      - 'apps/companion/src/**'
+      - 'apps/companion/test/**'
+      - 'scripts/diagnostics/windows_discovery_import_e2e.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/backend.yml'
@@ -12,6 +15,9 @@ on:
     paths:
       - 'modules/**'
       - 'contracts/**'
+      - 'apps/companion/src/**'
+      - 'apps/companion/test/**'
+      - 'scripts/diagnostics/windows_discovery_import_e2e.py'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/backend.yml'
@@ -32,5 +38,10 @@ jobs:
       - name: Verify reader base install has no model SDK
         run: uv sync --frozen --python 3.14 --no-dev
       - run: uv run --no-sync python -c "import importlib.util; from football_assistant_data.reader import create_reader_app; assert importlib.util.find_spec('pydantic_ai') is None; assert importlib.util.find_spec('openai') is None; create_reader_app()"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Synthetic Windows discovery import to companion reply (no game/model)
+        run: uv run --no-sync python scripts/diagnostics/windows_discovery_import_e2e.py
       - run: uv sync --frozen --python 3.14 --extra save --extra agent
       - run: uv run --frozen --extra save --extra agent pytest -q

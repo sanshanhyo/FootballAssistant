@@ -9,11 +9,15 @@ import sys
 import time
 
 from .reader_client import ReaderClient, ReaderError
+from .display_profile import MAX_FACTS
 
 COMMANDS = {
     "help":"List these commands.",
     "status":"Current source, connection, sampling times and decoder availability.",
     "snapshot":"Latest selected observation: --after N --limit N --event-id ID.",
+    "business-status":"Native business capability gates; no UI or legacy fallback.",
+    "business-snapshot":"Native business snapshot envelope; unavailable until a verified producer exists.",
+    "profile":"Experimental UI display name/position/height only; unavailable outside the pinned layout.",
     "raw-ui":"Snapshot filtered to raw UI text; same paging options and cache limitations.",
     "watch":"Changes only: --after CURSOR --interval SECONDS --polls N (optional finite run). Ctrl-C returns to console.",
     "native":"Explicit sanitized native header diagnostics: --after N --limit N.",
@@ -42,6 +46,8 @@ def number(value):
 
 
 def arguments(command,args):
+    if command=="profile" and args:
+        raise ReaderError("invalid_arguments","profile takes no arguments.")
     parser = CommandParser(prog=command,add_help=False)
     if command in ("snapshot","raw-ui","native"):
         parser.add_argument("--after",type=number,default=0)
@@ -54,8 +60,8 @@ def arguments(command,args):
     elif command=="event":
         parser.add_argument("cursor",type=number)
     result = parser.parse_args(args)
-    if hasattr(result,"limit") and not 1<=result.limit<=(100 if command=="native" else 200):
-        raise ReaderError("invalid_arguments","Page limit must be 1..100 for native or 1..200 for facts.")
+    if hasattr(result,"limit") and not 1<=result.limit<=(100 if command=="native" else MAX_FACTS):
+        raise ReaderError("invalid_arguments",f"Page limit must be 1..100 for native or 1..{MAX_FACTS} for facts.")
     if command=="watch" and (not 0.5<=result.interval<=60 or result.polls is not None and result.polls<1):
         raise ReaderError("invalid_arguments","Watch interval must be 0.5..60 seconds and polls must be positive.")
     return result
@@ -105,6 +111,9 @@ def execute(client,words,*,output=emit):
     if command=="help":output({"commands":COMMANDS,"read_only":True,"format":"JSON Lines"})
     elif command=="quit":return False
     elif command=="status":output(client.status())
+    elif command=="profile":output(client.profile())
+    elif command=="business-status":output(client.business_status())
+    elif command=="business-snapshot":output(client.business_snapshot())
     elif command in ("snapshot","raw-ui"):
         output(client.snapshot(args.after,args.limit,args.event_id,raw_ui=command=="raw-ui"))
     elif command=="native":

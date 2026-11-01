@@ -5,10 +5,27 @@ import json
 from jsonschema import Draft202012Validator, FormatChecker
 
 
+def _schema_formats(value):
+    """Find formats in the bundled schemas, including nested definitions."""
+    if isinstance(value, dict):
+        if isinstance(value.get("format"), str):
+            yield value["format"]
+        for child in value.values():
+            yield from _schema_formats(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _schema_formats(child)
+
+
 def _validator(name: str) -> Draft202012Validator:
     schema = json.loads(files("football_assistant_contracts").joinpath("schemas", name).read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+    checker = FormatChecker()
+    missing = set(_schema_formats(schema)) - checker.checkers.keys()
+    if missing:
+        # jsonschema otherwise silently accepts formats with missing optional deps.
+        raise RuntimeError(f"Missing schema format checkers: {', '.join(sorted(missing))}")
+    return Draft202012Validator(schema, format_checker=checker)
 
 
 VALIDATORS = {

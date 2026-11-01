@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import json
 import secrets
 from dataclasses import dataclass, field
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parents[4]
+ROOT = Path.cwd() if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[4]
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,9 @@ class Settings:
     runtime_disconnect_seconds: float = 30
     stale_seconds: int = 300
     max_request_bytes: int = 131072
+    bridge_private_root: Path | None = None
+    persona_file: Path | None = None
+    windows_finite_registration: dict | None = None
 
     @property
     def model_configured(self) -> bool:
@@ -38,20 +42,36 @@ class Settings:
     @classmethod
     def from_env(cls, *, reader_only: bool = False) -> "Settings":
         if not reader_only:
-            load_dotenv(ROOT / ".env", override=False)
+            explicit_env = os.environ.get("FOOTBALL_ASSISTANT_ENV_FILE")
+            selected_env = Path(explicit_env).expanduser() if explicit_env else ROOT / ".env"
+            if explicit_env and not selected_env.is_file():
+                raise ValueError("The explicitly selected backend dotenv file is missing; no fallback was loaded.")
+            if explicit_env or os.environ.get("FOOTBALL_ASSISTANT_DESKTOP") != "1":
+                load_dotenv(selected_env, override=False)
         data_dir = Path(os.environ.get("FOOTBALL_ASSISTANT_DATA_DIR", ROOT / "local-data")).expanduser().resolve()
         runtime_file = Path(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_FILE", data_dir / "runtime.json")).expanduser().resolve()
+        configured_root = os.environ.get('FOOTBALL_ASSISTANT_PRIVATE_ROOT')
+        bridge_private_root = Path(configured_root).expanduser().absolute() if configured_root else None
+        finite_raw = os.environ.get('FOOTBALL_ASSISTANT_WINDOWS_FINITE_REGISTRATION')
+        finite_registration = None
+        if finite_raw:
+            from .windows_finite_observations import registration
+            from .windows_discovery_import import _unique_object
+            if not bridge_private_root or len(finite_raw) > 2048:
+                raise ValueError('Finite source requires an explicit approved private root')
+            finite_registration = registration(json.loads(finite_raw, object_pairs_hook=_unique_object))
         port = int(os.environ.get("FOOTBALL_ASSISTANT_PORT", "17827"))
         if not 1 <= port <= 65535:
             raise ValueError("FOOTBALL_ASSISTANT_PORT must be 1..65535")
         if reader_only:
             # Independent reader needs no .env or model configuration.
-            return cls(data_dir=data_dir,runtime_file=runtime_file,port=port,
+            return cls(data_dir=data_dir,runtime_file=runtime_file,port=port,bridge_private_root=bridge_private_root,windows_finite_registration=finite_registration,
                        token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
                        runtime_stale_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_STALE_SECONDS","10")),
                        runtime_disconnect_seconds=float(os.environ.get("FOOTBALL_ASSISTANT_RUNTIME_DISCONNECT_SECONDS","30")))
         return cls(
-            data_dir=data_dir, runtime_file=runtime_file, port=port,
+            data_dir=data_dir, runtime_file=runtime_file, port=port, bridge_private_root=bridge_private_root, windows_finite_registration=finite_registration,
+            persona_file=Path(os.environ["FOOTBALL_ASSISTANT_PERSONA_FILE"]).expanduser().absolute() if os.environ.get("FOOTBALL_ASSISTANT_PERSONA_FILE") else None,
             token=os.environ.get("FOOTBALL_ASSISTANT_TOKEN") or secrets.token_urlsafe(32),
             base_url=os.environ.get("FOOTBALL_ASSISTANT_BASE_URL", "").strip(),
             model=os.environ.get("FOOTBALL_ASSISTANT_MODEL", "").strip(),

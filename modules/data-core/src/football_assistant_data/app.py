@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 import secrets
 import socket
 import tempfile
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 from pathlib import Path
 from uuid import UUID
 
@@ -19,11 +20,19 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
 from football_assistant_contracts.validation import validate_observation
+from .business_store import BusinessSnapshotStore
+from .windows_discovery_import import IMPORT_ROUTE, MAX_IMPORT_BYTES, empty_snapshot, parse_import
 from .config import Settings
+from .display_profile import MAX_FACTS, project_display_profile
 from .storage import ObservationConflict, ObservationStore, private_directory, utc_now
 from .monitoring import CatalogRequest, HeartbeatRequest
 from .registries import ProbeRequest, RegistryBatch, RegistryStore
 from .native_observers import NativeObserverReport, NativeObserverStore
+
+
+class CaptureProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    profile: Literal["schedule", "tactics", "current_page_attributes", "next_match"]
 
 
 class ChatRequest(BaseModel):
@@ -38,6 +47,16 @@ class ChatRequest(BaseModel):
         if not value:
             raise ValueError("message must not be blank")
         return value
+
+
+class BusinessAdviceRequest(ChatRequest):
+    capability: Literal["player_info", "transfer_analysis", "tactical_analysis", "schedule_analysis"]
+
+
+class CalendarAdviceRequest(ChatRequest):
+    club_uid: int = Field(ge=1, le=4294967294)
+    start: str = Field(min_length=10, max_length=10)
+    end: str = Field(min_length=10, max_length=10)
 
 
 class MemoryRequest(BaseModel):
@@ -59,6 +78,10 @@ class BodyLimitMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        # This authenticated endpoint enforces its dedicated streaming cap itself.
+        # Never preempt authentication or clear its snapshot for an unauthorized body.
+        if scope.get("method") == "POST" and scope.get("path") == IMPORT_ROUTE:
             return await self.app(scope, receive, send)
         messages, total = [], 0
         while True:
@@ -111,6 +134,27 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.registries = RegistryStore(observations)
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
+        app.state.business_snapshots = BusinessSnapshotStore()
+        app.state.windows_discovery = empty_snapshot()
+        app.state.windows_discovery_generation = 0
+        from .ui_capture_control import UiCaptureController
+        app.state.ui_capture_control = UiCaptureController(settings.bridge_private_root)
+        finite_task = None
+        finite_source = None
+        finite_stopping = False
+        if settings.windows_finite_registration is not None:
+            from .windows_finite_observations import WindowsFiniteSource
+            finite_source = WindowsFiniteSource(observations, settings.bridge_private_root, settings.windows_finite_registration)
+            async def poll_finite():
+                while not finite_stopping and not finite_source.closed:
+                    try:
+                        await asyncio.to_thread(finite_source.poll)
+                    except Exception:
+                        finite_source.invalidate('finite_observer_failed')
+                        break
+                    await asyncio.sleep(0.5)
+            finite_task = asyncio.create_task(poll_finite())
+        app.state.windows_finite_source = finite_source
         companion = None
         if enable_agent:
             companion = CompanionStore(settings.data_dir / "companion.sqlite")
@@ -120,6 +164,12 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         try:
             yield
         finally:
+            if finite_task is not None:
+                finite_stopping = True
+                await finite_task  # Let a bounded file read finish before closing SQLite.
+                finite_source.invalidate('backend_shutdown')
+            app.state.business_snapshots.invalidate()
+            app.state.windows_discovery = empty_snapshot()
             observations.close()
             if companion is not None:
                 companion.close()
@@ -143,6 +193,26 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     async def health():
         return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
 
+    @app.get("/v1/reader/match", dependencies=[Depends(authorized)])
+    def match_snapshot():
+        from .match_snapshot import read_match_snapshot
+        configured = os.environ.get("FOOTBALL_ASSISTANT_MATCH_FILE")
+        if not configured or not Path(configured).is_absolute():
+            return {"status": "unavailable", "reason": "match_file_not_configured", "snapshot": None}
+        return read_match_snapshot(Path(configured))
+
+    @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
+    async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647), start: str | None = Query(default=None, max_length=10), end: str | None = Query(default=None, max_length=10)):
+        from .offseason_snapshot import read_offseason, unavailable, valid_range
+        if not valid_range(start, end, club_uid):
+            raise HTTPException(status_code=422, detail="invalid calendar range")
+        configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+        if not configured:
+            return unavailable("producer_not_configured")
+        if start is None:
+            return await read_offseason(Path(configured), club_uid, person_uid)
+        return await read_offseason(Path(configured), club_uid, person_uid, start, end)
+
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
@@ -165,15 +235,113 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/snapshot",dependencies=[Depends(authorized)])
     async def reader_snapshot(after: int = Query(default=0,ge=0,le=2000),
-                              limit: int = Query(default=100,ge=1,le=200),
+                              limit: int = Query(default=100,ge=1,le=MAX_FACTS),
                               event_id: str | None = Query(default=None,max_length=128)):
         try:
             return app.state.observations.reader_snapshot(after,limit,event_id=event_id)
         except ObservationConflict:
             raise HTTPException(409,detail={"code":"snapshot_changed","message":"Snapshot changed; restart paging at zero."}) from None
 
+    @app.get("/v1/reader/business/status",dependencies=[Depends(authorized)])
+    async def business_reader_status():
+        return app.state.business_snapshots.status()
+
+    @app.get("/v1/reader/business/snapshot",dependencies=[Depends(authorized)])
+    async def business_reader_snapshot():
+        return app.state.business_snapshots.read()
+
+    @app.get("/v1/reader/windows-discovery", dependencies=[Depends(authorized)])
+    async def windows_discovery_snapshot():
+        return app.state.windows_discovery
+
+    @app.delete("/v1/reader/windows-discovery", dependencies=[Depends(authorized)])
+    async def clear_windows_discovery():
+        app.state.windows_discovery_generation += 1
+        app.state.windows_discovery = empty_snapshot()
+        return app.state.windows_discovery
+
+    @app.post(IMPORT_ROUTE, dependencies=[Depends(authorized)])
+    async def import_windows_discovery(request: Request):
+        # Clear before parsing: malformed/new evidence can never preserve an older display.
+        app.state.windows_discovery_generation += 1
+        generation = app.state.windows_discovery_generation
+        app.state.windows_discovery = empty_snapshot()
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_IMPORT_BYTES:
+                raise HTTPException(413, detail={"code": "request_too_large"})
+            raw.extend(chunk)
+        try:
+            snapshot = parse_import(bytes(raw), utc_now())
+        except ValueError:
+            raise HTTPException(422, detail={"code": "invalid_windows_discovery_import"}) from None
+        if generation != app.state.windows_discovery_generation:
+            raise HTTPException(409, detail={"code": "superseded_windows_discovery_import"})
+        app.state.windows_discovery = snapshot
+        return snapshot
+
+    @app.get("/v1/reader/profile",dependencies=[Depends(authorized)])
+    async def reader_profile():
+        return project_display_profile(app.state.observations.reader_snapshot(0,MAX_FACTS))
+
+    @app.post("/v1/reader/capture-profile", dependencies=[Depends(authorized)])
+    async def request_capture_profile(request: Request):
+        from .ui_capture_control import _unique
+        from starlette.concurrency import run_in_threadpool
+        try:
+            raw = await request.body()
+            if len(raw) > 2048:
+                raise ValueError('request_too_large')
+            body = CaptureProfileRequest.model_validate(json.loads(raw, object_pairs_hook=_unique))
+        except (ValueError, TypeError):
+            raise HTTPException(422, detail={'code': 'invalid_capture_profile'}) from None
+        return await run_in_threadpool(app.state.ui_capture_control.access,
+            app.state.observations.reader_snapshot(0, MAX_FACTS), body.profile)
+
+    @app.get("/v1/reader/capture-profile", dependencies=[Depends(authorized)])
+    def capture_profile_status():
+        return app.state.ui_capture_control.access(app.state.observations.reader_snapshot(0, MAX_FACTS))
+
+    @app.get("/v1/reader/schedule",dependencies=[Depends(authorized)])
+    async def reader_schedule():
+        # Read-only preview; no model configuration, budget or provider access.
+        from football_assistant_agent.ui_advice import prepare_ui_advice
+        prepared = prepare_ui_advice('schedule_analysis', app.state.observations.reader_snapshot(0, MAX_FACTS))
+        projection = prepared['schedule_projection']
+        return dict(status=projection['status'] if projection else 'unavailable',
+                    source='ui', partial=True, production_ready=False,
+                    kind=('next_match' if projection and projection.get('kind') == 'next_match' else 'schedule'),
+                    schedule_complete=False, schedule_projection=projection, provenance=prepared['provenance'],
+                    reasons=prepared['reasons'])
+
+    @app.get("/v1/reader/tactics",dependencies=[Depends(authorized)])
+    async def reader_tactics():
+        # Authenticated, model-free local preview; provenance never goes to a provider.
+        from football_assistant_agent.ui_advice import prepare_ui_advice
+        prepared = prepare_ui_advice('tactical_analysis', app.state.observations.reader_snapshot(0, MAX_FACTS))
+        projection = prepared['tactics_projection']
+        return dict(status=projection['status'] if projection else 'unavailable',
+                    source='ui', partial=True, production_ready=False,
+                    tactics_projection=projection, provenance=prepared['provenance'],
+                    reasons=prepared['reasons'])
+
+    @app.get("/v1/reader/current-page-attributes",dependencies=[Depends(authorized)])
+    async def reader_current_page_attributes():
+        # No player binding, model configuration, budget or provider access.
+        from football_assistant_agent.ui_advice import prepare_current_page_attributes
+        return prepare_current_page_attributes(app.state.observations.reader_snapshot(0, MAX_FACTS))
+
+    @app.get("/v1/reader/ui-change-preview",dependencies=[Depends(authorized)])
+    async def reader_ui_change_preview():
+        # Stateless UI fingerprints only; not persisted as football/game events.
+        from football_assistant_agent.ui_advice import prepare_ui_change_preview
+        return prepare_ui_change_preview(app.state.observations.reader_snapshot(0, MAX_FACTS))
+
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
+        from .windows_finite_observations import ADAPTER_ID as WINDOWS_FINITE_ADAPTER
+        if isinstance(body.get('source'), dict) and body['source'].get('adapter_id') == WINDOWS_FINITE_ADAPTER:
+            raise HTTPException(422, detail={'code': 'local_producer_only'})
         try:
             validate_observation(body)
         except ValueError as error:
@@ -196,6 +364,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.post("/v1/monitoring/heartbeat",dependencies=[Depends(authorized)])
     async def heartbeat(body: HeartbeatRequest):
+        from .windows_finite_observations import ADAPTER_ID as WINDOWS_FINITE_ADAPTER
+        stream = app.state.observations.fields(body.stream_id).get('source_status', {})
+        if stream.get('adapter_id') == WINDOWS_FINITE_ADAPTER:
+            raise HTTPException(422, detail={'code': 'local_producer_only'})
         try:return app.state.observations.heartbeat(body.stream_id,body.state,body.detail)
         except KeyError:raise HTTPException(404,detail={"code":"stream_not_found","message":"Source stream does not exist"}) from None
 
@@ -270,10 +442,91 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
+        def persona_metadata():
+            from football_assistant_agent.persona import load_persona
+            persona = load_persona(settings)
+            app.state.agent.persona = persona
+            return persona.metadata()
+
+        @app.post("/v1/agent/business-advice",dependencies=[Depends(authorized)])
+        async def business_advice(body: BusinessAdviceRequest):
+            # Only the server-owned channel supplies data. Request bodies cannot
+            # override provenance, readiness or provide their own snapshot.
+            snapshot = app.state.business_snapshots.read()["snapshot"]
+            try:
+                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot)
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+
+        @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
+        async def calendar_advice(body: CalendarAdviceRequest):
+            from .offseason_snapshot import read_offseason, valid_range, unavailable
+            if not valid_range(body.start, body.end, body.club_uid):
+                raise HTTPException(422, detail="invalid calendar range")
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
+            try:
+                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end)
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+
+        @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
+        async def auto_calendar_advice(body: ChatRequest):
+            from .offseason_snapshot import read_offseason
+            from .calendar_selection import choose_calendar_scope
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            if not configured:
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "当前无法读取球队候选和游戏日期。"}
+            executable = Path(configured)
+            initial = await read_offseason(executable, 0, 0)
+            scope = choose_calendar_scope(initial, body.message)
+            if scope is None:
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "未能唯一确认所问球队候选或当前游戏日期，请明确球队名称或俱乐部 UID。"}
+            envelope = await read_offseason(executable, scope["club_uid"], 0, scope["start"], scope["end"])
+            verified = choose_calendar_scope(envelope, body.message)
+            if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
+                return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}
+            try:
+                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"])
+                if result.get("status") == "partial":
+                    result["reply"] = "按经理关联球队候选读取，尚未确认当前执教身份。\n" + result["reply"]
+                    result["selection"] = {key: scope[key] for key in ("club_uid", "club_name", "selection", "start", "end")}
+                return result
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+
+        @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
+        async def ui_advice(body: BusinessAdviceRequest):
+            # Only the server-owned channel supplies data. Request bodies cannot
+            # override provenance, readiness or provide their own snapshot.
+            snapshot = app.state.observations.reader_snapshot(0, MAX_FACTS)
+            try:
+                return await app.state.agent.ui_advice(body.message,body.conversation_id,body.capability,snapshot,
+                    refresh=lambda: app.state.observations.reader_snapshot(0, MAX_FACTS))
+            except ModelBudgetExceeded as error:
+                raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
+            except ModelNotConfigured as error:
+                raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
+            except ModelUnavailable as error:
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
-                return await app.state.agent.chat(body.message,body.conversation_id,app.state.observations.context())
+                return await app.state.agent.chat(body.message,body.conversation_id)
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:

@@ -75,3 +75,24 @@ test('dsh-pet geometry resolves disconnected monitor gaps rather than leaving pe
   assert.deepEqual(clampPointToRegion(areas,500,100), {x:500,y:500});
   assert.deepEqual(clampPointToRegion(areas,-100,100), {x:-100,y:100});
 });
+
+test('explicit packaged runtime path avoids package-relative discovery and preserves env override', () => {
+  const { defaultRuntimeFile } = require('../src/backend.cjs');
+  const selected = path.resolve('repo with spaces/local-data/runtime.json');
+  assert.equal(defaultRuntimeFile({}, ['FootballAssistant.exe', '--runtime-file', selected]), selected);
+  assert.equal(defaultRuntimeFile({ FOOTBALL_ASSISTANT_RUNTIME_FILE: selected }, ['--runtime-file', 'ignored.json']), selected);
+  assert.equal(defaultRuntimeFile({ FOOTBALL_ASSISTANT_DATA_DIR: path.dirname(selected) }), selected);
+  assert.equal(defaultRuntimeFile({}), path.resolve(__dirname, '../../..', 'local-data/runtime.json'));
+  for (const argv of [['--runtime-file'], ['--runtime-file', '--other'], ['--runtime-file', 'a', '--runtime-file', 'b']]) {
+    assert.throws(() => defaultRuntimeFile({}, argv), /明确的连接文件路径/);
+  }
+});
+
+test('missing runtime gives startup/config guidance without fetching or mock fallback', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'football-missing-runtime-'));
+  try {
+    await assert.rejects(request(path.join(dir, 'missing.json'), '/v1/status', undefined, {
+      fetch: async () => { assert.fail('missing config must not send a request'); },
+    }), /scripts\/run_mvp.py.*FOOTBALL_ASSISTANT_RUNTIME_FILE.*不会回退到模拟/);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});

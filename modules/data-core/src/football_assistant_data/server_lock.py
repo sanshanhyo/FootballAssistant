@@ -5,6 +5,7 @@ import os
 from contextlib import contextmanager
 from .config import Settings
 from .storage import private_directory
+from .process_utils import process_is_alive
 
 
 @contextmanager
@@ -16,11 +17,7 @@ def writer_guard(settings: Settings):
         try:
             pid = json.loads(runtime_file.read_text(encoding="utf-8")).get("pid")
             if isinstance(pid,int) and pid > 0 and pid != os.getpid():
-                try:
-                    os.kill(pid,0)
-                except ProcessLookupError:
-                    pass
-                else:
+                if process_is_alive(pid):
                     raise RuntimeError("A service owns this data directory; reuse its runtime file.")
         except (OSError,ValueError,TypeError,AttributeError):
             pass

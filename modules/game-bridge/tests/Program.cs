@@ -95,10 +95,284 @@ using (var probe = JsonDocument.Parse(JsonSerializer.Serialize(countOnly)))
     Assert(!probe.RootElement.GetProperty("enumeration").GetProperty("complete").GetBoolean(), "count-only diagnostics never claim enumeration complete");
     Assert(probe.RootElement.GetProperty("entries").GetArrayLength() == 0, "no fabricated business entries");
 }
-var chinese = ObservationFactory.Create(Enumerable.Range(0, 80).Select(i => new UiText($"panel0/{i}", new string('球', 1000))).ToArray(), "27.0.0.2486716", "byte-budget-test");
+var chinese = ObservationFactory.Create(Enumerable.Range(0, 240).Select(i => new UiText($"panel0/{i}", new string('球', 1000))).ToArray(), "27.0.0.2486716", "byte-budget-test");
 Assert(Encoding.UTF8.GetByteCount(chinese) <= ObservationFactory.MaximumPayloadBytes, "maximum Chinese page fits backend body cap");
 using (var page = JsonDocument.Parse(chinese))
-    Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 80, "page reduced to byte budget");
+    Assert(page.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() is > 0 and < 240, "page reduced to byte budget");
+
+// Widget inventory uses only already-observed UI metadata; no native/game objects.
+var widgetInventory = new UiWidgetInventory();
+var identityCalls = 0;
+for (var i = 0; i < 40; i++)
+    widgetInventory.Observe(i + 1, $"focus/{i}", "focused_subtree", i % 2 == 0, false, null, null,
+        _ => { identityCalls++; return (new string('类', 120), new string('型', 120)); });
+Assert(widgetInventory.Classes.Count() == 16 && identityCalls == 16, "class metadata lookups capped at16 unique types");
+Assert(widgetInventory.Visited.Count == 32 && widgetInventory.Pruned.Count == 32, "visited and pruned samples each capped at32");
+Assert(widgetInventory.ObservedNodes == 40 && widgetInventory.PrunedNodes == 40 && widgetInventory.UnclassifiedNodes == 24, "sample and class truncation retain observed totals");
+Assert(widgetInventory.Classes.All(c => c.name_truncated && c.name.Length == 96 && c.@namespace.Length == 96), "metadata names bounded with explicit truncation");
+Assert(widgetInventory.Pruned.All(s => s.bounds_valid is null && s.child_count is null), "unread bounds/children never fabricated as false/zero");
+widgetInventory.Observe(1, "focus/0/0", "focused_subtree", true, true, true, 2,
+    _ => throw new Exception("Cached class unexpectedly queried again"));
+Assert(widgetInventory.Classes.First().nodes == 2 && widgetInventory.Classes.First().child_count_total == 2, "cached class histogram aggregates eligible metadata");
+var failedInventory = new UiWidgetInventory();
+failedInventory.Observe(1, "panel0/0", "focus_descent", false, true, false, null,
+    _ => throw new InvalidOperationException("TEST missing class metadata"));
+Assert(failedInventory.MetadataErrors == 1 && failedInventory.Pruned.Count == 0 && failedInventory.Visited.Single().eligibility == "text_ineligible_bounds", "metadata failure never converts a bounds-only text skip into subtree pruning");
+failedInventory.Observe(1, "focus/0", "focused_subtree", false, false, null, null,
+    _ => throw new Exception("Failed class metadata should not be retried within capture"));
+Assert(failedInventory.MetadataErrors == 1 && failedInventory.MetadataClassesAttempted == 1, "failed metadata lookup cached for this capture");
+var inventoryCapture = new UiCapture { FocusRequested = true, FocusResolved = true, FocusRootPath = "panel0/0", WidgetInventory = widgetInventory };
+inventoryCapture.Panels.Add(new UiPanelDiagnostics());
+inventoryCapture.AddRange(Enumerable.Range(0, 240).Select(i => new UiText($"focus/{i}", new string('球', 1000))));
+var inventoryJson = ObservationFactory.Create(inventoryCapture, null, "offline-widget-inventory");
+Assert(Encoding.UTF8.GetByteCount(inventoryJson) <= ObservationFactory.MaximumPayloadBytes, "inventory shares unchanged120KB transport budget");
+using (var inventoryPage = JsonDocument.Parse(inventoryJson))
+{
+    var inventoryFacts = inventoryPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    var inventoryDiagnostics = inventoryFacts.Where(f => f.GetProperty("entity_kind").GetString() == "ui_capture_diagnostic").ToArray();
+    Assert(inventoryDiagnostics.Length <= 34, "bounded inventory fits existing diagnostic fact allowance");
+    Assert(inventoryDiagnostics.All(f => f.GetProperty("value").GetString()!.Length <= 4000), "Unicode class names fit scalar contract");
+    Assert(inventoryFacts.Any(f => f.GetProperty("entity_kind").GetString() == "ui_element"), "bounded metadata leaves room for actual UI text");
+}
+
+// Pure synthetic trees exercise the shared traversal/text policy and path guard.
+// No game handles, native getters or process access are used by these fixtures.
+static (List<int> Texts, List<int> ChildCounts, List<int> Items, int Visited, string? Stop) WalkBoundsFixture(
+    Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> nodes,
+    int maximumNodes = 2500, bool expireAfterVisibility = false)
+{
+    var texts = new List<int>();
+    var childCounts = new List<int>();
+    var items = new List<int>();
+    var visited = 0;
+    var timeExpired = false;
+    var stack = new Stack<(int Node, string Path, int Depth)>();
+    stack.Push((1, "focus", 0));
+    var pathGuard = new UiPanelDiagnostics();
+    string? Limit() => timeExpired ? "time_budget" : visited >= maximumNodes ? "node_limit" : null;
+    while (stack.Count > 0)
+    {
+        var stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        var current = stack.Pop();
+        visited++;
+        var node = nodes[current.Node];
+        var eligibility = new UiTraversalEligibility(node.Visible, node.Bounds);
+        if (expireAfterVisibility) timeExpired = true;
+        if (!eligibility.CanDescend) continue;
+        stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        if (eligibility.CanReadText) texts.Add(current.Node);
+        stopped = Limit();
+        if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+        childCounts.Add(current.Node);
+        for (var index = Math.Min(node.Children.Length, 512) - 1; index >= 0; index--)
+        {
+            stopped = Limit();
+            if (stopped is not null) return (texts, childCounts, items, visited, stopped);
+            if (!UiTraversalBounds.TryChildPath(current.Path, current.Depth, index, pathGuard, out var childPath)) continue;
+            items.Add(current.Node);
+            stack.Push((node.Children[index], childPath, current.Depth + 1));
+        }
+    }
+    return (texts, childCounts, items, visited, null);
+}
+foreach (var visibleValue in new[] { false, true })
+foreach (bool? boundsValue in new bool?[] { null, false, true })
+{
+    var eligibility = new UiTraversalEligibility(visibleValue, boundsValue);
+    Assert(eligibility.CanDescend == visibleValue && eligibility.CanReadText == (visibleValue && boundsValue == true),
+        "descent depends only on visibility while text also requires positive valid bounds");
+}
+var timedValidText = WalkBoundsFixture(new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+    [1] = (true, true, Array.Empty<int>())
+}, expireAfterVisibility: true);
+Assert(timedValidText.Stop == "time_budget" && timedValidText.Texts.Count == 0 && timedValidText.ChildCounts.Count == 0,
+    "a valid text node is not read after eligibility consumes the time budget");
+foreach (bool? emptyBounds in new bool?[] { false, null })
+{
+    var emptyParentTree = new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+        [1] = (true, emptyBounds, new[] { 2 }), [2] = (true, true, Array.Empty<int>())
+    };
+    var emptyParentResult = WalkBoundsFixture(emptyParentTree);
+    Assert(emptyParentResult.Texts.SequenceEqual(new[] { 2 }) && emptyParentResult.ChildCounts.Contains(1),
+        "empty/missing bounds parent is traversed but its text getter is never used");
+    var nodeLimited = WalkBoundsFixture(emptyParentTree, maximumNodes: 1);
+    Assert(nodeLimited.Stop == "node_limit" && nodeLimited.Visited == 1 && nodeLimited.Texts.Count == 0 &&
+        nodeLimited.ChildCounts.Count == 0 && nodeLimited.Items.Count == 0,
+        "bounds-only descent does not call child getters after the shared node budget expires");
+    var timeLimited = WalkBoundsFixture(emptyParentTree, expireAfterVisibility: true);
+    Assert(timeLimited.Stop == "time_budget" && timeLimited.Texts.Count == 0 &&
+        timeLimited.ChildCounts.Count == 0 && timeLimited.Items.Count == 0,
+        "time budget exhausted by eligibility check prevents text/childCount/item calls");
+}
+var emptyChain = new Dictionary<int, (bool Visible, bool? Bounds, int[] Children)> {
+    [1] = (true, false, new[] { 2 }), [2] = (true, false, new[] { 3 }),
+    [3] = (true, true, Array.Empty<int>())
+};
+var emptyChainResult = WalkBoundsFixture(emptyChain);
+Assert(emptyChainResult.Texts.SequenceEqual(new[] { 3 }) && emptyChainResult.Visited == 3,
+    "each descendant independently validates bounds; empty child does not hide valid grandchild");
+emptyChain[1] = (false, null, new[] { 2 });
+var hiddenParentResult = WalkBoundsFixture(emptyChain);
+Assert(hiddenParentResult.Visited == 1 && hiddenParentResult.Texts.Count == 0 &&
+    hiddenParentResult.ChildCounts.Count == 0 && hiddenParentResult.Items.Count == 0,
+    "visible=false still conservatively prunes all descendants without child getters");
+emptyChain[1] = (true, false, new[] { 2 });
+Assert(UiFocusPath.TryParse("panel0/0/0", out var throughEmptyFocus), "synthetic deep focus parsed");
+var emptyFocusVisits = 0;
+var emptyFocusChildren = 0;
+Assert(throughEmptyFocus!.TryResolve(1, () => null,
+    node => new UiTraversalEligibility(emptyChain[(int)node].Visible, emptyChain[(int)node].Bounds).CanDescend,
+    node => { emptyFocusChildren++; return emptyChain[(int)node].Children.Length; },
+    (node, index) => emptyChain[(int)node].Children[index], () => emptyFocusVisits++,
+    out var emptyFocusRoot, out var emptyFocusReason) && emptyFocusRoot == 3 && emptyFocusVisits == 2 && emptyFocusChildren == 2,
+    "deep focus crosses visible empty-layout ancestors without reading ancestor text");
+emptyFocusVisits = emptyFocusChildren = 0;
+Assert(!throughEmptyFocus.TryResolve(1, () => emptyFocusVisits >= 1 ? "node_limit" : null,
+    node => new UiTraversalEligibility(emptyChain[(int)node].Visible, emptyChain[(int)node].Bounds).CanDescend,
+    node => { emptyFocusChildren++; return 1; }, (_, _) => throw new Exception("Item called after focus budget"),
+    () => emptyFocusVisits++, out emptyFocusRoot, out emptyFocusReason) && emptyFocusReason == "node_limit" && emptyFocusChildren == 0,
+    "focus descent across empty layout still checks shared budget before childCount/item");
+var ancestorInventory = new UiWidgetInventory();
+ancestorInventory.Observe(1, "panel0/0", "focus_descent", false, true, false, null, _ => ("TEST", "Layout"));
+ancestorInventory.UpdateChildCount("panel0/0", "focus_descent", 3);
+ancestorInventory.UpdateChildCount("panel0/0", "focus_descent", 3);
+Assert(ancestorInventory.Visited.Single().child_count == 3 &&
+    ancestorInventory.Classes.Single().child_count_observations == 1 && ancestorInventory.Classes.Single().child_count_total == 3,
+    "focus diagnostic fills an actually-read child count exactly once without extra game getters");
+var boundsOnlyInventory = new UiWidgetInventory();
+boundsOnlyInventory.Observe(1, "focus", "focused_subtree", true, true, false, 1, _ => ("TEST", "Layout"));
+Assert(boundsOnlyInventory.TextIneligibleNodes == 1 && boundsOnlyInventory.PrunedNodes == 0 &&
+    boundsOnlyInventory.Pruned.Count == 0 && !boundsOnlyInventory.Visited.Single().text_eligible &&
+    !boundsOnlyInventory.Visited.Single().subtree_pruned && boundsOnlyInventory.Visited.Single().child_count == 1 &&
+    boundsOnlyInventory.Classes.Single().invalid_or_empty_bounds == 1,
+    "diagnostics distinguish skipped node text from whole-subtree pruning and preserve known child count");
+boundsOnlyInventory.Observe(2, "focus/0", "focused_subtree", true, false, null, null, _ => ("TEST", "Hidden"));
+Assert(boundsOnlyInventory.PrunedNodes == 1 && boundsOnlyInventory.Pruned.Single().subtree_pruned &&
+    !boundsOnlyInventory.Pruned.Single().text_eligible && boundsOnlyInventory.Pruned.Single().child_count is null,
+    "genuinely pruned subtree still reports unread children as unknown");
+
+// TEST-only generic paths, never a hardcoded game/page selection.
+foreach (var invalidFocus in new[] { "", " ", "panel", "panel00", "Panel0", "panel32", "panel-1", "panel0/", "panel0//1", "panel0/00", "panel0/512", "panel0/-1", "panel0/1x", "panel0/1\n", "panel0/" + new string('1', 123) })
+    Assert(!UiFocusPath.TryParse(invalidFocus, out _), "invalid focus grammar fails closed");
+Assert(UiFocusPath.TryParse("panel31/511", out _), "bounded panel/child endpoints accepted");
+Assert(UiFocusPath.TryParse("panel0/0/1", out var focusTest), "literal focus path parsed");
+var focusVisits = 0;
+var focusCalls = 0;
+Assert(focusTest!.TryResolve(1, () => null, _ => true, _ => 2,
+    (node, index) => { focusCalls++; return node * 10 + index + 1; }, () => focusVisits++,
+    out var focusRoot, out var focusReason) && focusRoot == 112, "focus resolves only selected child path");
+Assert(focusVisits == 2 && focusCalls == 2 && focusReason == "complete", "descent ancestors charged to shared node budget");
+Assert(UiFocusPath.TryParse("panel0/0/0/0", out var longFocusTest), "bounded descent fixture");
+focusVisits = focusCalls = 0;
+Assert(!longFocusTest!.TryResolve(1, () => focusVisits >= 2 ? "node_limit" : null, _ => true, _ => 1,
+    (node, index) => { focusCalls++; return node + 1; }, () => focusVisits++,
+    out focusRoot, out focusReason) && focusReason == "node_limit" && focusRoot == 0, "descent node budget never falls back to original root");
+Assert(focusVisits == 2 && focusCalls == 1, "no child getter after node budget exhausted");
+var focusTimeExpired = false;
+focusCalls = 0;
+Assert(!focusTest.TryResolve(1, () => focusTimeExpired ? "time_budget" : null, _ => true,
+    _ => { focusTimeExpired = true; return 2; }, (node, index) => { focusCalls++; return 2; }, () => { },
+    out focusRoot, out focusReason) && focusReason == "time_budget" && focusCalls == 0 && focusRoot == 0, "descent time limit checked between getters");
+Assert(!focusTest.TryResolve(1, () => null, _ => true, _ => 0, (_, _) => throw new Exception("Out-of-range child getter called"), () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_child_unavailable" && focusRoot == 0, "missing child fails closed");
+Assert(!focusTest.TryResolve(1, () => null, _ => false, _ => throw new Exception("Ineligible ancestor traversed"), (_, _) => 0, () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_ancestor_ineligible", "existing ancestor visibility filter retained");
+Assert(!focusTest.TryResolve(1, () => null, _ => true, _ => 2, (_, _) => 0, () => { },
+    out focusRoot, out focusReason) && focusReason == "focus_root_unavailable" && focusRoot == 0, "null descendant never falls back");
+Assert(UiFocusPath.TryParse("panel0", out var panelFocusTest) && panelFocusTest!.TryResolve(1, () => null,
+    _ => throw new Exception("Root-only focus unexpectedly descends"), _ => 0, (_, _) => 0, () => { }, out focusRoot, out focusReason)
+    && focusRoot == 1, "explicit panel-root focus is supported without implicit default");
+var focusedCapture = new UiCapture { FocusRequested = true, FocusResolved = true, FocusRootPath = "panel0/0/1", FocusDescentNodes = 2 };
+focusedCapture.Add(new UiText("focus/0", "TEST focused text"));
+using (var focusedPage = JsonDocument.Parse(ObservationFactory.Create(focusedCapture, null, "offline-focus-test")))
+{
+    var focusedFacts = focusedPage.RootElement.GetProperty("payload").GetProperty("facts");
+    using var focusMetrics = JsonDocument.Parse(focusedFacts[0].GetProperty("value").GetString()!);
+    Assert(focusMetrics.RootElement.GetProperty("focus_requested").GetBoolean() && focusMetrics.RootElement.GetProperty("focus_resolved").GetBoolean(), "focus state explicit in diagnostics");
+    Assert(focusMetrics.RootElement.GetProperty("focus_root_path").GetString() == "panel0/0/1", "focus is a literal path, not a page identity");
+    Assert(focusMetrics.RootElement.GetProperty("depth_scope").GetString() == "relative_to_requested_focus_root", "focused depth scope explicit");
+    Assert(focusedFacts[1].GetProperty("entity_id").GetString() == "focus/0", "focused paths are capture-local and relative");
+    Assert(focusMetrics.RootElement.GetProperty("path_scope").GetString() == "focus_relative", "relative scope explicit");
+    Assert(focusMetrics.RootElement.GetProperty("identity_scope").GetString() == "capture_local_ui_path", "never claims stable entity IDs");
+}
+
+Assert(UiTraversalBounds.CaptureRootPath(3, null) == "panel3", "normal absolute root paths unchanged");
+Assert(UiTraversalBounds.CaptureRootPath(0, focusTest) == "focus", "focused traversal uses a scoped relative root");
+var relativeDiagnostics = new UiPanelDiagnostics();
+var absolutePrefix = "panel0" + string.Concat(Enumerable.Repeat("/511", 30));
+Assert(!UiTraversalBounds.TryChildPath(absolutePrefix, 0, 511, relativeDiagnostics, out _), "old full descendant would exceed contract limit");
+Assert(UiTraversalBounds.TryChildPath(UiTraversalBounds.CaptureRootPath(0, focusTest), 0, 511, relativeDiagnostics, out var relativeChild)
+    && relativeChild == "focus/511", "bounded relative path admits same child without contracting root metadata");
+var relativeBoundary = "focus" + string.Concat(Enumerable.Repeat("/511", 30)) + "/10";
+Assert(relativeBoundary.Length == 128 && !UiTraversalBounds.TryChildPath(relativeBoundary, 31, 0, relativeDiagnostics, out _), "relative paths retain 128-character hard cap");
+
+// Synthetic deep single-child trees exercise the exact admission helper used by
+// native traversal, without loading game objects or invoking native getters.
+var deepDiagnostics = new UiPanelDiagnostics();
+var deepPath = "panel0";
+for (var depth = 0; depth < 48; depth++)
+{
+    Assert(UiTraversalBounds.TryChildPath(deepPath, depth, 0, deepDiagnostics, out var nextPath), "depth through 48 is admitted");
+    Assert(nextPath == deepPath + "/0", "literal identity path remains unchanged");
+    deepPath = nextPath;
+}
+Assert(!UiTraversalBounds.TryChildPath(deepPath, 48, 0, deepDiagnostics, out var rejectedDepthPath), "depth 49 is skipped");
+Assert(rejectedDepthPath == "" && deepDiagnostics.depth_skipped == 1 && deepDiagnostics.truncated, "depth clipping is explicit");
+var pathDiagnostics = new UiPanelDiagnostics();
+var longPath = "panel0" + string.Concat(Enumerable.Repeat("/511", 30));
+Assert(longPath.Length == 126, "synthetic long path fixture");
+Assert(UiTraversalBounds.TryChildPath(longPath, 30, 0, pathDiagnostics, out var boundaryPath), "exact 128-character path is admitted");
+Assert(boundaryPath.Length == 128, "path boundary retained without hashing");
+Assert(!UiTraversalBounds.TryChildPath(boundaryPath, 31, 0, pathDiagnostics, out var rejectedLongPath), "overlong child is skipped before capture serialization");
+Assert(rejectedLongPath == "" && pathDiagnostics.path_limit_skipped == 1 && pathDiagnostics.truncated, "path clipping is explicit");
+var deepCapture = new UiCapture();
+deepCapture.Panels.Add(pathDiagnostics);
+deepCapture.Add(new UiText(deepPath, "TEST deep text"));
+deepCapture.Add(new UiText(boundaryPath, "TEST boundary text"));
+using (var deepPage = JsonDocument.Parse(ObservationFactory.Create(deepCapture, null, "offline-deep-path-test")))
+{
+    var deepFacts = deepPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    Assert(deepFacts.Count(f => f.GetProperty("entity_kind").GetString() == "ui_element") == 2, "path clipping does not discard valid capture texts");
+    using var bounds = JsonDocument.Parse(deepFacts[0].GetProperty("value").GetString()!);
+    Assert(bounds.RootElement.GetProperty("max_depth").GetInt32() == 48, "diagnostics expose measured depth setting");
+    Assert(bounds.RootElement.GetProperty("max_path_length").GetInt32() == 128, "diagnostics expose contract path bound");
+    Assert(bounds.RootElement.GetProperty("max_nodes").GetInt32() == 2500 && bounds.RootElement.GetProperty("max_texts").GetInt32() == 240 && bounds.RootElement.GetProperty("budget_ms").GetInt32() == 15, "documented traversal budgets");
+}
+
+var textCapCapture = new UiCapture();
+for (var i = 0; i < 240; i++) textCapCapture.Add(new UiText($"panel0/{i}", "TEST short text"));
+using (var textCapPage = JsonDocument.Parse(ObservationFactory.Create(textCapCapture, null, "offline-text-cap-test")))
+    Assert(textCapPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().Count(f => f.GetProperty("entity_kind").GetString() == "ui_element") == 240, "240 short texts fit unchanged payload budget");
+textCapCapture.Add(new UiText("panel0/240", "TEST overflow"));
+try { ObservationFactory.Create(textCapCapture, null, "offline-over-cap-test"); throw new Exception("Text hard cap was not enforced"); }
+catch (ArgumentOutOfRangeException) { }
+
+var diagnosticCapture = new UiCapture { PanelsAvailable = 33, StopReason = "panel_limit", ElapsedMs = 15.1 };
+for (var i = 0; i < 32; i++)
+    diagnosticCapture.Panels.Add(new UiPanelDiagnostics { panel_index = i, visited_nodes = 70,
+        visible_nodes = 60, text_element_nodes = 3, other_widget_nodes = 57,
+        emitted_texts = 2, stop_reason = "time_budget", pending_nodes = 10, elapsed_ms = 0.4 });
+diagnosticCapture.AddRange(Enumerable.Range(0, 240).Select(i => new UiText($"panel0/{i}", new string('球', 1000))));
+var diagnosticJson = ObservationFactory.Create(diagnosticCapture, null, "offline-diagnostic-test");
+Assert(Encoding.UTF8.GetByteCount(diagnosticJson) <= ObservationFactory.MaximumPayloadBytes, "diagnostics plus Chinese text respect byte cap");
+using (var diagnosticPage = JsonDocument.Parse(diagnosticJson))
+{
+    var facts = diagnosticPage.RootElement.GetProperty("payload").GetProperty("facts").EnumerateArray().ToArray();
+    Assert(facts.Count(f => f.GetProperty("entity_kind").GetString() == "ui_capture_diagnostic") == 34, "all bounded panel diagnostics retained");
+    using var metrics = JsonDocument.Parse(facts[0].GetProperty("value").GetString()!);
+    Assert(metrics.RootElement.GetProperty("truncated").GetBoolean(), "panel cap reported");
+    Assert(metrics.RootElement.GetProperty("visited_nodes").GetInt32() == 2240, "visited count aggregated");
+    using var transport = JsonDocument.Parse(facts[^1].GetProperty("value").GetString()!);
+    Assert(transport.RootElement.GetProperty("omitted_texts").GetInt32() > 0, "byte truncation distinguished from traversal cap");
+}
+var emptyCapture = new UiCapture { StopReason = "domain_unavailable" };
+using (var empty = JsonDocument.Parse(ObservationFactory.Create(emptyCapture, null, "offline-empty-test")))
+    Assert(empty.RootElement.GetProperty("payload").GetProperty("facts").GetArrayLength() == 2, "zero text still publishes diagnostics, never fabricated UI text");
+var skippedCapture = new UiCapture();
+skippedCapture.Panels.Add(new UiPanelDiagnostics { depth_skipped = 1 });
+Assert(skippedCapture.Truncated, "depth skip reports incomplete traversal without global cutoff");
 
 var fixture = ObservationFactory.Create(new[] { new UiText("panel0/1", "Synthetic bridge contract test") }, null, "offline-contract-test");
 // Never publish a contract-test fixture as a real runtime observation.
@@ -183,6 +457,142 @@ try
     Assert(!server.Pending(), "redirect was not followed");
 }
 finally { server.Stop(); }
+// Runtime focus control is local metadata only; these fixtures never touch a game.
+// The Doorstop control channel is macOS-only; Linux supports offline filesystem tests.
+if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
+{
+var focusControlRoot = Path.Combine(Path.GetTempPath(), "footballassistant-focus-control-" + Guid.NewGuid());
+Directory.CreateDirectory(Path.Combine(focusControlRoot, "control"));
+Directory.CreateDirectory(Path.Combine(focusControlRoot, "diagnostics"));
+try
+{
+    var focusControlNow = DateTimeOffset.Parse("2026-10-31T07:00:00Z");
+    var focusControlPath = Path.Combine(focusControlRoot, "control", "ui-capture.json");
+    var focusStatusPath = Path.Combine(focusControlRoot, "diagnostics", "ui-capture-status.json");
+    var focusControl = new UiCaptureControl(focusControlRoot, 1234, "TEST-focus-session", new string('a', 64));
+    Dictionary<string, object> FocusRequest(long sequence, string path = "panel0/0/6", bool widgets = true) => new()
+    {
+        ["pid"] = 1234, ["session_id"] = "TEST-focus-session", ["managed_build_sha256"] = new string('a', 64),
+        ["sequence"] = sequence, ["requested_at"] = focusControlNow.ToString("O"),
+        ["focus_path"] = path, ["widget_diagnostics"] = widgets
+    };
+    void SubmitFocus(Dictionary<string, object> request) => File.WriteAllText(focusControlPath, JsonSerializer.Serialize(request));
+    JsonElement FocusStatus()
+    {
+        focusControl.WriteStatus();
+        using var json = JsonDocument.Parse(File.ReadAllText(focusStatusPath));
+        return json.RootElement.Clone();
+    }
+    UiCapture FocusCapture(string path) => new() { FocusRequested = true, FocusResolved = true, FocusRootPath = path };
+
+    focusControl.Poll(focusControlNow);
+    Assert(focusControl.BeginCapture(focusControlNow) is null, "absent control preserves environment defaults");
+    SubmitFocus(FocusRequest(1));
+    focusControl.Poll(focusControlNow);
+    var firstFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    Assert(firstFocusSelection.Sequence == 1 && firstFocusSelection.FocusPath == "panel0/0/6" && firstFocusSelection.WidgetDiagnostics,
+        "valid same-session request selects one immutable configuration");
+    var pendingFocusStatus = FocusStatus();
+    Assert(pendingFocusStatus.GetProperty("accepted_sequence").GetInt64() == 1 &&
+        pendingFocusStatus.GetProperty("applied_sequence").ValueKind == JsonValueKind.Null,
+        "receipt is accepted, never falsely acknowledged as applied");
+    focusControl.CompleteCapture(firstFocusSelection, FocusCapture(firstFocusSelection.FocusPath), focusControlNow);
+    var appliedFocusStatus = FocusStatus();
+    Assert(appliedFocusStatus.GetProperty("applied_sequence").GetInt64() == 1 &&
+        appliedFocusStatus.GetProperty("focus_path").GetString() == "panel0/0/6" &&
+        appliedFocusStatus.GetProperty("focus_resolved").GetBoolean() &&
+        appliedFocusStatus.GetProperty("applied_at").ValueKind == JsonValueKind.String,
+        "acknowledgement describes the completed capture, not just an accepted file");
+
+    SubmitFocus(FocusRequest(2, "panel0/0/2", false));
+    focusControl.Poll(focusControlNow);
+    var secondFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    SubmitFocus(FocusRequest(3, "panel0/0/6"));
+    focusControl.Poll(focusControlNow);
+    Assert(secondFocusSelection.Sequence == 2 && secondFocusSelection.FocusPath == "panel0/0/2" && !secondFocusSelection.WidgetDiagnostics,
+        "new control cannot mutate configuration already captured by an in-flight frame");
+    focusControl.CompleteCapture(secondFocusSelection, FocusCapture(secondFocusSelection.FocusPath), focusControlNow);
+    Assert(FocusStatus().GetProperty("applied_sequence").GetInt64() == 2,
+        "in-flight completion acknowledges its own configuration, not newer pending control");
+    var thirdFocusSelection = focusControl.BeginCapture(focusControlNow)!;
+    Assert(thirdFocusSelection.Sequence == 3 && thirdFocusSelection.FocusPath == "panel0/0/6",
+        "A to B to A with increasing request sequence is supported");
+    focusControl.CompleteCapture(thirdFocusSelection, FocusCapture(thirdFocusSelection.FocusPath), focusControlNow);
+
+    void AssertFocusRejected(string label)
+    {
+        focusControl.Poll(focusControlNow);
+        var selection = focusControl.BeginCapture(focusControlNow);
+        Assert(selection is not null && selection.Sequence == 3 && selection.FocusPath == "panel0/0/6",
+            label + " retains last applied selection");
+        var rejectedStatus = FocusStatus();
+        Assert(rejectedStatus.GetProperty("applied_sequence").GetInt64() == 3,
+            label + " does not falsely advance applied acknowledgement");
+        Assert(rejectedStatus.GetProperty("last_error").ValueKind == JsonValueKind.String,
+            label + " records a bounded rejection reason");
+    }
+    foreach (var change in new Action<Dictionary<string, object>>[] {
+        r => r["unknown"] = true,
+        r => r["pid"] = 4321,
+        r => r["pid"] = "1234",
+        r => r["session_id"] = "TEST-other-session",
+        r => r["managed_build_sha256"] = new string('b', 64),
+        r => r["sequence"] = 0,
+        r => r["sequence"] = -1,
+        r => r["sequence"] = 2,
+        r => r["sequence"] = "4",
+        r => r["focus_path"] = "panel32/0",
+        r => r["focus_path"] = "panel0/512",
+        r => r["focus_path"] = "panel00/0",
+        r => r["focus_path"] = "panel0/../6",
+        r => r["focus_path"] = "focus/0/6",
+        r => r["focus_path"] = "panel0" + string.Concat(Enumerable.Repeat("/0", 64)),
+        r => r["widget_diagnostics"] = "true",
+        r => r["requested_at"] = "2026-10-31T07:00:00",
+        r => r["requested_at"] = focusControlNow.AddSeconds(1).ToString("O"),
+        r => r["requested_at"] = focusControlNow.AddSeconds(-31).ToString("O"),
+        r => r.Remove("widget_diagnostics")
+    })
+    {
+        var badRequest = FocusRequest(4);
+        change(badRequest);
+        SubmitFocus(badRequest);
+        AssertFocusRejected("invalid control");
+    }
+    var validFocusJson = JsonSerializer.Serialize(FocusRequest(4));
+    File.WriteAllText(focusControlPath, validFocusJson[..^1] + ",\"focus_path\":\"panel0/0/2\"}");
+    AssertFocusRejected("duplicate JSON property");
+    File.WriteAllText(focusControlPath, "{\"pid\":");
+    AssertFocusRejected("partially written JSON");
+    File.WriteAllText(focusControlPath, validFocusJson + new string(' ', 2049 - Encoding.UTF8.GetByteCount(validFocusJson)));
+    AssertFocusRejected("2049-byte request");
+    if (!OperatingSystem.IsWindows())
+    {
+        var linkedTarget = Path.Combine(focusControlRoot, "linked-request.json");
+        File.WriteAllText(linkedTarget, validFocusJson);
+        File.Delete(focusControlPath);
+        File.CreateSymbolicLink(focusControlPath, linkedTarget);
+        AssertFocusRejected("linked request file");
+        File.Delete(focusControlPath);
+        var controlDirectory = Path.Combine(focusControlRoot, "control");
+        var movedControl = Path.Combine(focusControlRoot, "control-original");
+        Directory.Move(controlDirectory, movedControl);
+        Directory.CreateSymbolicLink(controlDirectory, movedControl);
+        AssertFocusRejected("linked control directory");
+        Directory.Delete(controlDirectory);
+        Directory.Move(movedControl, controlDirectory);
+    }
+    File.WriteAllText(focusControlPath, validFocusJson + new string(' ', 2048 - Encoding.UTF8.GetByteCount(validFocusJson)));
+    focusControl.Poll(focusControlNow);
+    Assert(focusControl.BeginCapture(focusControlNow)!.Sequence == 4, "exact 2048-byte request is accepted");
+    Assert(focusControl.BeginCapture(focusControlNow.AddSeconds(31))!.Sequence == 3,
+        "pending request expiring before a capture cannot displace applied configuration");
+    Assert(FocusStatus().GetProperty("applied_sequence").GetInt64() == 3,
+        "expired unapplied request never receives applied acknowledgement");
+}
+finally { Directory.Delete(focusControlRoot, true); }
+}
+
 Console.WriteLine("PASS: thread gate, Chinese byte budget, observation semantics, loopback restrictions, authenticated async delivery and token rotation. No game/loader was opened.");
 
 static void Assert(bool condition, string label)

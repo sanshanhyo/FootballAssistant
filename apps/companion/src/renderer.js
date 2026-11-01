@@ -1,162 +1,535 @@
 'use strict';
-const $ = id => document.getElementById(id);
-const api = window.companion;
-let conversationId = localStorage.getItem('football-assistant-conversation') || undefined;
-let lastReply = '';
-let sending = false;
-let pointer = null;
-let dragged = false;
-let draggingReady = Promise.resolve();
-let dragMovePending = false;
-let monitorBusy = false;
-const savedMonitorCursor = localStorage.getItem('football-assistant-monitor-cursor');
-let monitorCursor = savedMonitorCursor !== null && Number.isSafeInteger(Number(savedMonitorCursor)) && Number(savedMonitorCursor) >= 0 ? Number(savedMonitorCursor) : null;
-const changeLabels = {
-  source_connected:'运行时数据流已连接', source_stale:'运行时心跳延迟', source_disconnected:'运行时数据流已断开',
-  snapshot_received:'收到数据快照', ui_text_changed:'页面原文发生变化', raw_fields_changed:'原始字段发生变化',
-  capabilities_changed:'读取能力状态变化', interface_catalog_registered:'接口结构清单已登记',
-};
+(() => {
+  const $ = id => document.getElementById(id);
+  const api = window.companion;
+  const UI = window.CompanionUI;
+  const Bubbles = window.CompanionBubbles;
+  const Scenes = window.CompanionScenes;
+  const motion = window.CompanionMotion?.bind({ image: $('character-image'), media: window.matchMedia?.('(prefers-reduced-motion: reduce)') });
+  let gameStatus = { state: 'unknown' };
+  let gamePollTimer;
+  let sceneClosed = false;
+  const failedScenes = new Set();
+  let state = null;
+  let messages = new Map();
+  const tools = new Map();
+  const requests = new Map();
+  let lastReply = null;
+  let blockedReplyId = null;
+  let noticeTimer;
+  let speechInfo = null;
+  let recording = null;
+  let speechOperation = null;
+  let player = null;
+  let playerUrl = null;
+  let speechPhase = 'idle';
+  let holdTimer;
+  let dragReady = Promise.resolve();
+  let dragMovePending = false;
+  let composing = false;
+  const gesture = UI?.createGesture();
+  const voiceFence = UI?.createFence();
+  const operationId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const unwrap = result => {
+    if (!result?.ok) throw new Error(result?.error || '桌宠请求失败，请重试。');
+    return result.value;
+  };
+  const node = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = String(text);
+    return element;
+  };
+  const preferences = () => ({ expression:'auto', sttProvider:'local-whisper', ttsProvider:'system', ...state?.preferences });
 
-function error(message) { $('error').textContent = message || ''; $('error').hidden = !message; updateRects(); }
-function addMessage(kind, message) {
-  const element = document.createElement('p'); element.className = `message ${kind}`; element.textContent = message;
-  $('messages').append(element); $('messages').scrollTop = $('messages').scrollHeight;
-}
-function updateRects() {
-  const rects = [$('pet'), !$('panel').hidden ? $('panel') : null].filter(Boolean).map(element => {
-    const r = element.getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height };
+  const bubbleQueue = Bubbles?.createQueue({ onChange: part => {
+    $('compact-text').textContent = part.text;
+    $('compact-bubble').hidden = part.hidden || !part.text;
+    $('bubble-progress').hidden = part.count < 2;
+    $('bubble-progress').textContent = part.count > 1 ? `${part.index + 1} / ${part.count}` : '';
+    $('bubble-content').dataset.hasNext = String(part.hasNext);
+    $('compact-bubble').setAttribute('aria-label', part.hasNext ? `对白 ${part.index + 1} / ${part.count}，点击或按回车查看下一段` : '对白最后一段');
+    $('compact-bubble').setAttribute('aria-disabled', String(!part.hasNext));
+    $('compact-text').title = '';
+    $('bubble-body').scrollTop = 0;
+    refreshExpression();
+    updateRects();
+  } });
+
+  function updateRects() {
+    if (!api?.inputRects) return;
+    // The full bubble is clickable; hidden ancestors must never leave a stale input region.
+    const rects = [$('pet'), $('compact-bubble'), $('chat-form'), $('interaction-feedback'), $('draft-note')].filter(item => item && !item.hidden && item.getClientRects().length).map(element => {
+      const rect = element.getBoundingClientRect();
+      return { x:rect.x, y:rect.y, width:rect.width, height:rect.height };
+    });
+    api.inputRects(rects);
+  }
+
+  function showError(message) {
+    $('error').textContent = message || '';
+    $('error').hidden = !message;
+    if (message) setComposer(true);
+    updateInteractionFeedback();
+    refreshExpression(); updateRects();
+  }
+
+  function updateInteractionFeedback() {
+    const active = speechPhase !== 'idle';
+    $('voice-status').hidden = !active;
+    $('cancel-voice').hidden = !active;
+    $('interaction-feedback').hidden = !active && $('error').hidden;
+  }
+
+  function resizeComposer() {
+    const textarea = $('message');
+    textarea.style.height = '30px';
+    textarea.style.height = `${Math.min(66, Math.max(30, textarea.scrollHeight))}px`;
+    updateSendAvailability(); updateRects();
+  }
+
+  function updateSendAvailability() {
+    $('send').disabled = !state || !state.canSend || state.connection?.state === 'disconnected' || !$('message').value.trim();
+  }
+
+  function setComposer(open, focus = false) {
+    $('chat-form').hidden = !open;
+    $('pet').setAttribute('aria-expanded', String(open));
+    $('draft-note').hidden = !open;
+    if (open) resizeComposer();
+    updateRects();
+    if (open && focus) $('message').focus();
+  }
+
+  function resetDraftNote() {
+    $('draft-note').textContent = 'Enter 发送 · Shift + Enter 换行';
+    $('draft-note').classList.remove('synthetic');
+  }
+
+  function setExpression(next) {
+    const manual = preferences().expression;
+    const expression = manual !== 'auto' ? manual : next;
+    $('pet').dataset.expression = UI.EXPRESSIONS[expression] ? expression : 'idle';
+    motion?.setState($('pet').dataset.expression);
+  }
+
+  function refreshExpression() {
+    if (!$('error').hidden) return setExpression('error');
+    if (speechPhase !== 'idle') return setExpression(({ recording:'listening', permission:'listening', transcribing:'transcribing', speaking:'speaking' })[speechPhase] || 'idle');
+    if ([...requests.values()].some(item => ['pending', 'running', 'accepted', 'queued'].includes(item.status))) return setExpression('thinking');
+    if (!$('compact-bubble').hidden) return setExpression('speaking');
+    setExpression('idle');
+  }
+
+  function setVoiceStatus(message, phase = 'idle') {
+    speechPhase = phase;
+    $('voice-status').textContent = message || '';
+    if (['permission', 'recording', 'transcribing'].includes(phase)) setComposer(true);
+    updateInteractionFeedback();
+    refreshExpression(); updateRects();
+  }
+
+
+  function renderCharacter() {
+    const character = state?.character;
+    if (!character) return;
+    const pet = $('pet');
+    pet.dataset.characterId = character.characterId;
+    // Only the built-in resolver supplies this local image reference.
+    pet.dataset.visualResource = character.visual?.resourceKey || '';
+    const image = $('character-image');
+    const visual = character.visual;
+    const scene = Scenes.selectScene({ game: gameStatus, messages: messages.values(), sessionId: state.sessionId, epoch: state.epoch });
+    pet.dataset.scene = failedScenes.has(scene) ? 'default' : scene;
+    const localSource = character.characterId === 'official.eckera' ? Scenes.sourceFor(scene, failedScenes) : visual?.source;
+    const source = visual?.kind === 'builtin-image' && typeof localSource === 'string' ? new URL(localSource, document.baseURI).href : '';
+    if (source && image.src !== source) {
+      image.hidden = false;
+      $('character-visual-error').hidden = true;
+      image.src = source;
+    } else if (!source) {
+      image.hidden = true;
+      $('character-visual-error').hidden = false;
+    }
+    pet.setAttribute('aria-label', `${character.displayName}：单击打字，长按说话，拖动移动，右键设置`);
+    pet.title = `${character.displayName} / ${character.englishName} · ${character.visual?.label || '视觉待确认'}`;
+    $('chat-form').setAttribute('aria-label', `给${character.displayName}发消息`);
+  }
+
+  $('character-image').addEventListener('load', () => {
+    $('character-image').hidden = false;
+    $('character-visual-error').hidden = true;
+    updateRects();
   });
-  api.inputRects(rects);
-}
-function sourceLabel(source) {
-  if (!source || source.availability === 'not_connected') return '尚未接入游戏数据 · 真实数据接通后才提供球队事实';
-  if (source.synthetic || source.availability === 'synthetic') return '当前为合成测试数据 · 不能用于真实球队判断';
-  if (source.availability === 'unavailable') return '当前数据不可用 · 需要检查游戏或存档适配器';
-  const name = source.source === 'save' ? (source.adapter_id?.includes('experimental') ? '实验性存档快照' : '存档快照') : source.source === 'runtime' ? '运行时观测' : '未知来源';
-  const time = source.last_captured_at ? new Date(source.last_captured_at).toLocaleString('zh-CN') : '采集时间未知';
-  return `${name}${source.availability === 'stale' ? ' · 可能已过期' : ''} · ${source.facts_count || 0} 项字段 · ${time}`;
-}
-function showChange(event) {
-  if (!event) return;
-  const label = changeLabels[event.kind] || '数据状态更新';
-  const time = event.created_at ? new Date(event.created_at).toLocaleTimeString('zh-CN') : '';
-  $('monitor-change').textContent = `最新${event.synthetic ? '模拟' : ''}变化：${label} ${time}`;
-  $('monitor-change').title = '这是底层数据变化，不自动解释为比赛、转会或伤病事件。';
-}
-async function refreshMonitoring() {
-  if (monitorBusy) return;
-  monitorBusy = true;
-  try {
-    const result = await api.monitoring();
-    if (!result.ok) { $('monitor-state').textContent = '持续监听服务尚未接通'; return; }
-    const value = result.value;
-    const streams = Array.isArray(value.streams) ? value.streams : [];
-    const runtime = streams.filter(stream => stream.source === 'runtime' && !stream.synthetic);
-    const connected = runtime.filter(stream => stream.connection_state === 'connected').length;
-    const stale = runtime.filter(stream => stream.connection_state === 'stale').length;
-    const latestRuntime = runtime.filter(stream => stream.last_captured_at).sort((a, b) => Date.parse(b.last_captured_at) - Date.parse(a.last_captured_at))[0];
-    const lastUpdate = latestRuntime ? new Date(latestRuntime.last_captured_at).toLocaleString('zh-CN') : '暂无';
-    $('monitor-state').textContent = `运行时数据流：${connected ? '已连接' : stale ? '连接延迟' : '未连接'} · 最近更新 ${lastUpdate}`;
-    $('monitor-state').title = '每2秒只读取本机监听状态；原生包头接收不代表字段值已解码。';
-    const catalogs = value.coverage?.catalogs || [];
-    const count = catalogs.reduce((sum, item) => sum + (Number(item.registered_count) || 0), 0);
-    const readable = catalogs.reduce((sum, item) => sum + (Number(item.runtime_verified_coverage?.verified_readable) || 0), 0);
-    $('monitor-coverage').textContent = `最近显式探测的已验证数据：${readable ? '可用' : '暂无可用数据'}（不代表当前会话）`;
-    $('monitor-coverage').title = '接口结构登记不代表数据可读；已验证可读状态仅反映最近显式探测，不代表当前会话或持续采集覆盖。';
-    const managed = catalogs.filter(item => item.inventory_kind !== 'native_exports').reduce((sum, item) => sum + (Number(item.registered_count) || 0), 0);
-    const native = catalogs.filter(item => item.inventory_kind === 'native_exports').reduce((sum, item) => sum + (Number(item.registered_count) || 0), 0);
-    const complete = catalogs.filter(item => item.inventory_complete === true || item.complete === true).length;
-    $('monitor-catalogs').textContent = `托管接口结构 ${managed} 项 · 原生接口结构 ${native} 项 · 合计 ${count} 项`;
-    $('monitor-probes').textContent = `最近显式探测可读 ${readable} 项（范围：最近显式探测）`;
-    $('monitor-integrity').textContent = `接口目录完整 ${complete}/${catalogs.length}`;
-    if (value.source_status) $('source').textContent = sourceLabel(value.source_status);
-    if (monitorCursor === null) {
-      monitorCursor = Number.isSafeInteger(value.latest_event_cursor) ? value.latest_event_cursor : 0;
-      showChange(value.recent_changes?.at(-1));
-    } else {
-      const changes = await api.events(monitorCursor);
-      if (changes.ok) {
-        if (changes.value.cursor_reset_required) monitorCursor = 0;
-        else {
-          showChange(changes.value.events?.at(-1));
-          if (Number.isSafeInteger(changes.value.next_cursor)) monitorCursor = changes.value.next_cursor;
-        }
+  $('character-image').addEventListener('error', () => {
+    const scene = $('pet').dataset.scene;
+    if (scene && scene !== 'default') { failedScenes.add(scene); renderCharacter(); return; }
+    $('character-image').hidden = true;
+    $('character-visual-error').hidden = false;
+    updateRects();
+  });
+
+  function renderBubble() {
+    lastReply = Bubbles.latestReply(messages.values(), state);
+    // Pagination is presentation-only: messages/history retain the entire original reply.
+    if (!lastReply || lastReply.id === blockedReplyId) { bubbleQueue?.clear(); return; }
+    bubbleQueue?.replace(`${state.epoch}:${state.sessionId}:${lastReply.id}`, lastReply.text);
+    updateRects();
+  }
+
+  function renderTasks() { refreshExpression(); }
+
+  function applyState(next) {
+    if (!next || !Number.isSafeInteger(next.epoch) || typeof next.sessionId !== 'string') return;
+    if (state && next.epoch < state.epoch) return;
+    const switched = !state || next.epoch !== state.epoch || next.sessionId !== state.sessionId;
+    const oldPreferences = preferences();
+    const providersChanged = next.preferences && (next.preferences.sttProvider !== oldPreferences.sttProvider || next.preferences.ttsProvider !== oldPreferences.ttsProvider);
+    if (switched || providersChanged) cancelVoice(providersChanged && state ? '语音服务已切换' : '');
+    if (switched) {
+      clearTimeout(noticeTimer); motion?.reset();
+      messages = new Map(); tools.clear(); requests.clear(); blockedReplyId = null; bubbleQueue?.clear();
+      $('message').value = ''; resetDraftNote(); resizeComposer();
+    }
+    state = next;
+    if (Array.isArray(next.messages)) messages = new Map(next.messages.filter(item => UI.belongsToSession(item, next)).map(item => [item.id, item]));
+    if (Array.isArray(next.tools)) { tools.clear(); next.tools.forEach(item => { if (UI.belongsToSession(item, next)) tools.set(`${item.requestId}:${item.tool.id}`, item); }); }
+    if (Array.isArray(next.pendingRequests)) {
+      requests.clear(); next.pendingRequests.forEach(item => {
+        const request = typeof item === 'string' ? { id:item, status:'pending' } : item;
+        requests.set(request.requestId || request.id, { ...request, status:request.status || 'pending' });
+      });
+    }
+    updateSendAvailability();
+    $('message').placeholder = !next.canSend ? '后端未接入，暂不能发送' : next.connection?.state === 'disconnected' ? '连接已中断' : '输入消息…';
+    renderCharacter(); renderBubble(); renderTasks();
+    if (next.storageWarning) showError(next.storageWarning);
+  }
+
+  function onRuntimeEvent(event) {
+    if (!event || typeof event !== 'object') return;
+    if (event.type === 'visibility') { motion?.setVisible(event.visible !== false); if (event.visible === false) { bubbleQueue?.pause(); cancelVoice('桌宠已隐藏，语音操作已停止', false); } else bubbleQueue?.resume(); return; }
+    if (event.type === 'stop-speech') { cancelVoice('语音操作已停止', false); return; }
+    if (event.type === 'composer') { setComposer(event.open !== false, true); return; }
+    if (event.type === 'read-last-reply') { speakLast(); return; }
+    if (event.type === 'state') { applyState(event.state); return; }
+    if (event.type === 'speech') { onSpeechEvent(event.state); return; }
+    if (event.type === 'message' && UI.belongsToSession(event.message, state)) {
+      const isNew = !messages.has(event.message.id);
+      messages.set(event.message.id, event.message); renderCharacter(); renderBubble();
+      if (isNew && event.message.origin === 'proactive' && speechPhase === 'idle' && $('error').hidden &&
+          ![...requests.values()].some(item => ['pending', 'running', 'accepted', 'queued'].includes(item.status))) {
+        setExpression('notice'); clearTimeout(noticeTimer); noticeTimer = setTimeout(refreshExpression, 2500);
       }
     }
-    localStorage.setItem('football-assistant-monitor-cursor', String(monitorCursor));
-  } catch { $('monitor-state').textContent = '持续监听状态暂不可用'; }
-  finally { monitorBusy = false; updateRects(); }
-}
-async function refresh() {
-  const result = await api.status();
-  if (!result.ok) {
-    $('connection').textContent = '服务未连接'; $('dot').classList.remove('online'); $('source').textContent = result.error;
+    if (event.type === 'tool' && UI.belongsToSession(event, state)) { tools.set(`${event.requestId}:${event.tool.id}`, event); renderTasks(); }
+    if (event.type === 'request' && UI.belongsToSession(event, state)) {
+      requests.set(event.requestId, event);
+      if (['cancelled', 'error'].includes(event.status)) {
+        for (const [key, task] of tools) if (task.requestId === event.requestId && task.tool.status === 'running') tools.set(key, { ...task, tool:{ ...task.tool, status:event.status } });
+        renderTasks();
+      }
+      if (event.status === 'error' && event.error) showError(event.error);
+      refreshExpression();
+    }
+  }
+
+  async function call(action) {
+    try { return unwrap(await action()); }
+    catch (error) { showError(error.message); return undefined; }
+  }
+
+  async function send(event) {
+    event?.preventDefault();
+    const text = $('message').value.trim();
+    if (!text || !state || !state.canSend || state.connection?.state === 'disconnected') return;
+    const context = { sessionId:state.sessionId, epoch:state.epoch };
+    blockedReplyId = lastReply?.id || null; bubbleQueue?.clear();
+    $('message').value = ''; resetDraftNote(); resizeComposer();
+    showError('');
+    try {
+      unwrap(await api.sendMessage({ text, conversationId:context.sessionId, generation:context.epoch }));
+      if (!UI.belongsToSession(context, state)) return;
+      refreshExpression();
+    } catch (error) {
+      if (!UI.belongsToSession(context, state)) return;
+      if (!$('message').value) $('message').value = text;
+      resizeComposer(); showError(error.message);
+    }
+  }
+
+  function providerEntries(kind) { return Array.isArray(speechInfo?.[kind]) ? speechInfo[kind] : []; }
+  async function refreshSpeechCapabilities() {
+    try { speechInfo = unwrap(await api.speechCapabilities()); }
+    catch { speechInfo = null; }
+  }
+  function stopPlayer() {
+    if (player) { player.pause(); player.removeAttribute('src'); player.load(); player = null; }
+    if (playerUrl) { URL.revokeObjectURL(playerUrl); playerUrl = null; }
+  }
+
+  function cancelVoice(message = '语音操作已取消', notifyMain = true) {
+    voiceFence.invalidate();
+    if (recording) {
+      recording.cancelled = true; recording.stopRequested = true;
+      clearTimeout(recording.timer);
+      recording.stream?.getTracks().forEach(track => track.stop());
+      if (recording.recorder?.state === 'recording') recording.recorder.stop();
+      recording = null;
+    }
+    if (speechOperation) api.cancelSpeechOperation(speechOperation.id).catch(() => {});
+    speechOperation = null;
+    stopPlayer(); if (notifyMain) api.stopSpeech?.().catch(() => {});
+    setVoiceStatus(message);
+  }
+
+  function speechContext(id) {
+    return { operationId:id, generation:state.epoch, conversationId:state.sessionId };
+  }
+
+  function speechResultCurrent(result, operation) {
+    return speechOperation === operation && voiceFence.accepts(operation.token) && state?.epoch === operation.context.generation && state?.sessionId === operation.context.conversationId &&
+      (!result.operationId || result.operationId === operation.id) &&
+      (result.generation === undefined || result.generation === operation.context.generation) &&
+      (!result.conversationId || result.conversationId === operation.context.conversationId);
+  }
+
+  async function beginRecording() {
+    if (!state || recording || speechPhase === 'transcribing') return;
+    cancelVoice(''); showError('');
+    const provider = preferences().sttProvider;
+    const capability = providerEntries('stt').find(item => item.id === provider);
+    if (capability?.available === false) { showError(capability.reason || '语音转写服务未配置，请选择可用服务。'); setVoiceStatus('转写服务未就绪'); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== 'function') { showError('当前环境无法录音。'); return; }
+    const operation = { id:operationId('stt'), token:voiceFence.capture(), context:speechContext(''), provider, cancelled:false, stopRequested:false, chunks:[], totalBytes:0 };
+    operation.context.operationId = operation.id;
+    recording = operation;
+    setVoiceStatus('正在请求麦克风权限…松开可取消', 'permission');
+    try {
+      if (api.microphonePermission) {
+        const permission = unwrap(await api.microphonePermission());
+        if (recording !== operation || operation.cancelled || operation.stopRequested || !voiceFence.accepts(operation.token)) return;
+        if (['denied', 'restricted'].includes(permission.state)) { const error = new Error('麦克风权限被拒绝。'); error.name = 'NotAllowedError'; throw error; }
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+      if (recording !== operation || operation.cancelled || operation.stopRequested || !voiceFence.accepts(operation.token)) { stream.getTracks().forEach(track => track.stop()); return; }
+      operation.stream = stream;
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      operation.recorder = recorder;
+      recorder.addEventListener('dataavailable', event => {
+        if (!event.data.size || operation.cancelled) return;
+        operation.totalBytes += event.data.size;
+        if (operation.totalBytes > 20 * 1024 * 1024) { cancelVoice('录音过大，已取消。请缩短后重试。'); return; }
+        operation.chunks.push(event.data);
+      });
+      recorder.addEventListener('error', () => { if (recording === operation) { cancelVoice('录音失败'); showError('无法完成录音，请检查麦克风后重试。'); } });
+      recorder.addEventListener('stop', () => finishTranscription(operation));
+      recorder.start(250);
+      operation.timer = setTimeout(() => stopRecording(), 60_000);
+      setVoiceStatus(provider === 'mock' ? '正在录音 · 模拟转写不会识别实际内容' : '正在聆听…松开结束，Esc 取消', 'recording');
+    } catch (error) {
+      operation.cancelled = true; clearTimeout(operation.timer);
+      operation.stream?.getTracks().forEach(track => track.stop());
+      if (operation.recorder?.state === 'recording') operation.recorder.stop();
+      if (recording !== operation || !voiceFence.accepts(operation.token)) return;
+      recording = null; setVoiceStatus('麦克风不可用');
+      const message = ['NotAllowedError', 'PermissionDeniedError'].includes(error.name) ? '麦克风权限被拒绝。可以在系统隐私设置中允许此应用使用麦克风。' : error.name === 'NotFoundError' ? '未找到可用麦克风。' : `录音失败：${error.message}`;
+      showError(message);
+    }
+  }
+
+  function stopRecording(cancelled = false) {
+    const operation = recording;
+    if (!operation) return;
+    operation.stopRequested = true;
+    if (cancelled || !operation.recorder) { cancelVoice(cancelled ? '已取消录音' : '已松开，未开始录音'); return; }
+    clearTimeout(operation.timer);
+    if (operation.recorder.state === 'recording') operation.recorder.stop();
+    operation.stream?.getTracks().forEach(track => track.stop());
+  }
+
+  async function localRecordingWav(blob) {
+    const context = new AudioContext();
+    let decoded;
+    try { decoded = await context.decodeAudioData(await blob.arrayBuffer()); }
+    finally { await context.close(); }
+    if (!decoded.length || decoded.duration > 65) throw new Error('录音长度无效。');
+    const frames = Math.ceil(decoded.duration * 16000);
+    const offline = new OfflineAudioContext(1, frames, 16000);
+    const source = offline.createBufferSource();
+    source.buffer = decoded; source.connect(offline.destination); source.start();
+    const pcm = (await offline.startRendering()).getChannelData(0);
+    const wav = new ArrayBuffer(44 + pcm.length * 2);
+    const view = new DataView(wav);
+    const tag = (offset, text) => [...text].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+    tag(0, 'RIFF'); view.setUint32(4, wav.byteLength - 8, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); tag(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      const value = Math.max(-1, Math.min(1, pcm[i]));
+      view.setInt16(44 + i * 2, value * (value < 0 ? 32768 : 32767), true);
+    }
+    return wav;
+  }
+
+  async function finishTranscription(operation) {
+    clearTimeout(operation.timer); operation.stream?.getTracks().forEach(track => track.stop());
+    if (operation.cancelled || !voiceFence.accepts(operation.token) || recording !== operation) return;
+    recording = null;
+    if (!operation.chunks.length || operation.totalBytes === 0) { setVoiceStatus('未录到声音，请重试。'); return; }
+    const blob = new Blob(operation.chunks, { type:operation.recorder.mimeType || operation.chunks[0].type });
+    if (blob.size < 64) { setVoiceStatus('录音太短，请重试。'); return; }
+    speechOperation = operation;
+    setVoiceStatus(operation.provider === 'mock' ? '模拟转写中（非实际识别）…' : '正在转为文字…', 'transcribing');
+    try {
+      const audio = operation.provider === 'local-whisper' ? await localRecordingWav(blob) : await blob.arrayBuffer();
+      if (!speechResultCurrent({}, operation)) return;
+      const result = unwrap(await api.transcribe({ ...operation.context, provider:operation.provider, audio, mimeType:operation.provider === 'local-whisper' ? 'audio/wav' : blob.type, language:'zh' }));
+      if (!speechResultCurrent(result, operation)) return;
+      if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('转写服务未返回文字。');
+      if ($('message').value && !$('message').value.endsWith('\n')) $('message').value += '\n';
+      $('message').value = ($('message').value + result.text).slice(0, 4000);
+      const synthetic = result.synthetic === true;
+      $('draft-note').textContent = synthetic ? '模拟转写 · 未识别实际录音，请检查后再发送' : '转写已放入草稿 · 请检查后再发送';
+      $('draft-note').classList.toggle('synthetic', synthetic);
+      setVoiceStatus(synthetic ? '模拟转写完成 · 没有识别实际录音' : '转写完成，等待你确认发送');
+      setComposer(true, true);
+      resizeComposer();
+    } catch (error) {
+      if (!speechResultCurrent({}, operation)) return;
+      setVoiceStatus('转写失败'); showError(error.message);
+    } finally { if (speechOperation === operation) speechOperation = null; }
+  }
+
+  async function speakLast() {
+    if (!lastReply || !state) return;
+    const reply = lastReply;
+    cancelVoice(''); showError('');
+    const operation = { id:operationId('tts'), token:voiceFence.capture(), context:speechContext('') };
+    operation.context.operationId = operation.id; speechOperation = operation;
+    setVoiceStatus('正在准备播报…', 'speaking');
+    try {
+      const result = unwrap(await api.speak({ ...operation.context, text:reply.text, provider:preferences().ttsProvider }));
+      if (!speechResultCurrent(result, operation)) return;
+      if (result.playback === 'renderer') {
+        const bytes = result.audio instanceof ArrayBuffer ? result.audio : result.audio?.buffer instanceof ArrayBuffer ? result.audio.buffer : null;
+        if (!bytes || !bytes.byteLength) throw new Error('语音服务未返回音频。');
+        playerUrl = URL.createObjectURL(new Blob([bytes], { type:result.mimeType || 'audio/mpeg' }));
+        player = new Audio(playerUrl);
+        player.addEventListener('ended', () => { if (speechOperation === operation) { stopPlayer(); speechOperation = null; setVoiceStatus('播报完成'); } });
+        player.addEventListener('error', () => { if (speechOperation === operation) { stopPlayer(); speechOperation = null; setVoiceStatus('播放失败'); showError('无法播放返回的音频，请检查语音服务。'); } });
+        await player.play();
+        if (!speechResultCurrent(result, operation)) { stopPlayer(); return; }
+        setVoiceStatus('正在播报…', 'speaking');
+      } else if (result.playback === 'none') { speechOperation = null; setVoiceStatus(result.synthetic ? '模拟播报完成 · 未播放实际音频' : '未播放音频'); }
+      else setVoiceStatus('正在使用系统语音播报…', 'speaking');
+    } catch (error) {
+      if (!speechResultCurrent({}, operation)) return;
+      speechOperation = null; stopPlayer(); setVoiceStatus('播报失败'); showError(error.message);
+    }
+  }
+
+  function onSpeechEvent(event) {
+    if (!event || !speechOperation) return;
+    const operation = speechOperation;
+    if (event.operationId && event.operationId !== operation.id) return;
+    if (!speechResultCurrent(event, operation)) return;
+    if (['finished', 'stopped', 'cancelled', 'error'].includes(event.state)) {
+      speechOperation = null; stopPlayer();
+      setVoiceStatus(event.state === 'finished' ? '播报完成' : event.state === 'error' ? '播报失败' : '播报已停止');
+      if (event.state === 'error') showError(event.message || '语音服务失败。');
+    }
+  }
+
+  function startDrag() { dragReady = api.dragStart(); }
+  function moveDrag() {
+    if (dragMovePending) return;
+    dragMovePending = true;
+    requestAnimationFrame(async () => { try { await dragReady; if (gesture.mode === 'dragging') await api.dragMove(); } finally { dragMovePending = false; } });
+  }
+
+  function endGesture(event, cancelled = false) {
+    clearTimeout(holdTimer);
+    const action = gesture.end(event.pointerId, cancelled);
+    if (action === 'drag-end') dragReady.then(() => api.dragEnd()).catch(() => {});
+    if (action === 'voice-stop') stopRecording();
+    if (action === 'voice-cancel') stopRecording(true);
+    if (action === 'click') { bubbleQueue?.reopen(); setComposer($('chat-form').hidden, true); }
+    if ($('pet').hasPointerCapture?.(event.pointerId)) $('pet').releasePointerCapture(event.pointerId);
+  }
+
+  function bindEvents() {
+    $('chat-form').addEventListener('submit', send);
+    let bubblePointer = null;
+    $('compact-bubble').addEventListener('pointerdown', event => {
+      bubblePointer = event.button === 0 ? { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false } : null;
+    });
+    $('compact-bubble').addEventListener('pointermove', event => {
+      if (bubblePointer?.id === event.pointerId && Math.hypot(event.clientX - bubblePointer.x, event.clientY - bubblePointer.y) > 5) bubblePointer.moved = true;
+    });
+    $('compact-bubble').addEventListener('pointercancel', () => { bubblePointer = null; });
+    $('compact-bubble').addEventListener('click', event => {
+      const isClick = event.detail === 0 || (bubblePointer && !bubblePointer.moved);
+      bubblePointer = null;
+      if (isClick && !window.getSelection()?.toString()) bubbleQueue?.next();
+    });
+    $('compact-bubble').addEventListener('keydown', event => {
+      if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); bubbleQueue?.next(); }
+    });
+    $('message').addEventListener('compositionstart', () => { composing = true; });
+    $('message').addEventListener('compositionend', () => { composing = false; });
+    $('message').addEventListener('keydown', event => { if (UI.shouldSubmitText(event, composing)) { event.preventDefault(); send(); } });
+    $('message').addEventListener('input', () => { if ($('message').value.trim()) { blockedReplyId = lastReply?.id || null; bubbleQueue?.clear(); } resizeComposer(); });
+    $('cancel-voice').addEventListener('click', () => cancelVoice());
+    $('pet').addEventListener('contextmenu', event => { event.preventDefault(); clearTimeout(holdTimer); call(() => api.showContextMenu()); });
+    $('pet').addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault(); gesture.begin({ id:event.pointerId, x:event.screenX, y:event.screenY, time:performance.now() });
+      $('pet').setPointerCapture(event.pointerId);
+      holdTimer = setTimeout(() => { if (gesture.hold(performance.now())) beginRecording(); }, gesture.holdMs + 5);
+    });
+    $('pet').addEventListener('pointermove', event => {
+      const action = gesture.move({ id:event.pointerId, x:event.screenX, y:event.screenY });
+      if (action) clearTimeout(holdTimer);
+      if (action === 'drag-start') { startDrag(); moveDrag(); }
+      if (action === 'drag-move') moveDrag();
+    });
+    $('pet').addEventListener('pointerup', event => endGesture(event));
+    $('pet').addEventListener('pointercancel', event => endGesture(event, true));
+    $('pet').addEventListener('lostpointercapture', event => { if (gesture.mode !== 'idle') endGesture(event, true); });
+    $('pet').addEventListener('keydown', event => { if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); bubbleQueue?.reopen(); setComposer($('chat-form').hidden, true); } });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { clearTimeout(holdTimer); cancelVoice(''); bubbleQueue?.hide(); setComposer(false); } });
+    document.addEventListener('toggle', updateRects, true);
+    window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
+    window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
+    window.addEventListener('beforeunload', () => { sceneClosed = true; motion?.dispose(); clearTimeout(noticeTimer); disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
+    const observer = new ResizeObserver(updateRects);
+    [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
+  }
+
+  async function pollGameStatus() {
+    if (sceneClosed || !api.gameStatus) return;
+    try { gameStatus = unwrap(await api.gameStatus()) || { state: 'unknown' }; }
+    catch { gameStatus = { state: 'unknown' }; }
+    if (sceneClosed) return;
+    renderCharacter();
+    gamePollTimer = setTimeout(pollGameStatus, 10000);
+  }
+
+  let unsubscribe;
+  let disposeAppearance;
+  if (!api || !UI || !Bubbles || !Scenes) {
+    $('error').textContent = '桌宠桥接未就绪，请从应用打开。';
+    $('error').hidden = false; $('interaction-feedback').hidden = false;
     return;
   }
-  const value = result.value;
-  $('dot').classList.add('online');
-  $('connection').textContent = value.modelConfigured ? (value.modelStatus === 'error' ? '服务已连接 · 模型请求失败' : '服务已连接 · 可以聊天') : '服务已连接 · 模型待配置';
-  $('source').textContent = sourceLabel(value.source_status);
-}
-async function speak(text) {
-  const result = await api.speak(text);
-  if (!result.ok) { $('speech-status').textContent = '朗读失败'; error(result.error); }
-}
-async function send(event) {
-  event?.preventDefault();
-  const message = $('message').value.trim();
-  if (!message || sending) return;
-  sending = true; $('send').disabled = true; $('pet').classList.add('thinking'); error('');
-  addMessage('user', message); $('message').value = '';
-  try {
-    const result = await api.chat({ message, ...(conversationId ? { conversation_id: conversationId } : {}) });
-    if (!result.ok) throw new Error(result.error);
-    const value = result.value;
-    if (typeof value.reply !== 'string' || !value.reply.trim() || typeof value.conversation_id !== 'string') throw new Error('服务回复格式无效。');
-    conversationId = value.conversation_id; localStorage.setItem('football-assistant-conversation', conversationId);
-    lastReply = value.reply; addMessage('assistant', lastReply); $('read-last').disabled = false;
-    $('source').textContent = sourceLabel(value.source_status);
-    if ($('auto-speak').checked) await speak(lastReply);
-  } catch (failure) { error(failure.message); }
-  finally { sending = false; $('send').disabled = false; $('pet').classList.remove('thinking'); refresh(); }
-}
-$('chat-form').addEventListener('submit', send);
-$('message').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) send(event); });
-$('reconnect').addEventListener('click', refresh);
-$('collapse').addEventListener('click', () => { $('panel').hidden = true; updateRects(); });
-$('read-last').addEventListener('click', () => speak(lastReply));
-$('stop-speech').addEventListener('click', () => api.stopSpeech());
-$('quit').addEventListener('click', () => api.quit());
-$('choose-runtime').addEventListener('click', async () => {
-  const result = await api.chooseRuntime();
-  if (!result.ok) error(result.error); else { error(''); refresh(); }
-});
-api.onSpeech(state => {
-  $('speech-status').textContent = ({speaking:'朗读中',finished:'朗读完成',stopped:''})[state.state] || '朗读失败';
-  if (state.state === 'error') error(state.message);
-});
-$('pet').addEventListener('pointerdown', event => {
-  if (event.button !== 0) return;
-  pointer = { x: event.screenX, y: event.screenY, id: event.pointerId };
-  dragged = false; $('pet').setPointerCapture(event.pointerId);
-  draggingReady = api.dragStart();
-});
-$('pet').addEventListener('pointermove', event => {
-  if (!pointer) return;
-  if (Math.hypot(event.screenX - pointer.x, event.screenY - pointer.y) > 5) dragged = true;
-  if (!dragged || dragMovePending) return;
-  dragMovePending = true;
-  requestAnimationFrame(async () => { await draggingReady; if (pointer) await api.dragMove(); dragMovePending = false; });
-});
-async function endDrag(event) {
-  if (!pointer) return;
-  const toggle = !dragged; pointer = null; await draggingReady; await api.dragEnd();
-  if (event.type === 'pointerup' && toggle) { $('panel').hidden = !$('panel').hidden; updateRects(); if (!$('panel').hidden) $('message').focus(); }
-}
-$('pet').addEventListener('pointerup', endDrag);
-$('pet').addEventListener('pointercancel', endDrag);
-$('pet').addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { $('panel').hidden = !$('panel').hidden; updateRects(); } });
-new ResizeObserver(updateRects).observe(document.body);
-window.addEventListener('resize', updateRects);
-window.addEventListener('DOMContentLoaded', updateRects);
-updateRects(); refresh(); refreshMonitoring(); setInterval(refresh, 8_000); setInterval(refreshMonitoring, 2_000);
+  bindEvents();
+  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
+  unsubscribe = api.subscribe(onRuntimeEvent);
+  call(() => api.getState()).then(value => { if (value) applyState(value); });
+  refreshSpeechCapabilities();
+  pollGameStatus();
+  updateRects();
+})();

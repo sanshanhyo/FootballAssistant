@@ -242,8 +242,20 @@ def test_launcher_leaves_unrelated_listener_and_live_owner_untouched(tmp_path,mo
         with pytest.raises(RuntimeError,match="owns this data directory"):
             with writer_guard(config):pass
         assert owner.poll() is None
+        # A valid runtime pointing at the now-closed fixture exercises the
+        # launcher's disconnected-but-live owner path rather than validation.
+        config.runtime_file.write_text(json.dumps({**json.loads(before),"pid":owner.pid}))
+        with pytest.raises(ReaderError) as error:
+            launcher.ensure_service(config.runtime_file,start=True)
+        assert error.value.code=="service_unresponsive"
+        assert owner.poll() is None
     finally:
-        owner.communicate(timeout=5)
+        # EOF lets our child exit normally; cleanup never signals the console.
+        try:
+            owner.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            owner.kill()
+            owner.communicate(timeout=5)
 
 
 @pytest.mark.skipif(shutil.which("zsh") is None,reason="macOS launcher requires zsh; Windows script is checked separately")

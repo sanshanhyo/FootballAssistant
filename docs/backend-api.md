@@ -178,3 +178,173 @@ At most 16 sanitized `records` retain call sequence, nullable thread ID, nullabl
 `last_seen_at` is HTTP receipt time. `last_callback_at` is only a source-capture-minus-native-header-age approximation for the last observed header; empty polls keep the previous value or unknown, never replace it with receipt time. Counter growth without a header does not invent a timestamp. Callback evidence proves entry into the dispatch observer, not successful original-handler processing, payload decoding or understood football values. Overflow/contention/stopped counts can show observation gaps; `complete`, `field_values_known`, payload-decoded and lossless-capture claims stay false.
 
 Monitoring exposes `native_observer_summary` only for the matching selected runtime session/build/synthetic scope. No report is unknown/null, not a fabricated zero. After backend restart or stale/absent native updates, primary current-state installation flags become unknown while last-reported evidence remains attributable. History/samples are session-scoped and idempotent; ordinary event polling emits state/first-callback/gap edges rather than an event for every counter increment. This endpoint never marks the native export inventory verified-readable. Real FM installation/callback evidence must be validated separately; this diagnostic interface alone does not complete the full goal.
+
+### Experimental focused schedule UI association
+
+Authenticated `GET /v1/reader/schedule` returns a current-capture preview without
+model calls or unrelated raw UI evidence. It works in reader-only mode too.
+For `schedule_analysis`, `POST /v1/agent/ui-advice` now includes
+`schedule_projection` in its prepared result. This is **not** native business
+readiness: `production_ready=false`, partial and capture-local throughout.
+The alpha profile pins FM27 build `27.0.0+2486695`, runtime UI adapter `0.4.0`,
+macOS arm64, one explicit focus root, and the Chinese `赛程安排` title.
+It maps only complete observed rows at indices 0–9 to date display, opponent
+display, 主/客 display and competition display. Indices and paths are **not**
+fixture/team IDs. Each mapped field carries its exact path, profile, event,
+session, capture time, scope and full-capture fingerprint. Missing rows are not
+inferred from adjacent text. Unsupported profile, duplicate paths, invalid
+columns and unsupported markup yield no projected rows.
+
+Two-digit years retain their displayed spelling and numeric year/month/day
+components. Century, ISO date and kickoff remain unknown; this cannot support
+full schedule-congestion or precise cross-year rest calculations. Only the
+existing balanced, allowlisted TMP link/style/color markup is stripped; arbitrary
+HTML is rejected. Title matching does not independently verify visibility.
+
+When this profile matches, the model payload is narrowed to the structured
+four display fields per row and static caveats only. Capture timestamps, session
+IDs, paths, hashes, builds, adapter metadata, date components and unrelated raw UI
+text are **not** sent to the provider. The required provider routing header uses
+a fresh random request-local identifier, unrelated to game or stored conversation
+identity. Provenance and raw evidence remain local in the API
+result; the user question is sent separately.
+The refresh fence also checks the projection fingerprint and clears projected
+rows on a changed/expired capture. Schedule requests that do not match the profile are blocked before any provider
+call; there is no raw-text fallback. Other capabilities retain their existing
+generic UI evidence behavior. No new model requests, model configuration,
+Mac deployment or production-native capability are enabled by this change.
+
+### Experimental tactical UI display association
+
+Authenticated `GET /v1/reader/tactics` provides a model-free, reader-only-compatible
+preview. `tactical_analysis` on `POST /v1/agent/ui-advice` requires this profile;
+no match blocks before model configuration, budget or provider access, with no raw
+UI fallback. Existing UI consent, runtime freshness/session checks and refresh
+fences still apply. Native business readiness remains unchanged and false.
+
+The profile pins FM27 `27.0.0+2486695`, adapter `0.4.0`, macOS arm64 and the normal
+`panel_absolute` Chinese layout with the exact `队形` anchor. Independent mentality
+and style must exactly delimit the title as mentality + formation description +
+` - ` + style. The formation begins with 2–5 positive single-digit hyphenated
+segments totalling 10 outfield players. Its descriptor remains display text, not
+player or role assignments. Only observed U+200B is removed; raw matched text and
+capture-local field paths remain available locally. Duplicates, missing fields,
+unsupported controls/markup and malformed associations fail closed.
+
+`tactics_projection.status=experimental_ui_tactics` exposes `formation_display`,
+`style_display`, `mentality_display`; `lineup`, `roles`, and `instructions` are
+null (unread/unknown, never asserted empty). Provider input is explicitly limited
+to those three display strings and static caveats, not raw UI, paths, hashes,
+identities or capture provenance. Routing uses a fresh random identifier. Advice
+is conditional and partial; visibility, team identity and native tactical
+entities are not established. Fixtures test the profile without provider traffic;
+this implementation is not a new live-game acceptance claim.
+
+### Identity-free current-page attribute preview
+
+Authenticated `GET /v1/reader/current-page-attributes` is a model-free local preview,
+including in reader-only mode. It reuses the fresh, non-synthetic, matching
+session/event/full-capture UI gate and pins the FM27 build/platform and explicit
+`panel0/0/6` focus layout. It does not modify `/v1/reader/profile`, business player
+records, native readiness or the default `player_info` model payload.
+
+The result retains `identity=null`, `business_identity_known=false`,
+`individual_advice_allowed=false`, `partial=true`, `production_ready=false`.
+`current_page_attributes.groups` contains only exact same-capture category/row
+label-value associations. Labels must match the observed per-category display whitelist (including the
+exact ASCII parentheses in goalkeeper tendency labels), not canonical
+business attribute keys; ratings must display canonical integers 1–20. Only
+U+200B is removed, with raw matched strings and field paths retained locally.
+Three fixed category anchors are required; malformed values, duplicate paths or
+labels and unsupported layouts fail closed. Incomplete row pairs are not filled;
+`missing_rows_unknown=true` and `rows_complete=false` never claim complete lists.
+Row indices 0–31 are a safety bound, not an expected number of attributes.
+
+Neither a category such as goalkeeper nor a name seen in another capture binds
+these rows to a player. No historical joining, navigation-name caching, player ID,
+individual advice or provider call is added. Unrelated raw UI text is not included
+in this endpoint. Capture digests detect content changes only, never identity.
+
+### Windows manual discovery import (intermediate integration proof, not live Reader)
+
+All three endpoints require the existing local bearer token:
+
+- `POST /v1/reader/windows-discovery/import`: strict UTF-8 JSON, at most32768actual
+  bytes, exact top-level `{capture, expected_source, operator_context?}`. `capture`
+  is one complete `single_shot_raw_discovery_result` event. `expected_source` has
+  exactly `pid`, `entry_tid`, `session_id`, `bridge_sha256`, `game_sha256`, copied
+  from independently retained approved session evidence, not inferred from UI text.
+- `GET /v1/reader/windows-discovery`: returns the current in-memory manual snapshot
+  or `status=unavailable`. This does not query or refresh the game.
+- `DELETE /v1/reader/windows-discovery`: clears the snapshot and invalidates earlier
+  in-flight imports. Restarting the backend also clears it.
+
+A successful response has `status=manual_import_snapshot`,
+`import_mode=manual_single_event`, `imported_at` (server receipt time), and
+`projection`. The projection preserves `partial_display_state`, displayed position,
+exact label/value/container paths, unverified identity, null entity ID, unknown
+freshness and null capture timestamp. `imported_at` is **not** capture time. Manual
+JSON is not authenticated native evidence; source checks detect mismatches, not
+fabrication. Optional operator context remains separate and cannot supply identity.
+
+No observation/business store, default reader support, current-page live status,
+model context or native capability is promoted. Invalid authenticated imports,
+including malformed/duplicate JSON, wrong source/layout and over-size streams,
+clear earlier imported data; unauthorized requests cannot clear it. Overlapping
+imports/DELETE use a generation fence, so an old upload cannot repopulate cleared
+state. Errors do not echo raw evidence or credentials.
+
+Companion settings provide two explicit paste boxes: the event and expected source.
+No file paths, token or network options are accepted by the renderer. Raw JSON is
+preserved to backend validation. Local-invalid import attempts explicitly clear
+old server data once; a failed clear warns that prior data may remain. There is no
+startup query, background polling, auto-import or new native capture. After import,
+asking the pet `查看导入诊断` in real-service mode performs one deterministic read
+of this endpoint and returns the position display and source paths with unknown
+freshness/identity warnings. It makes no model/advice request. Ordinary queries
+and normal unsupported-reader behavior are unchanged.
+
+This is an executable **intermediate** end-to-end slice, not macOS-parity acceptance
+or a real-time MVP. Live timestamps/session invalidation, trustworthy automatic
+capture transport, wider same-capture field coverage and real packaged-app testing
+remain separate work. The synthetic proof is:
+
+```text
+python scripts/diagnostics/windows_discovery_import_e2e.py
+```
+
+It starts a temporary local reader-only HTTP service and uses the actual controlled
+Node transport and pet reader client: import invented TEST evidence, read the
+labelled position, reject duplicate raw JSON and clear previous state, reimport,
+then DELETE. No FM, Electron, private real evidence or model provider is invoked.
+
+#### Explicit goalkeeper-row0 display mode
+
+A separate optional import discriminator, `projection_mode: "goalkeeper_row0"`,
+selects the targeted-row rule. Omission retains the existing position rule; there
+is no auto-detection or fallback between modes. Settings expose an explicit selector
+with position still the default. The targeted mode requires one completed raw event
+with reason `approved_row_targets_complete`, the fixed category root, and exactly
+its three same-event category-title/row0-label/row0-value paths. The category title
+must display `守门`; the observed attribute label must belong to the existing Mac
+13-label goalkeeper whitelist; its value must be canonical1–20. Only U+200B is
+removed; whitespace changes, markup, leading zeros, ranges and missing pairs reject.
+The whitelist does not imply that row0 has any particular label.
+
+The successful projection is still `partial_display_state`, now explicitly marked
+`projection_mode=goalkeeper_row0`, with `fields.displayed_attribute` containing
+category/label/value display strings, the integer and row_index0. Provenance retains
+all three exact paths plus category/row roots and the event nonce. No player name,
+entity ID, cross-event row join, advice permission or freshness is inferred. The
+position parser is unchanged and rejects row events unless the separate mode is
+explicitly selected. Invalid row imports clear the prior snapshot as before.
+
+Settings and the deterministic pet diagnostic reply show only that one row and its
+three source paths; mixed/unsupported mode responses are not rendered. This prepares
+an end-to-end display path for an authorized native test; synthetic passing tests
+are NOT evidence that Windows has returned this row. Real label/value validity still
+requires the separate game observation. Tests use an invented rating17, never a
+private player's screenshot value. The existing local HTTP→Node smoke exercises
+both position and row mode, invalid21 rejection/clearing, and keeps all normal
+reader/business capabilities unchanged. This remains manual, non-live import until
+a separately reviewed timestamped/session-fenced live producer is implemented.

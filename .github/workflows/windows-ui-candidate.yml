@@ -1,0 +1,70 @@
+name: Windows UI staged experimental candidate (not installed)
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'modules/game-bridge/windows-ui-smoke-draft/**'
+      - 'modules/game-bridge/windows-smoke-draft/**'
+      - '.github/workflows/windows-ui-candidate.yml'
+  pull_request:
+    paths:
+      - 'modules/game-bridge/windows-ui-smoke-draft/**'
+      - 'modules/game-bridge/windows-smoke-draft/**'
+      - '.github/workflows/windows-ui-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  candidate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Pure UI policy, fake native adapter and owned-buffer tests (no game calls)
+        run: dotnet run --project modules/game-bridge/windows-ui-smoke-draft/UiDraftTests.csproj
+      - name: Verify derived-text test detects reversed assignability (temporary source copy, no game)
+        run: python modules/game-bridge/windows-ui-smoke-draft/test_assignability_mutation.py
+      - name: Metadata policy regression (no game calls)
+        run: dotnet run --project modules/game-bridge/windows-smoke-draft/DraftTests.csproj
+      - name: Build independent experimental DLL (does not invoke entrypoint)
+        run: dotnet build modules/game-bridge/windows-ui-smoke-draft/FootballAssistant.WindowsUiCandidate.csproj --configuration Release --output build/windows-ui-candidate
+      - name: Verify helper script syntax without executing them
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem modules/game-bridge/windows-ui-smoke-draft/*.ps1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+      - name: Collect explicit opt-in helpers, provenance and source
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item modules/game-bridge/windows-ui-smoke-draft/*.ps1 build/windows-ui-candidate/
+          Copy-Item modules/game-bridge/windows-ui-smoke-draft/README.md build/windows-ui-candidate/
+          New-Item -ItemType Directory build/windows-ui-candidate/source | Out-Null
+          New-Item -ItemType Directory build/windows-ui-candidate/source/modules/game-bridge -Force | Out-Null
+          $sources = git ls-files -- modules/game-bridge/windows-ui-smoke-draft modules/game-bridge/windows-smoke-draft modules/game-bridge/src
+          if ($LASTEXITCODE -ne 0 -or -not $sources) { throw 'Tracked candidate sources unavailable.' }
+          foreach ($file in $sources) {
+            $destination = Join-Path build/windows-ui-candidate/source $file
+            New-Item -ItemType Directory (Split-Path $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $file -Destination $destination
+          }
+          if (Get-ChildItem build/windows-ui-candidate/source -Directory -Recurse | Where-Object { $_.Name -in @('bin', 'obj') }) { throw 'Generated build files must not enter source bundle.' }
+          Copy-Item LICENSE build/windows-ui-candidate/source/
+          git rev-parse HEAD | Out-File build/windows-ui-candidate/source-commit.txt -Encoding utf8
+          Get-FileHash build/windows-ui-candidate/*.dll -Algorithm SHA256 | Format-List | Out-File build/windows-ui-candidate/SHA256.txt -Encoding utf8
+          if (Get-ChildItem build/windows-ui-candidate -Recurse -Include footballassistant.windows-ui.json,ui-stage-request.json) { throw 'No enabling config/request may be packaged.' }
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: WindowsUi-EXPERIMENTAL-NOT-INSTALLED
+          path: build/windows-ui-candidate/
+          if-no-files-found: error
+          retention-days: 7

@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>FootballAssistant</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>FootballAssistant · 桌宠</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main id="companion">
-    <section id="panel" aria-label="与足球伙伴聊天">
-      <header><div><span class="eyebrow">FOOTBALL ASSISTANT</span><h1>更衣室伙伴</h1></div><button id="collapse" class="icon" aria-label="收起聊天">−</button></header>
-      <div class="connection"><span id="dot" class="dot"></span><span id="connection">正在连接服务…</span><button id="reconnect" aria-label="刷新连接">↻</button></div>
-      <p id="source" class="source">等待游戏数据</p>
-      <section class="monitor" aria-label="持续数据监听"><p id="monitor-state">持续监听正在连接…</p><p id="monitor-coverage">已验证数据可用状态待更新</p><p id="monitor-note">原生包头接收不等于字段值已解码 · 业务数据仍部分待解码</p><p id="monitor-change">尚无变化记录</p><details id="monitor-diagnostics"><summary>开发诊断</summary><p id="monitor-catalogs">接口结构清单待接入</p><p id="monitor-probes">最近显式探测数据待接入</p><p id="monitor-integrity">登记完整性待接入</p></details></section>
-      <div id="messages" role="log" aria-live="polite"><p class="message assistant">我在场边等你。接通服务后，我们一起聊聊你的球队。</p></div>
-      <p id="error" role="alert" hidden></p>
-      <form id="chat-form"><label class="sr-only" for="message">给伙伴发消息</label><textarea id="message" maxlength="4000" rows="2" placeholder="聊聊今天的训练和比赛…"></textarea><button id="send" type="submit">发送 <span>↗</span></button></form>
-      <footer><label><input id="auto-speak" type="checkbox" checked> 自动朗读</label><button id="read-last" disabled>朗读回复</button><button id="stop-speech">停止</button><span id="speech-status"></span></footer>
-      <div class="settings"><button id="choose-runtime">选择连接文件</button><span>本机 · 基础记忆</span><button id="quit">退出</button></div>
+    <section id="compact-bubble" role="button" tabindex="0" aria-describedby="bubble-progress" aria-label="角色对白" hidden>
+      <svg class="bubble-fill" viewBox="0 0 1774 887" aria-hidden="true" focusable="false"><path fill="#fff" d="M46 428 C47 360 65 313 105 268 C154 203 222 148 305 113 C472 54 643 28 805 25 C935 29 1077 36 1200 46 C1321 56 1436 80 1510 125 C1543 137 1570 158 1602 190 C1671 258 1726 354 1726 424 C1730 516 1673 622 1600 683 L1726 859 L1514 737 C1256 838 633 814 315 774 C100 746 29 619 46 428Z"/></svg>
+      <img class="bubble-outline" src="assets/ui/speech-bubble.png" alt="" draggable="false" aria-hidden="true">
+      <div id="bubble-content"><div id="bubble-body"><p id="compact-text" role="status"></p></div><span id="bubble-progress" hidden></span></div>
     </section>
-    <div id="pet-wrap"><span id="pet-hint">点击聊天 · 按住拖动</span><button id="pet" aria-label="足球伙伴，点击聊天，按住拖动"><span class="ball"><i></i></span><span class="scarf"></span><span class="eye left"></span><span class="eye right"></span><span class="smile"></span><span class="foot left"></span><span class="foot right"></span></button></div>
+    <div id="pet-wrap"><button id="pet" data-expression="idle" aria-expanded="false" aria-controls="chat-form" aria-label="桌宠：单击打字，长按说话，拖动移动，右键设置"><img id="character-image" class="character-visual" alt="" draggable="false" hidden><span id="character-visual-error" hidden>角色图未载入</span></button></div>
+    <section id="input-dock" aria-label="文字输入区域"><form id="chat-form" aria-label="给桌宠发消息" hidden><label class="sr-only" for="message">消息内容</label><textarea id="message" maxlength="4000" rows="1" placeholder="输入消息…" aria-describedby="draft-note"></textarea><button id="send" type="submit" disabled aria-label="发送消息" title="发送 · Enter">↑</button></form><div id="interaction-feedback" aria-live="polite" hidden><p id="error" role="alert" hidden></p><span id="voice-status" hidden></span><button id="cancel-voice" type="button" hidden>取消</button></div><p id="draft-note" hidden>Enter 发送 · Shift + Enter 换行</p></section>
   </main>
+  <script src="appearance.js"></script>
+  <script src="ui-state.js"></script>
+  <script src="bubble-segments.js"></script>
+  <script src="character-scene.js"></script>
+  <script src="pet-motion.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

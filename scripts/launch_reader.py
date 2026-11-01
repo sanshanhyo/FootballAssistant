@@ -18,6 +18,7 @@ import time
 from football_assistant_data.config import ROOT, Settings
 from football_assistant_data.reader_client import ReaderClient, ReaderError, default_runtime_file
 from football_assistant_data.reader_cli import main as console_main
+from football_assistant_data.process_utils import process_is_alive
 
 
 def ensure_service(runtime_file: Path,*,start: bool):
@@ -35,9 +36,8 @@ def ensure_service(runtime_file: Path,*,start: bool):
         try:
             pid = json.loads(runtime_file.read_text()).get("pid")
             if isinstance(pid,int) and pid>0:
-                try:os.kill(pid,0)
-                except ProcessLookupError:pass
-                else:raise ReaderError("service_unresponsive","Existing service process is alive; leaving it untouched.")
+                if process_is_alive(pid):
+                    raise ReaderError("service_unresponsive","Existing service process is alive; leaving it untouched.")
         except (OSError,ValueError,TypeError,AttributeError):
             pass
     with socket.socket() as probe:

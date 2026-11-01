@@ -10,7 +10,7 @@ namespace Doorstop;
 // remains available separately; this path needs no generated Unity assemblies.
 public static class Entrypoint
 {
-    private static BridgeRuntime? runtime;
+    private static IDisposable? runtime;
     private static int started;
 
     public static void Start()
@@ -18,7 +18,8 @@ public static class Entrypoint
         if (Interlocked.Exchange(ref started, 1) != 0) return;
         try
         {
-            runtime = new BridgeRuntime();
+            // Windows is permanently probe-only in this candidate. No environment switch enables reads.
+            runtime = OperatingSystem.IsWindows() ? new WindowsProbeRuntime() : new BridgeRuntime();
             AppDomain.CurrentDomain.ProcessExit += (_, _) => Stop();
         }
         catch (Exception error) { Console.Error.WriteLine($"[FootballAssistant] Startup unavailable ({error.GetType().Name}: {error.Message})"); }
@@ -41,6 +42,8 @@ internal sealed class BridgeRuntime : IDisposable
     private readonly string gameAssembly;
     private readonly string sessionId = Guid.NewGuid().ToString();
     private NativeUiReader? reader;
+    private readonly UiCaptureControl uiControl;
+    private readonly CancellationTokenSource uiControlStop = new();
     private int failures;
     private bool mainThreadLogged;
     private int disposed;
@@ -50,6 +53,7 @@ internal sealed class BridgeRuntime : IDisposable
 
     public BridgeRuntime()
     {
+        if (OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows candidate is probe-only; UI reads are disabled.");
         privateRoot = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_PRIVATE_ROOT") ?? throw new InvalidOperationException("Explicit private root is required.");
         managedBuildSha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(Entrypoint).Assembly.Location))).ToLowerInvariant();
         var runtimeFile = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_RUNTIME_FILE") ?? throw new InvalidOperationException("Explicit runtime connection file is required.");
@@ -85,7 +89,9 @@ internal sealed class BridgeRuntime : IDisposable
             native_packet_abi_version = nativePackets is null ? (int?)null : 1,
             native_observer_enabled = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_ENABLE_NATIVE_OBSERVER") == "1"
         }));
+        uiControl = new UiCaptureControl(privateRoot, Environment.ProcessId, sessionId, managedBuildSha);
         scheduler = new MacMainThreadTimer(Capture);
+        _ = Task.Run(PollUiControl);
         Trace($"Own CoreCLR entry started; pid={Environment.ProcessId}; scheduler=CF-main-runloop; session={sessionId}.");
     }
 
@@ -105,11 +111,13 @@ internal sealed class BridgeRuntime : IDisposable
                 try { nativeObserver.InstallAtMainMenuCheckpoint(); }
                 catch (Exception error) { Trace("Native observer explicit checkpoint failed (" + error.GetType().Name + "); other readers continue."); }
             }
-            var text = reader.Capture();
-            if (text.Count == 0) Trace("Capture: no eligible UI tree text yet; no empty fact set published.");
+            var selection = uiControl.BeginCapture(DateTimeOffset.UtcNow);
+            var text = reader.Capture(selection);
+            if (text is UiCapture capture) uiControl.CompleteCapture(selection, capture, DateTimeOffset.UtcNow);
+            if (text.Count == 0 && text is not UiCapture) Trace("Capture: no eligible UI tree text yet; no empty fact set published.");
             else
             {
-                var build = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_BUILD") ?? reader.ReadApplicationVersion();
+                var build = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_GAME_BUILD") ?? (text.Count > 0 ? reader.ReadApplicationVersion() : null);
                 var observation = ObservationFactory.Create(text, build, sessionId);
                 var queued = publisher.Offer(observation);
                 Trace($"Capture: raw_ui_tree_text_count={text.Count}; queued={queued}; partial=true; user_visibility_not_guaranteed.");
@@ -130,6 +138,22 @@ internal sealed class BridgeRuntime : IDisposable
             Trace($"Capture unavailable ({error.GetType().Name}: {error.Message}); consecutive_failures={failures}.");
         }
         finally { Monitor.Exit(captureGate); }
+    }
+
+    // Independent of native observer and of the UI thread; never schedules an extra capture.
+    private async Task PollUiControl()
+    {
+        while (!uiControlStop.IsCancellationRequested)
+        {
+            try
+            {
+                uiControl.Poll(DateTimeOffset.UtcNow);
+                uiControl.WriteStatus();
+            }
+            catch (Exception error) { Trace("UI control status unavailable (" + error.GetType().Name + ")."); }
+            try { await Task.Delay(1000, uiControlStop.Token); }
+            catch (OperationCanceledException) { break; }
+        }
     }
 
     private async Task DrainNativeObserver()
@@ -176,6 +200,7 @@ internal sealed class BridgeRuntime : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        uiControlStop.Cancel();
         scheduler.Dispose();
         nativeObserver?.StopCapture();
         publisher.Dispose();

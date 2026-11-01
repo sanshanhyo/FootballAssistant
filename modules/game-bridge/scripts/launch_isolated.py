@@ -18,11 +18,17 @@ PRIVATE = REPO / "local-game/fm27-runtime"
 GAME = Path("/Users/husky/Library/Application Support/Steam/steamapps/common/Football Manager 27/fm.app")
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    global PRIVATE, GAME
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch", action="store_true", help="Launch exactly one private game instance after explicit user approval")
     parser.add_argument("--native-observer", action="store_true", help="Enable reviewed header-only native observer at the fresh main-menu checkpoint")
-    args = parser.parse_args()
+    parser.add_argument("--game-path", type=Path, default=GAME)
+    parser.add_argument("--private-root", type=Path, default=PRIVATE)
+    parser.add_argument("--runtime-file", type=Path, default=REPO / "local-data/runtime.json")
+    args = parser.parse_args(argv)
+    GAME = args.game_path.expanduser().absolute()
+    PRIVATE = args.private_root.expanduser().absolute()
     manifest_path = PRIVATE / "preparation.json"
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise ValueError("Private preparation manifest is missing")
@@ -56,7 +62,7 @@ def main() -> None:
         path = PRIVATE / "BepInEx/core" / name
         if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
             raise ValueError("Reviewed compatibility core changed")
-    runtime_file = REPO / "local-data/runtime.json"
+    runtime_file = args.runtime_file.expanduser().absolute()
     if not runtime_file.is_file():
         raise ValueError("Start the backend before the isolated game")
     attempt = PRIVATE / "logs" / datetime.now(timezone.utc).strftime("attempt-%Y%m%dT%H%M%S%fZ")

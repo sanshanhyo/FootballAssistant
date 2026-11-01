@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>FootballAssistant.WindowsFiniteRowsCandidate</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="FiniteRowsCandidateEntrypoint.cs" />
+    <Compile Include="FiniteRowsCandidateHost.cs" />
+    <Compile Include="FiniteRowsCandidateConfiguration.cs" /><Compile Include="FiniteRowsPolicy.cs" />
+    <Compile Include="GroupedDiscoveryValidation.cs" />
+    <Compile Include="DiscoveryCandidateConfiguration.cs" />
+    <Compile Include="DiscoveryPolicy.cs" /><Compile Include="DiscoveryCollector.cs" />
+    <Compile Include="TargetedDiscoveryCollector.cs" /><Compile Include="AttributeRowSelection.cs" />
+    <Compile Include="FiniteCaptureSelection.cs" /><Compile Include="PageDiscoveryValidation.cs" />
+    <Compile Include="BatchNativeBackend.cs" /><Compile Include="WindowsLoadedModuleLease.Discovery.cs" />
+    <Compile Include="../windows-ui-smoke-draft/WindowsSmokeReader.cs" Link="WindowsSmokeReader.cs" />
+    <Compile Include="../windows-smoke-draft/WindowsSmokePolicy.cs" Link="WindowsSmokePolicy.cs" />
+    <Compile Include="../windows-smoke-draft/WindowsLoadedModuleLease.cs" Link="WindowsLoadedModuleLease.cs" />
+    <Compile Include="../windows-smoke-draft/MetadataSmoke.cs" Link="MetadataSmoke.cs" />
+    <Compile Include="../src/MainThreadGuard.cs" Link="MainThreadGuard.cs" />
+    <Compile Include="../src/WindowsProbeScheduler.cs" Link="WindowsProbeScheduler.cs" />
+    <Compile Include="../src/WindowsProbeConfiguration.cs" Link="WindowsProbeConfiguration.cs" />
+  </ItemGroup>
+</Project>
+

@@ -1,19 +1,24 @@
 {
   "name": "football-assistant-companion",
-  "version": "0.1.0",
+  "version": "0.0.1-alpha.1",
   "private": true,
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
+  "license": "MIT",
   "main": "src/main.cjs",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
-    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/renderer.js && npm test",
-    "pack:mac": "electron-builder --mac dir --arm64",
-    "pack:win": "electron-builder --win zip --x64"
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/character.cjs && node --check src/renderer.js && node --check src/settings.js && npm test",
+    "pack:mac": "electron-builder --mac dir --arm64 --publish never && node packaging/sign-mac-adhoc.cjs",
+    "pack:win": "electron-builder --win nsis portable --x64 --publish never",
+    "build:stt": "python packaging/build-local-stt.py"
   },
   "devDependencies": {
+    "@electron/osx-sign": "1.3.3",
     "electron": "45.1.0",
     "electron-builder": "26.18.0"
   },
@@ -22,9 +27,109 @@
     "productName": "FootballAssistant",
     "artifactName": "FootballAssistant-${version}-${os}-${arch}.${ext}",
     "asar": true,
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "THIRD_PARTY.md", "package.json"],
-    "mac": { "target": ["dir"], "category": "public.app-category.games", "identity": null },
-    "win": { "target": [{ "target": "zip", "arch": ["x64"] }], "signAndEditExecutable": false }
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "THIRD_PARTY.md",
+      "package.json",
+      "!**/.env*",
+      "!**/runtime.json",
+      "!**/local-data/**",
+      "!**/local-game/**",
+      "!**/*.db",
+      "!**/*.sqlite*",
+      "!**/*.log",
+      "!**/*.fm",
+      "!**/*.fms",
+      "packaging/assets/icon.png"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.games",
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "\u6309\u4f4f\u684c\u5ba0\u65f6\u4f7f\u7528\u9ea6\u514b\u98ce\uff0c\u5c06\u4f60\u7684\u8bed\u97f3\u8f6c\u6362\u6210\u6587\u5b57\u3002"
+      },
+      "icon": "packaging/assets/icon.png"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "packaging/assets/icon.png",
+      "signExecutable": false
+    },
+    "extraResources": [
+      { "from": "../../LICENSE", "to": "LICENSE" },
+      { "from": "../../LICENSE-SCOPE.md", "to": "LICENSE-SCOPE.md" },
+      {
+        "from": "../../build/desktop-backend/football-assistant-backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!**/.env*",
+          "!**/runtime.json",
+          "!**/*.log",
+          "!**/local-data/**",
+          "!**/local-game/**",
+          "!**/*.db",
+          "!**/*.sqlite*",
+          "!**/*.fm",
+          "!**/*.fms",
+          "!**/model-config.json",
+          "!**/credentials*.json",
+          "!**/settings.json"
+        ]
+      },
+      {
+        "from": "local-stt",
+        "to": "local-stt",
+        "filter": [
+          "whisper-cli",
+          "whisper-cli.exe",
+          "ggml-tiny-q5_1.bin",
+          "manifest.json",
+          "*-LICENSE.txt"
+        ]
+      }
+    ],
+    "nsis": {
+      "artifactName": "FootballAssistant-${version}-Setup-${arch}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false,
+      "include": "packaging/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "FootballAssistant-${version}-Portable-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sanshanhyo",
+      "repo": "FootballAssistant",
+      "releaseType": "prerelease"
+    },
+    "icon": "packaging/assets/icon.png"
+  },
+  "dependencies": {
+    "electron-updater": "6.6.2"
   }
 }
