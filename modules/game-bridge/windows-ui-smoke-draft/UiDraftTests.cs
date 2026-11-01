@@ -335,14 +335,37 @@ foreach (var panelCount in new[] { -1, 0, 1025 })
     Check(outcome.Coverage!.PanelCount == (panelCount == 0 ? 0 : -1) && outcome.Coverage.SelectedPanelIndex == -1 &&
         fixture.PanelIndices.Count == 0, "only validated panel counts are recorded; zero differs from unknown/invalid");
 }
-using (var tooDeep = new NativeUiAdapterFixture { TextDepth = 9 })
+// Depth is root-relative (root = 0). The previous depth9 omission is now reachable,
+// depth12 itself remains eligible, and children below depth12 are still pruned.
+foreach (var textDepth in new[] { 9, 12 })
+{
+    using var fixture = new NativeUiAdapterFixture { TextDepth = textDepth };
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), fixture.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var guards = 0;
+    var outcome = WindowsSmokeReader.ReadOne(b, () => guards++, () => 0);
+    Check(outcome.Text == "fixture-native-path" && outcome.StopReason == "one_text" &&
+        outcome.Nodes == textDepth + 1 && outcome.Coverage!.Nodes[textDepth].Depth == textDepth &&
+        outcome.Coverage.Nodes.Take(outcome.Nodes).All(n => n.DepthPruned == 0),
+        "depth9 and inclusive depth12 text are reachable under the new depth limit");
+    Check(outcome.NativeOperations <= 384 && fixture.RootCreates <= 64 &&
+        fixture.Invocations.Count(n => n == "get_text") == 1 && fixture.PanelIndices.SequenceEqual(new[] { 0 }) &&
+        guards == outcome.Diagnostics!.Stages.Sum(stage => stage.GuardCalls),
+        "deeper traversal retains operation/root caps, one panel/getter and every recorded fresh guard");
+    b.Dispose();
+    Check(fixture.LiveRoots == 0 && fixture.RootFrees == fixture.RootCreates,
+        "deeper traversal frees all temporary roots");
+}
+using (var tooDeep = new NativeUiAdapterFixture { TextDepth = 13 })
 {
     using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), tooDeep.Bind);
     WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
     var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
-    Check(outcome.Text is null && outcome.StopReason == "bounded_no_text" && outcome.Nodes == 9 &&
-        outcome.Coverage!.Nodes[8] is { Depth: 8, TextType: 2, ChildCountBucket: 1, DepthPruned: 1 } &&
-        !tooDeep.Invocations.Contains("get_text"), "depth9 text stays unreachable with unchanged depth8 limit");
+    Check(outcome.Text is null && outcome.StopReason == "bounded_no_text" && outcome.Nodes == 13 &&
+        outcome.Coverage!.Nodes[12] is { Depth: 12, TextType: 2, ChildCountBucket: 1, DepthPruned: 1 } &&
+        outcome.Coverage.Nodes.Take(12).All(n => n.DepthPruned == 0) &&
+        outcome.NativeOperations <= 384 && tooDeep.RootCreates <= 64 &&
+        !tooDeep.Invocations.Contains("get_text"), "depth13 text remains unreachable at the inclusive depth12 boundary");
 }
 var ninthChild = new FakeBackend { Children = 9, OnlyTextChildIndex = 8 };
 var tooWide = Read(ninthChild);
@@ -401,7 +424,7 @@ var replacementResult = WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(),
     () => now, elapsedForTest: () => 0);
 Check(replacementBackend.ResolvedPanelIndex == 1 && replacementResult?.Coverage?.RequestedPanelIndex == 1 &&
     replacedRequest.PanelIndex == 0, "request replacement after consumption cannot redirect immutable grant selection");
-foreach (var index in new[] { 1, 31 })
+foreach (var index in new[] { 1, 4, 31 })
 {
     using var f = new NativeUiAdapterFixture { PanelCount = index + 1, TextOnlyInSecondPanel = true };
     using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), f.Bind);

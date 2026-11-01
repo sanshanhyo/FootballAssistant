@@ -59,5 +59,5 @@ Move-Item -LiteralPath ($path + '.tmp') -Destination $path -Force
 Write-Output "Wrote one 30-second $Stage request for PID $($session.pid), session $($session.session_id). No subsequent stage is automatic."
 if ($Stage -eq 'ui_text') {
     Write-Output "Requested panel index: $PanelIndex. One panel only; unavailable index is terminal, with no fallback."
-    Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 8, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
+    Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 12, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
 }

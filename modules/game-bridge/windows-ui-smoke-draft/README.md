@@ -27,7 +27,7 @@ been read by this candidate; fake tests do not establish game success.
 5. Reconfirm the stable page and explicitly request `-Stage ui_text`. Omitted `-PanelIndex`
    preserves panel 0. Only after a particular index is authorized, add `-PanelIndex N`
    (canonical integer 0..31) to request exactly that one panel. One capture is allowed:
-   250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth8,
+   250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth12,
    8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
    retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
 
@@ -44,9 +44,23 @@ Cleanup is mandatory outside the sampling cap: up to64 root frees, before module
 `no_eligible_text`, `bounded_no_text`, budget and `backend_failure` are distinct; none means
 that the game contains no data. Only a nonempty returned text is an actual field result.
 
-## Authorized one-shot 250ms capture experiment
+## Authorized one-shot panel4 / depth12 capture experiment
 
-For this explicitly authorized experiment, only the capture soft elapsed cap changes
+The latest authorized experiment changes only the candidate capture depth limit from
+8 to 12 (root depth is 0; depth12 is eligible, depth13 is pruned). It selects exactly
+panel index4 through the existing immutable one-shot request/grant, with no fallback
+or iteration over other panels. For this test, invoke the helper with explicit `-Stage ui_text -PanelIndex 4`;
+the backwards-compatible default panel index remains0, not an authorization to test it.
+The 250ms soft elapsed cap, 384 reserved units, 32 nodes, first8 children per node,
+64 temporary roots, 128 UTF-16 units and every fresh ownership/grant check are unchanged.
+Resolve-only warm-up remains250ms/2048 units. Diagnostics and terminal one-shot behavior
+remain enabled. No automatic retry is introduced; root coordinates the single authorized
+test after review and CI. This does not promise text: operation/root/time caps can still
+stop before a deeper node is reached, and panel order has no semantic screen guarantee.
+
+### Earlier one-shot 250ms capture experiment
+
+In that earlier explicitly authorized experiment, only the capture soft elapsed cap changed
 from 100 to 250ms. The 384 reserved-unit limit, one panel, 32 nodes, depth8,
 8 children/node, 64 temporary roots, 128 UTF-16 units and every fresh ownership/grant
 check remain unchanged. Resolve-only warm-up remains 250ms/2048 units. Diagnostics
@@ -69,7 +83,7 @@ Before the later type-first optimization, cache-hit visible/bounds/type checks c
 about27 per non-text ancestor/edge, then about24 for a text leaf, plus initial panel and
 cold method lookup. Thus128 was not enough for a depth8 diagnostic. The384 cap is not
 a promise of32 nodes: the independent64-root cap can stop earlier. Root/node/depth/
-children/panel/string limits stay unchanged. The
+children/panel/string limits stayed unchanged in that earlier revision. The
 failed session remains terminal; deploy only through the coordinated normal restart and
 new session/three requests. No automatic retry is introduced.
 
@@ -141,7 +155,7 @@ observer, packet, network publisher or broad runtime reflection in this adapter.
 
 Both staged operations start their stopwatch BEFORE their work. Every native export/invoke/
 memory read in the adapter calls BeforeNative (not once around a multi-call method).
-It caps one panel, 32 nodes, depth 8, 8 children/node, one text of 128 code units; lazy DFS
+It caps one panel, 32 nodes, depth 12, 8 children/node, one text of 128 code units; lazy DFS
 obtains one child at a time rather than eagerly fetching all siblings. Capture
 budget is 250ms soft elapsed / 384 reserved native boundary units, explicitly a conservative experiment,
 not proof that cold resolution will fit. Results record elapsed, stopped stage, operation/
@@ -251,7 +265,7 @@ that planned index, not proof that its item/root was successfully obtained.
 Neither multiple panels nor diagnostic incompleteness authorizes a fallback/retry.
 
 `NodesRecorded` marks the populated prefix of the fixed 32-slot `Nodes` array. Unused
-slots have `Depth = -1`; populated depths are 0..8. Numeric states are:
+slots have `Depth = -1`; populated depths are 0..12. Numeric states are:
 
 - `Visibility` and `TextType`: 0 not started, 1 incomplete, 2 false, 3 true.
 - `ChildCountState`: 0 not started, 1 incomplete, 2 completed.
@@ -264,7 +278,7 @@ included. All limits and terminal one-shot behavior stay unchanged. Timing still
 diagnostic work up to its existing endpoint; no overhead is subtracted from the budget.
 
 Offline fixtures cover a derived-text class with asymmetric assignability, text solely in
-a second panel, depth9 and child-index8 omissions, validated-zero versus unknown panel
+a second panel, reachable depth9/depth12 text, depth13 and child-index8 omissions, validated-zero versus unknown panel
 counts, partial checks, and unchanged reservation/fresh-guard counts. CI additionally runs
 `test_assignability_mutation.py` after normal tests: it swaps the arguments in a temporary
 source copy and requires failure at the derived-text assertion, not an unrelated build

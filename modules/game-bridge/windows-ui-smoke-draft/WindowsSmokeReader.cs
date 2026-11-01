@@ -49,7 +49,7 @@ internal sealed class UiCoverageCollector
     internal void Type(int slot, bool value) => nodes[slot] = nodes[slot] with { TextType = value ? 3 : 2 };
     internal void BeginChildren(int slot) => nodes[slot] = nodes[slot] with { ChildCountState = 1 };
     internal void Children(int slot, int count, int depth) => nodes[slot] = nodes[slot] with
-    { ChildCountState = 2, ChildCountBucket = Math.Min(count, 9), DepthPruned = depth >= 8 && count > 0 ? 1 : 0,
+    { ChildCountState = 2, ChildCountBucket = Math.Min(count, 9), DepthPruned = depth >= 12 && count > 0 ? 1 : 0,
       ChildrenTruncated = count > 8 ? 1 : 0 };
     internal UiSmokeCoverage Snapshot() => new(1, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray(), requestedPanelIndex);
 }
@@ -241,7 +241,7 @@ internal static class WindowsSmokeReader
                     var count = backend.ChildCount(frame.Element, budget);
                     if (count < 0) throw new InvalidOperationException("Negative child count rejected.");
                     coverage.Children(slot, count, frame.Depth);
-                    if (frame.Depth >= 8) { bounded |= count > 0; continue; }
+                    if (frame.Depth >= 12) { bounded |= count > 0; continue; }
                     bounded |= count > 8;
                     frame = (frame.Element, frame.Depth, 0, Math.Min(count, 8));
                 }
