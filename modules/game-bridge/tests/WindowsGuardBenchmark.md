@@ -18,8 +18,14 @@ timing lines. Each fixture also compares its owned-window evidence against produ
 
 ## Fixtures and limitations
 
-Each process creates 1, 8, then 31 owned top-level popup windows. One is visible,
-the rest hidden. Native checks verify duplicate-visible rejection and wrong-thread
+Each process creates 1, 8, then 29 fixture top-level popup windows. One is visible,
+the rest hidden. Other same-process windows may exist (the first CI measured three
+owned windows with one fixture). Every fixture HWND must be present in the complete
+scan, and all other same-process rows still participate in policy checks. The fixture
+count is `fixture_windows`; actual totals are `owned_min` / `owned_max`. Using 29
+fixtures leaves room for the two observed auxiliary windows without changing the
+production 32-window bound. Extra windows beyond that bound fail closed.
+Native checks verify duplicate-visible rejection and wrong-thread
 rejection and the 32-owned-window bound; existing `UiDraftTests.cs` retains the synthetic failure/ambiguity matrix.
 All windows are destroyed on exit. No external windows are changed. As in production,
 full desktop enumeration queries each visited window's owner but retains details only
@@ -70,3 +76,8 @@ Unsupported runs exit 2 and fail the CI step explicitly, not silently pass. Exce
 are not dumped because their paths/details are outside the numeric output contract.
 `mode`: 0 baseline, 1 instrumented. Failed runs may contain completed earlier scenarios;
 never treat them as a full pass. No performance threshold or speculative speedup claim.
+
+`failure_stage`: 1 fixture creation, 2 initial scan, 3 initial assertion, 4 policy/batches.
+`initial_observation` is a fixed numeric array: requested fixture count, scan-complete,
+primary found, owner stable, class complete, visible, rectangle available, width,
+height, total owned count, primary thread match. Flags are 0/1; no identities are output.

@@ -14,7 +14,7 @@ try
 {
     if (mode < 0) throw new BenchmarkFailure(1);
     if (!OperatingSystem.IsWindows()) throw new BenchmarkFailure(2);
-    foreach (var windowCount in new[] { 1, 8, 31 })
+    foreach (var windowCount in new[] { 1, 8, 29 })
     {
         failureStage = 1;
         using var windows = new OwnedWindows(windowCount);
@@ -36,7 +36,7 @@ try
             own?.ClientWidth ?? -1, own?.ClientHeight ?? -1, first.WindowScanCount, own?.OwnerTid == tid ? 1 : 0 };
         Require(first.WindowScanStatus == "complete" && own is { OwnerStable: true, ClassNameComplete: true,
             VisibleStyle: true, ClientRectAvailable: true, ClientWidth: > 0, ClientHeight: > 0 } &&
-            first.WindowScanCount == windowCount && own.OwnerTid == tid, 2);
+            windows.AllPresent(first) && first.WindowScanCount < 32 && own.OwnerTid == tid, 2);
         failureStage = 4;
         var context = new SmokeContext(Environment.ProcessId, "own-window-benchmark", new string('a', 64),
             new string('b', 64), own!.ClassName!, tid);
@@ -98,21 +98,21 @@ try
         if (windowCount > 1)
         {
             var duplicate = Read();
-            Require(duplicate.WindowScanStatus == "complete" && duplicate.WindowScanCount == windowCount &&
+            Require(duplicate.WindowScanStatus == "complete" && windows.AllPresent(duplicate) && duplicate.WindowScanCount < 32 &&
                 duplicate.WindowCandidates!.Count(x => x.ClassName == context.ConfirmedWindowClass && x.VisibleStyle &&
                     x.OwnerStable && x.ClientRectAvailable && x.ClientWidth > 0 && x.ClientHeight > 0) == 2 &&
                 policy.SelectWindow(duplicate) is null, 5);
         }
         windows.HideSecond();
         var workerIdentity = Task.Run(() => MainThreadGuard.ReadWindowsScanIdentity(tid)).GetAwaiter().GetResult();
-        Require(workerIdentity.WindowScanStatus == "complete" && workerIdentity.WindowScanCount == windowCount &&
+        Require(workerIdentity.WindowScanStatus == "complete" && windows.AllPresent(workerIdentity) && workerIdentity.WindowScanCount < 32 &&
             workerIdentity.CurrentThreadId != tid && workerIdentity.InstallerThreadId == tid &&
             workerIdentity.ProcessId == (uint)Environment.ProcessId && policy.SelectWindow(workerIdentity) is null &&
             policy.SelectWindow(workerIdentity with { CurrentThreadId = tid }) == windows.Primary.ToInt64(), 5);
         policy.CompleteResolve(grant!, true);
         results.Add(new
         {
-            owned_windows = windowCount, samples, first_identity_us = Microseconds(firstTicks),
+            fixture_windows = windowCount, samples, first_identity_us = Microseconds(firstTicks),
             first_policy_us = Microseconds(firstPolicyTicks), process_cold = windowCount == 1 ? 1 : 0,
             identity = Summary(identityTicks), grant = Summary(grantTicks), policy = Summary(policyTicks),
             full_guard = Summary(fullTicks), loop_allocated_bytes = allocated,
@@ -155,6 +155,11 @@ sealed class OwnedWindows : IDisposable
 {
     private readonly List<nint> windows = new();
     internal nint Primary => windows[0];
+    // Runtime/desktop helpers may create other same-process windows. Never filter
+    // them from the collector or policy: verify our fixture rows without assuming
+    // that fixture count equals the complete same-process enumeration count.
+    internal bool AllPresent(WindowsThreadIdentity identity) => identity.WindowCandidates is not null &&
+        windows.All(window => identity.WindowCandidates.Any(row => row.Hwnd == window.ToInt64() && row.OwnerStable));
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint CreateWindowExW(uint exStyle, string className, string title, uint style,
         int x, int y, int width, int height, nint parent, nint menu, nint instance, nint parameter);
