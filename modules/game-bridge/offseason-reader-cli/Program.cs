@@ -28,8 +28,9 @@ try
         }
         var team = clubUid > 0 ? TeamCandidateLookup.Read(pid, clubUid) : null;
         var schedule = clubUid > 0 ? ScheduleCandidateLookup.Read(pid, clubUid) : null;
+        var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid) : null;
         if (date.Status != "experimental" && person?.Status != "experimental" &&
-            team?.Status != "experimental_candidates_incomplete" && schedule?.Status != "experimental_records_unverified")
+            team?.Status != "experimental_candidates_incomplete" && schedule?.Status != "experimental_records_unverified" && managerCandidates?.Status != "experimental_candidates_incomplete")
         {
             Console.WriteLine(JsonSerializer.Serialize(new { schema = "fa-offseason/0.1", status = "unavailable", reason = "no_current_data", capturedAt = DateTimeOffset.UtcNow }));
             return 0;
@@ -37,7 +38,7 @@ try
         Console.WriteLine(JsonSerializer.Serialize(new {
             schema = "fa-offseason/0.1", status = "partial", capturedAt = DateTimeOffset.UtcNow,
             date, player = person is null ? null : new { observedAt = personObservedAt, value = person }, manager = new { status = "unknown", reason = "active_manager_not_identified" },
-            team, schedule
+            managerCandidates, team, schedule
         }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
         return 0;
     }
