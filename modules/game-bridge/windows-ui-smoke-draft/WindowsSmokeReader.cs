@@ -10,7 +10,7 @@ internal readonly record struct UiSmokeBounds(float X, float Y, float Width, flo
 }
 internal sealed record UiResolveResult(bool Success, string StopReason, double ElapsedMs, string StoppedStage, int NativeOperations, UiSmokeDiagnostics? Diagnostics = null);
 internal sealed record UiSmokeResult(string? Text, string StopReason, int Nodes, int NativeOperations,
-    double ElapsedMs, string StoppedStage, bool RootResolved, bool TextGetterSucceeded, string? ErrorType = null, UiSmokeDiagnostics? Diagnostics = null);
+    double ElapsedMs, string StoppedStage, bool RootResolved, bool TextGetterSucceeded, string? ErrorType = null, UiSmokeDiagnostics? Diagnostics = null, UiSmokeCoverage? Coverage = null);
 internal sealed class UiSmokeStopped : Exception { internal UiSmokeStopped(string reason) : base(reason) { } }
 
 // Fixed allowlisted labels and numeric aggregates only: never object identities, text or paths.
@@ -19,6 +19,38 @@ internal sealed class UiSmokeStopped : Exception { internal UiSmokeStopped(strin
 internal sealed record UiSmokeStageDiagnostics(string Stage, int Intervals, double TotalMs, double MaxMs,
     int PrechecksCompleted, int PrechecksFailed, int GuardCalls, int GuardFailures, double GuardTotalMs, double GuardMaxMs);
 internal sealed record UiSmokeDiagnostics(int SchemaVersion, double ElapsedMs, UiSmokeStageDiagnostics[] Stages);
+
+// Numeric-only coverage; fixed slots, no names, text, pointers or paths.
+// Visibility/TextType: 0 not started, 1 incomplete, 2 false, 3 true.
+// ChildCountState: 0 not started, 1 incomplete, 2 completed.
+// ChildCountBucket: -1 unknown; 0..8 exact; 9 means >8.
+internal readonly record struct UiNodeCoverage(int Depth, int Visibility, int TextType,
+    int ChildCountState, int ChildCountBucket, int DepthPruned, int ChildrenTruncated);
+internal sealed record UiSmokeCoverage(int SchemaVersion, int PanelCount, int SelectedPanelIndex,
+    int NodesRecorded, UiNodeCoverage[] Nodes);
+internal sealed class UiCoverageCollector
+{
+    private readonly UiNodeCoverage[] nodes = new UiNodeCoverage[32];
+    private int panelCount = -1, selectedPanelIndex = -1, nodesRecorded;
+    internal UiCoverageCollector()
+    {
+        for (var i = 0; i < nodes.Length; i++) nodes[i] = new(-1, 0, 0, 0, -1, 0, 0);
+    }
+    // Called only AFTER the adapter has read and validated the existing count getter.
+    // -1 means unknown/not read; 0 is reserved for an actual validated empty list.
+    internal void RecordPanels(int count)
+    { panelCount = count; selectedPanelIndex = count > 0 ? 0 : -1; }
+    internal void BeginNode(int slot, int depth)
+    { nodes[slot] = new(depth, 1, 0, 0, -1, 0, 0); nodesRecorded++; }
+    internal void Visible(int slot, bool value) => nodes[slot] = nodes[slot] with { Visibility = value ? 3 : 2 };
+    internal void BeginType(int slot) => nodes[slot] = nodes[slot] with { TextType = 1 };
+    internal void Type(int slot, bool value) => nodes[slot] = nodes[slot] with { TextType = value ? 3 : 2 };
+    internal void BeginChildren(int slot) => nodes[slot] = nodes[slot] with { ChildCountState = 1 };
+    internal void Children(int slot, int count, int depth) => nodes[slot] = nodes[slot] with
+    { ChildCountState = 2, ChildCountBucket = Math.Min(count, 9), DepthPruned = depth >= 8 && count > 0 ? 1 : 0,
+      ChildrenTruncated = count > 8 ? 1 : 0 };
+    internal UiSmokeCoverage Snapshot() => new(1, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray());
+}
 
 // Every export/invoke/memory access retains its existing fresh gate and reservation.
 internal sealed class UiSmokeBudget
@@ -38,6 +70,7 @@ internal sealed class UiSmokeBudget
     private readonly int maximumOperations;
     private int stageIndex;
     private double stageStarted; // Stopwatch starts before budget construction; account for setup too.
+    internal UiCoverageCollector? Coverage { get; }
     internal int Operations { get; private set; }
     internal string Stage
     {
@@ -59,8 +92,8 @@ internal sealed class UiSmokeBudget
     }
     internal double ElapsedMs => elapsedMilliseconds();
     internal UiSmokeBudget(Func<double> elapsedMilliseconds, Action verifyGrantAndWindow,
-        double maximumMilliseconds = 250, int maximumOperations = 384)
-    { this.elapsedMilliseconds = elapsedMilliseconds; this.verifyGrantAndWindow = verifyGrantAndWindow;
+        double maximumMilliseconds = 250, int maximumOperations = 384, UiCoverageCollector? coverage = null)
+    { Coverage = coverage; this.elapsedMilliseconds = elapsedMilliseconds; this.verifyGrantAndWindow = verifyGrantAndWindow;
       this.maximumMilliseconds = maximumMilliseconds; this.maximumOperations = maximumOperations; }
     internal void Check()
     {
@@ -144,7 +177,9 @@ internal static class WindowsSmokeReader
         Func<double>? elapsedForTest = null)
     {
         var watch = Stopwatch.StartNew(); // Includes all class/getter/panel resolution.
-        var budget = new UiSmokeBudget(elapsedForTest ?? (() => watch.Elapsed.TotalMilliseconds), verifyGrantAndWindow);
+        var coverage = new UiCoverageCollector(); // Allocate all 32 slots before obtaining any runtime object.
+        var budget = new UiSmokeBudget(elapsedForTest ?? (() => watch.Elapsed.TotalMilliseconds), verifyGrantAndWindow,
+            coverage: coverage);
         var nodes = 0;
         var bounded = false;
         var rootResolved = false;
@@ -153,7 +188,7 @@ internal static class WindowsSmokeReader
         {
             var diagnostics = budget.Snapshot();
             return new(text, reason, nodes, budget.Operations, diagnostics.ElapsedMs, budget.Stage,
-                rootResolved, textGetterSucceeded, errorType, diagnostics);
+                rootResolved, textGetterSucceeded, errorType, diagnostics, coverage.Snapshot());
         }
         try
         {
@@ -172,13 +207,19 @@ internal static class WindowsSmokeReader
                 if (frame.NextChild < 0)
                 {
                     if (nodes >= 32) return Finish(null, "node_budget");
-                    nodes++;
+                    var slot = nodes++;
+                    coverage.BeginNode(slot, frame.Depth);
                     budget.Stage = "visible";
-                    if (!backend.Visible(frame.Element, budget)) continue; // Hidden ancestors prune descendants.
+                    var visible = backend.Visible(frame.Element, budget);
+                    coverage.Visible(slot, visible);
+                    if (!visible) continue; // Hidden ancestors prune descendants.
                     // Bounds gate text only, not descendant traversal. Avoid a boxed Rect getter
                     // and temporary GC root for non-text containers; retain every native gate.
                     budget.Stage = "text_type";
-                    if (backend.IsTextElement(frame.Element, budget))
+                    coverage.BeginType(slot);
+                    var isText = backend.IsTextElement(frame.Element, budget);
+                    coverage.Type(slot, isText);
+                    if (isText)
                     {
                         budget.Stage = "world_bounds";
                         var bounds = backend.Bounds(frame.Element, budget);
@@ -193,8 +234,10 @@ internal static class WindowsSmokeReader
                         }
                     }
                     budget.Stage = "child_count";
+                    coverage.BeginChildren(slot);
                     var count = backend.ChildCount(frame.Element, budget);
                     if (count < 0) throw new InvalidOperationException("Negative child count rejected.");
+                    coverage.Children(slot, count, frame.Depth);
                     if (frame.Depth >= 8) { bounded |= count > 0; continue; }
                     bounded |= count > 8;
                     frame = (frame.Element, frame.Depth, 0, Math.Min(count, 8));

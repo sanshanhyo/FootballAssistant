@@ -9,9 +9,11 @@ sealed class NativeUiAdapterFixture : IDisposable
     private readonly Dictionary<nint, nint> names = new();
     private readonly Dictionary<(nint, string, int), nint> methodIds = new();
     private readonly Dictionary<nint, string> methodNames = new();
-    private readonly nint assemblyArray, countPayload, boolPayload, rectPayload, chars;
+    private readonly nint assemblyArray, countPayload, panelCountPayload, zeroPayload, boolPayload, rectPayload, chars;
     public readonly List<string> Invocations = new();
-    public bool WrongBoxType, GetterThrows;
+    public bool WrongBoxType, GetterThrows, DerivedText, TextOnlyInSecondPanel;
+    public int PanelCount = 1, PanelCountUnboxes;
+    public readonly List<int> PanelIndices = new();
     public int TextDepth = 1;
     private readonly Dictionary<nuint, nint> roots = new();
     private nuint nextHandle = IntPtr.Size == 8 ? unchecked((nuint)0x100000001UL) : 1;
@@ -36,6 +38,8 @@ sealed class NativeUiAdapterFixture : IDisposable
             var pointer = Marshal.StringToHGlobalAnsi(name); allocations.Add(pointer); names[id] = pointer;
         }
         countPayload = Allocate(4); Marshal.WriteInt32(countPayload, 1);
+        panelCountPayload = Allocate(4);
+        zeroPayload = Allocate(4); Marshal.WriteInt32(zeroPayload, 0);
         boolPayload = Allocate(1); Marshal.WriteByte(boolPayload, 1);
         rectPayload = Allocate(16); Marshal.Copy(new float[] { 0, 0, 10, 10 }, 0, rectPayload, 4);
         chars = Marshal.StringToHGlobalUni("fixture-native-path"); allocations.Add(chars);
@@ -56,15 +60,16 @@ sealed class NativeUiAdapterFixture : IDisposable
     public nint il2cpp_object_get_class(nint value)
     {
         RequireRoot(value);
-        if (value >= 300 && value < 400) return value - 300 >= TextDepth ? 22 : 33;
-        return value switch { 101 => 31, 102 => 32, 103 => 33, 104 => 22, 201 => WrongBoxType ? 25 : 23, 202 => 24, 203 => 26, 204 => 25, _ => 0 };
+        if (value >= 300 && value < 400) return value - 300 >= TextDepth ? (DerivedText ? 34 : 22) : 33;
+        return value switch { 101 => 31, 102 => 32, 103 => 33, 104 => DerivedText ? 34 : 22, 105 => 32, 106 => DerivedText ? 34 : 22,
+            201 or 205 or 206 => WrongBoxType ? 25 : 23, 202 => 24, 203 => 26, 204 => 25, _ => 0 };
     }
     public nint il2cpp_class_get_parent(nint value) => 0;
     public nint il2cpp_object_unbox(nint value)
-    { RequireRoot(value); return value switch { 201 => countPayload, 202 => boolPayload, 203 => rectPayload, _ => 0 }; }
+    { RequireRoot(value); if (value == 205) PanelCountUnboxes++; return value switch { 201 => countPayload, 205 => panelCountPayload, 206 => zeroPayload, 202 => boolPayload, 203 => rectPayload, _ => 0 }; }
     public nint il2cpp_string_chars(nint value) { RequireRoot(value); return chars; }
     public int il2cpp_string_length(nint value) { RequireRoot(value); return "fixture-native-path".Length; }
-    public bool il2cpp_class_is_assignable_from(nint parent, nint child) => parent == 22 && child == 22;
+    public bool il2cpp_class_is_assignable_from(nint parent, nint child) => parent == 22 && (child == 22 || child == 34);
     public nint il2cpp_class_get_method_from_name(nint type, string name, int count)
     {
         var key = (type, name, count);
@@ -76,10 +81,17 @@ sealed class NativeUiAdapterFixture : IDisposable
         if (instance != 0) RequireRoot(instance);
         var name = methodNames[method]; Invocations.Add(name);
         exception = GetterThrows ? 999 : 0;
+        if (name == "get_Count") Marshal.WriteInt32(panelCountPayload, PanelCount);
+        if (name == "get_Item" && instance == 101)
+        {
+            var index = Marshal.ReadInt32(Marshal.ReadIntPtr(args));
+            PanelIndices.Add(index);
+            return index == 0 ? 102 : 105;
+        }
         return name switch
         {
-            "GetSortedPlayerPanels" => 101, "get_Count" => 201, "get_visualTree" => 103,
-            "get_visible" => 202, "get_worldBound" => 203, "get_childCount" => 201,
+            "GetSortedPlayerPanels" => 101, "get_Count" => 205, "get_visualTree" => instance == 105 ? 106 : 103,
+            "get_visible" => 202, "get_worldBound" => 203, "get_childCount" => TextOnlyInSecondPanel && instance == 103 ? 206 : 201,
             "get_Item" => instance == 101 ? 102 : TextDepth == 1 ? 104 : instance == 103 ? 301 : instance + 1, "get_text" => 204,
             _ => throw new Exception("Unexpected getter: " + name)
         };

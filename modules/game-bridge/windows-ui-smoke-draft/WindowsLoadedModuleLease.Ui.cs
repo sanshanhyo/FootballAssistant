@@ -209,6 +209,7 @@ internal sealed partial class WindowsLoadedModuleLease
             if (panels == 0) return 0;
             var panelCount = Int32(Get(panels, "get_Count", budget), budget);
             if (panelCount < 0 || panelCount > 1024) throw new InvalidOperationException("Invalid panel count.");
+            budget.Coverage?.RecordPanels(panelCount);
             if (panelCount == 0) return 0;
             var panel = Item(panels, 0, budget);
             return panel == 0 ? 0 : Get(panel, "get_visualTree", budget);

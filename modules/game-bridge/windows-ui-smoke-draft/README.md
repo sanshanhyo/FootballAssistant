@@ -235,3 +235,34 @@ Actual adapter fixtures now require a live fake root before object_class, unbox,
 access or invoking an instance getter. High32-bit fake handles roundtrip and all are freed
 on success, boxed-type error and exhausted-budget exit. This simulates lifetime rules but
 NOT a real IL2CPP GC stress run. Independent candidate remains undeployed pending staged review and explicit requests.
+
+
+## Bounded numeric coverage diagnostics
+
+`Coverage` supplements timing without additional exports, getters, object-class reads or
+fresh guard checks. Storage for 32 node slots is allocated before obtaining runtime objects.
+`PanelCount` is copied only after the existing count getter/unbox/read passes its 0..1024
+validation. `-1` means unknown/not read/invalid, **not** an empty list; `0` means an actual
+validated empty list. `SelectedPanelIndex` is `-1` until a nonempty list is validated, then
+`0`: this means index 0 was selected, not that its root was successfully obtained.
+Neither multiple panels nor diagnostic incompleteness authorizes a fallback/retry.
+
+`NodesRecorded` marks the populated prefix of the fixed 32-slot `Nodes` array. Unused
+slots have `Depth = -1`; populated depths are 0..8. Numeric states are:
+
+- `Visibility` and `TextType`: 0 not started, 1 incomplete, 2 false, 3 true.
+- `ChildCountState`: 0 not started, 1 incomplete, 2 completed.
+- `ChildCountBucket`: -1 unknown, 0..8 exact, 9 means greater than 8.
+- `DepthPruned` and `ChildrenTruncated`: 0/1 flags from the already-read child count.
+
+A budget/exception during a check leaves it incomplete; this is not a negative type or
+visibility result. No text, class names, paths, native pointers or object identities are
+included. All limits and terminal one-shot behavior stay unchanged. Timing still includes
+diagnostic work up to its existing endpoint; no overhead is subtracted from the budget.
+
+Offline fixtures cover a derived-text class with asymmetric assignability, text solely in
+a second panel, depth9 and child-index8 omissions, validated-zero versus unknown panel
+counts, partial checks, and unchanged reservation/fresh-guard counts. CI additionally runs
+`test_assignability_mutation.py` after normal tests: it swaps the arguments in a temporary
+source copy and requires failure at the derived-text assertion, not an unrelated build
+error. This is a fake-export test, not evidence about the current game's panel contents.

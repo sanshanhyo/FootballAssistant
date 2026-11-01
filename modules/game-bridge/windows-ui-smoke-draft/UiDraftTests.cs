@@ -263,6 +263,92 @@ using (var f = new NativeUiAdapterFixture())
     b.Dispose();
     Check(f.LiveRoots == 0 && f.RootFrees == f.RootCreates, "cleanup ignores exhausted sampling budget");
 }
+// Coverage is observational: exactly the pre-existing 9 reservations / 13 fresh
+// guard checks for this two-node fixture, including the successful text getter.
+var coverageGuardChecks = 0;
+var coveragePair = Read(new FakeBackend(), () => coverageGuardChecks++);
+Check(coveragePair.NativeOperations == 9 && coverageGuardChecks == 13 &&
+    coveragePair.Coverage is { NodesRecorded: 2, Nodes.Length: 32, PanelCount: -1, SelectedPanelIndex: -1 },
+    "coverage adds no native reservations or fresh guard calls; fake backend leaves unread panel count unknown");
+var coverageJson = System.Text.Json.JsonSerializer.Serialize(coveragePair.Coverage);
+Check(!coverageJson.Contains("fixture text") && coverageJson.Length < 6000,
+    "coverage output is bounded and contains no captured text");
+var beforeRoot = Read(new FakeBackend(), elapsed: () => 251);
+Check(beforeRoot.Coverage is { PanelCount: -1, SelectedPanelIndex: -1, NodesRecorded: 0 } &&
+    beforeRoot.Coverage.Nodes.All(n => n.Depth == -1 && n.Visibility == 0 && n.TextType == 0),
+    "pre-resolution stop uses unknown sentinels, never fabricated empty panels or completed checks");
+var partialChecks = 0;
+var partialVisible = Read(new FakeBackend(), () =>
+{
+    if (++partialChecks == 4) throw new UiSmokeStopped("fixture_stop");
+});
+Check(partialVisible.StoppedStage == "visible" && partialVisible.Coverage is { NodesRecorded: 1 } &&
+    partialVisible.Coverage.Nodes[0] is { Depth: 0, Visibility: 1, TextType: 0, ChildCountState: 0, ChildCountBucket: -1 },
+    "partial visible check is incomplete, not false; downstream checks remain not started");
+var partialTypeChecks = 0;
+var partialType = Read(new FakeBackend(), () =>
+{
+    if (++partialTypeChecks == 5) throw new UiSmokeStopped("fixture_stop");
+});
+Check(partialType.Coverage!.Nodes[0] is { Visibility: 3, TextType: 1, ChildCountBucket: -1 },
+    "partial type classification is incomplete, not non-text");
+using (var derived = new NativeUiAdapterFixture { DerivedText = true })
+{
+    Check(derived.il2cpp_class_is_assignable_from(22, 34) && !derived.il2cpp_class_is_assignable_from(34, 22),
+        "derived-label fixture relation is asymmetric");
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), derived.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
+    Check(outcome.Text == "fixture-native-path" && outcome.Nodes == 2 && outcome.Coverage!.Nodes[1].TextType == 3,
+        "base-first IsAssignableFrom accepts derived label (reversing arguments must fail this assertion)");
+}
+using (var secondPanel = new NativeUiAdapterFixture { PanelCount = 2, TextOnlyInSecondPanel = true })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), secondPanel.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
+    Check(outcome.Text is null && outcome.StopReason == "no_eligible_text" && outcome.Nodes == 1 &&
+        outcome.Coverage is { PanelCount: 2, SelectedPanelIndex: 0 } &&
+        secondPanel.PanelIndices.SequenceEqual(new[] { 0 }) && !secondPanel.Invocations.Contains("get_text"),
+        "existing first-panel policy cannot reach text only in panel 1; diagnostics never expand selection");
+}
+using (var stoppedPanel = new NativeUiAdapterFixture { PanelCount = 2 })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), stoppedPanel.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var checksAfterUnbox = 0;
+    var outcome = WindowsSmokeReader.ReadOne(b, () =>
+    {
+        // First check reads the count payload; the second would inspect the list for Item(0).
+        if (stoppedPanel.PanelCountUnboxes > 0 && ++checksAfterUnbox == 2) throw new UiSmokeStopped("fixture_stop");
+    }, () => 0);
+    Check(outcome.Coverage is { PanelCount: 2, SelectedPanelIndex: 0, NodesRecorded: 0 } &&
+        !outcome.RootResolved && stoppedPanel.PanelIndices.Count == 0,
+        "validated count records planned panel0 even when item/root access never completes");
+}
+foreach (var panelCount in new[] { -1, 0, 1025 })
+{
+    using var fixture = new NativeUiAdapterFixture { PanelCount = panelCount };
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), fixture.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
+    Check(outcome.Coverage!.PanelCount == (panelCount == 0 ? 0 : -1) && outcome.Coverage.SelectedPanelIndex == -1 &&
+        fixture.PanelIndices.Count == 0, "only validated panel counts are recorded; zero differs from unknown/invalid");
+}
+using (var tooDeep = new NativeUiAdapterFixture { TextDepth = 9 })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), tooDeep.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
+    Check(outcome.Text is null && outcome.StopReason == "bounded_no_text" && outcome.Nodes == 9 &&
+        outcome.Coverage!.Nodes[8] is { Depth: 8, TextType: 2, ChildCountBucket: 1, DepthPruned: 1 } &&
+        !tooDeep.Invocations.Contains("get_text"), "depth9 text stays unreachable with unchanged depth8 limit");
+}
+var ninthChild = new FakeBackend { Children = 9, OnlyTextChildIndex = 8 };
+var tooWide = Read(ninthChild);
+Check(tooWide.Text is null && tooWide.StopReason == "bounded_no_text" && ninthChild.ChildReads == 8 &&
+    ninthChild.TextReads == 0 && tooWide.Coverage!.Nodes[0] is { ChildCountBucket: 9, ChildrenTruncated: 1 },
+    "text at child index8 stays unreachable with unchanged first8-child limit");
 // Strict stage request parsing, without launching a host or using a game module.
 var parserRoot = Path.Combine(Path.GetTempPath(), "football-ui-request-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(parserRoot);
@@ -295,6 +381,7 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
     public string VerifiedModuleHash => new('b', 64);
     public void Dispose() { }
     public bool RootVisible = true, RootBoundsPositive = true, TextBoundsPositive = true, RootIsText, ExcessiveText, NoText, EmptyText;
+    public int OnlyTextChildIndex = -1;
     public int ResolutionCalls = 1, Calls, ChildReads, BoundsReads, TypeReads, TextReads, Children = 8;
     private void Touch(UiSmokeBudget budget) { budget.BeforeNative(); Calls++; }
     public nint ResolveFirstPanelRoot(UiSmokeBudget budget)
@@ -302,7 +389,7 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
     public bool Visible(nint element, UiSmokeBudget budget) { Touch(budget); return element != 1 || RootVisible; }
     public UiSmokeBounds Bounds(nint element, UiSmokeBudget budget)
     { Touch(budget); BoundsReads++; return new(0, 0, (element == 1 ? RootBoundsPositive : TextBoundsPositive) ? 10 : 0, 10); }
-    public bool IsTextElement(nint element, UiSmokeBudget budget) { Touch(budget); TypeReads++; return (element != 1 || RootIsText) && !NoText; }
+    public bool IsTextElement(nint element, UiSmokeBudget budget) { Touch(budget); TypeReads++; return ((element != 1 && (OnlyTextChildIndex < 0 || element == OnlyTextChildIndex + 2)) || (element == 1 && RootIsText)) && !NoText; }
     public string ReadText(nint element, int maximumCodeUnits, UiSmokeBudget budget)
     { Touch(budget); TextReads++; return EmptyText ? "" : ExcessiveText ? new string('x', 129) : "fixture text"; }
     public int ChildCount(nint element, UiSmokeBudget budget) { Touch(budget); return element == 1 ? Children : 0; }

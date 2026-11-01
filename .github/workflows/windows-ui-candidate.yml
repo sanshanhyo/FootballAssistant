@@ -26,6 +26,8 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Pure UI policy, fake native adapter and owned-buffer tests (no game calls)
         run: dotnet run --project modules/game-bridge/windows-ui-smoke-draft/UiDraftTests.csproj
+      - name: Verify derived-text test detects reversed assignability (temporary source copy, no game)
+        run: python modules/game-bridge/windows-ui-smoke-draft/test_assignability_mutation.py
       - name: Metadata policy regression (no game calls)
         run: dotnet run --project modules/game-bridge/windows-smoke-draft/DraftTests.csproj
       - name: Build independent experimental DLL (does not invoke entrypoint)
