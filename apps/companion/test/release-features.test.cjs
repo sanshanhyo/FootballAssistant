@@ -17,8 +17,12 @@ test('desktop artifact excludes local runtime, credentials, captures, logs and s
   const files = manifest.build.files;
   assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));
-  assert.equal(manifest.build.extraResources.length, 2);
-  const backend = manifest.build.extraResources[0];
+  assert.equal(manifest.build.extraResources.length, 4);
+  assert.deepEqual(manifest.build.extraResources.slice(0, 2), [
+    { from: '../../LICENSE', to: 'LICENSE' },
+    { from: '../../LICENSE-SCOPE.md', to: 'LICENSE-SCOPE.md' },
+  ]);
+  const backend = manifest.build.extraResources[2];
   assert.equal(backend.from, '../../build/desktop-backend/football-assistant-backend');
   assert.equal(backend.to, 'backend');
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/credentials*.json', '!**/local-game/**', '!**/*.fm']) assert.ok(backend.filter.includes(excluded));
@@ -27,7 +31,7 @@ test('desktop artifact excludes local runtime, credentials, captures, logs and s
   assert.equal(manifest.build.nsis.perMachine, false);
   assert.equal(manifest.build.nsis.allowElevation, false);
   assert.notEqual(manifest.build.nsis.artifactName, manifest.build.portable.artifactName);
-  const stt = manifest.build.extraResources[1]; assert.equal(stt.from, 'local-stt'); assert.equal(stt.to, 'local-stt'); assert.deepEqual(stt.filter, ['whisper-cli', 'whisper-cli.exe', 'ggml-tiny-q5_1.bin', 'manifest.json', '*-LICENSE.txt']);
+  const stt = manifest.build.extraResources[3]; assert.equal(stt.from, 'local-stt'); assert.equal(stt.to, 'local-stt'); assert.deepEqual(stt.filter, ['whisper-cli', 'whisper-cli.exe', 'ggml-tiny-q5_1.bin', 'manifest.json', '*-LICENSE.txt']);
   assert.equal(manifest.build.extraFiles, undefined);
   assert.match(manifest.scripts['pack:win'], /--publish never/);
   assert.match(manifest.scripts['pack:mac'], /--publish never/);
