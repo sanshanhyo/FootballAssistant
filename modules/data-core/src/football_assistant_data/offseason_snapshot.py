@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 
@@ -13,14 +13,33 @@ def unavailable(reason: str) -> dict:
     return {"status": "unavailable", "reason": reason, "snapshot": None}
 
 
-async def read_offseason(executable: Path, club_uid: int, person_uid: int) -> dict:
+def valid_range(start: str | None, end: str | None, club_uid: int) -> bool:
+    if start is None and end is None:
+        return True
+    if start is None or end is None or club_uid == 0:
+        return False
+    try:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+        return (first.isoformat() == start and last.isoformat() == end and
+                1901 <= first.year <= 2100 and first.year == last.year and
+                0 <= (last - first).days < 30)
+    except ValueError:
+        return False
+
+
+async def read_offseason(executable: Path, club_uid: int, person_uid: int, start: str | None = None, end: str | None = None) -> dict:
     """Run a configured local producer once; never use a shell or cache its output."""
+    if not valid_range(start, end, club_uid):
+        return unavailable("invalid_range")
     if not executable.is_absolute() or not executable.is_file() or executable.suffix.lower() != ".exe":
         return unavailable("producer_not_configured")
     proc = None
     try:
+        args = [str(executable), str(club_uid), str(person_uid)]
+        if start is not None and end is not None:
+            args.extend([start, end])
         proc = await asyncio.create_subprocess_exec(
-            str(executable), str(club_uid), str(person_uid),
+            *args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
         async def collect() -> bytes:
@@ -38,7 +57,7 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int) -> di
                     raise ValueError("oversized")
             await proc.wait()
             return result
-        raw = await asyncio.wait_for(collect(), timeout=20)
+        raw = await asyncio.wait_for(collect(), timeout=40 if start is not None else 20)
         if proc.returncode != 0:
             return unavailable("producer_failed")
         data = json.loads(raw)

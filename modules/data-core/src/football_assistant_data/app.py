@@ -196,12 +196,16 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return read_match_snapshot(Path(configured))
 
     @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
-    async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647)):
-        from .offseason_snapshot import read_offseason, unavailable
+    async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647), start: str | None = Query(default=None, max_length=10), end: str | None = Query(default=None, max_length=10)):
+        from .offseason_snapshot import read_offseason, unavailable, valid_range
+        if not valid_range(start, end, club_uid):
+            raise HTTPException(status_code=422, detail="invalid calendar range")
         configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
         if not configured:
             return unavailable("producer_not_configured")
-        return await read_offseason(Path(configured), club_uid, person_uid)
+        if start is None:
+            return await read_offseason(Path(configured), club_uid, person_uid)
+        return await read_offseason(Path(configured), club_uid, person_uid, start, end)
 
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():

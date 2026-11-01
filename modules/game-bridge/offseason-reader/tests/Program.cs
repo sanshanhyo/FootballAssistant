@@ -78,3 +78,16 @@ var emptyInstructions = TeamInstructionDecoder.Decode(0, 0)!;
 Check(emptyInstructions.Status == "experimental" && emptyInstructions.Ids.Count == 0 && !emptyInstructions.PassingStyleShorter);
 var syntheticInstructions = TeamInstructionDecoder.Decode((1UL << 0) | (1UL << 3) | (1UL << 63), (1UL << 0) | (1UL << 19) | (1UL << 20))!;
 Check(syntheticInstructions.Ids.SequenceEqual(new[] { 3, 63, 64, 83 }) && syntheticInstructions.PassingStyleShorter);
+// Synthetic bounded calendar validation; no game data.
+var syntheticStart = new DateTime(2030, 2, 1);
+Check(FixtureCalendarLookup.IsValidRange(syntheticStart, syntheticStart.AddDays(29)));
+Check(!FixtureCalendarLookup.IsValidRange(syntheticStart, syntheticStart.AddDays(30)));
+Check(!FixtureCalendarLookup.IsValidRange(syntheticStart, syntheticStart.AddDays(-1)));
+Check(!FixtureCalendarLookup.IsValidRange(new DateTime(2030, 12, 31), new DateTime(2031, 1, 1)));
+Check(!FixtureCalendarLookup.IsValidRange(syntheticStart.AddHours(1), syntheticStart.AddDays(1)));
+Check(FixtureCalendarLookup.Read(0, 1, syntheticStart, syntheticStart).Status == "unknown");
+var syntheticFixtures = new[] { new FixtureCalendarEntry("2030-02-03", 1, 9, "A", "first"), new FixtureCalendarEntry("2030-02-01", 2, 4, "B", "second") };
+var syntheticPartial = FixtureCalendarLookup.Finish(3, 1, 0, 2, syntheticFixtures, DateTimeOffset.UnixEpoch);
+Check(syntheticPartial.Status == "partial" && syntheticPartial.Fixtures![0].Date == "2030-02-01");
+Check(FixtureCalendarLookup.Finish(3, 0, 1, 2, syntheticFixtures, DateTimeOffset.UnixEpoch).Status == "partial");
+Check(FixtureCalendarLookup.Finish(3, 0, 0, 2, syntheticFixtures, DateTimeOffset.UnixEpoch).Status == "experimental_loaded_buckets_only");
