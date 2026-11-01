@@ -10,3 +10,9 @@ DiscoveryCandidateConfigurationTests.Run();
 DiscoverySessionGateTests.Run();
 
 TargetedDiscoveryCollectorTests.Run();
+
+FiniteRowsCandidateConfigurationTests.Run();
+FiniteRowsPolicyTests.Run();
+
+GroupedDiscoveryCollectorTests.Run();
+FiniteRowsCompositionTests.Run();

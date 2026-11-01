@@ -11,6 +11,7 @@ internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryTe
     bool TraversalBounded, DiscoveryRequest Request, int PanelIndex, string FocusPath)
 {
     public bool PageIdentityVerified => false;
+    public string SelectionProfile { get; init; } = "single";
 }
 
 internal static class DiscoveryCollector
@@ -52,7 +53,8 @@ internal static class DiscoveryCollector
             try
             {
                 budget.Check();
-                if (targetedRow && (policy.Approval.PanelIndex != 0 ||
+                if ((!targetedRow && policy.Approval.SelectionProfile != "single") ||
+                    targetedRow && (policy.Approval.PanelIndex != 0 ||
                     policy.Approval.FocusPath != TargetedDiscoveryCollector.FocusRoot))
                     throw new UiSmokeStopped("target_scope_mismatch");
                 backend = createBackend();
@@ -145,12 +147,13 @@ internal static class DiscoveryCollector
                         current.Dispose(); current = child;
                     }
                     if (targetedRow)
-                        VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets());
+                        VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets(policy.Approval.SelectionProfile));
                     else Visit(current, edges.Length, policy.Approval.FocusPath);
                 }
                 finally { current?.Dispose(); }
                 success = true;
-                reason = targetedRow ? "approved_row_targets_complete" :
+                reason = targetedRow ? (policy.Approval.SelectionProfile == "single" ?
+                    "approved_row_targets_complete" : "approved_group_targets_complete") :
                     bounded ? "bounded_raw_diagnostics" : "approved_prefix_exhausted";
             }
             catch (Exception error)
@@ -177,11 +180,11 @@ internal static class DiscoveryCollector
             if (!success)
             {
                 observations = Array.Empty<DiscoveryText>();
-                if (reason is "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete") reason = "discovery_accounting_rejected";
+                if (reason is "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete" or "approved_group_targets_complete") reason = "discovery_accounting_rejected";
             }
             return new(success ? "raw_diagnostics" : "terminal_failure", reason, observations,
                 budget.Operations, spent, nodes, roots, peak, bounded, request,
-                policy.Approval.PanelIndex, policy.Approval.FocusPath);
+                policy.Approval.PanelIndex, policy.Approval.FocusPath) { SelectionProfile = policy.Approval.SelectionProfile };
         }
         finally
         {

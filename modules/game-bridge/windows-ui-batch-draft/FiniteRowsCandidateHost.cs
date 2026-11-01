@@ -1,0 +1,207 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Threading.Channels;
+namespace FootballAssistant.GameBridge;
+
+// Retained once per loaded finite host; even an invalid presented manifest consumes admission.
+internal sealed class FiniteRowsSessionGate
+{
+    private readonly SmokeContext context;
+    private readonly object gate = new();
+    private bool taken;
+    internal FiniteRowsSessionGate(SmokeContext context) => this.context = context;
+    internal bool Taken { get { lock (gate) return taken; } }
+    internal FiniteRowsPolicy? TryTake(FiniteRowsHostManifest manifest, DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            if (taken) return null;
+            taken = true;
+            var approval = FiniteRowsCandidateConfiguration.TryApproval(manifest, context, now);
+            return approval is null ? null : new FiniteRowsPolicy(approval);
+        }
+    }
+}
+
+internal sealed class FiniteRowsCandidateHost : IDisposable
+{
+    private readonly FiniteRowsConfigurationData configuration;
+    private readonly SmokeContext context;
+    private readonly FiniteRowsSessionGate admission;
+    private readonly Win32ProbePlatform platform = new();
+    private readonly CancellationTokenSource cancel = new();
+    private readonly long clockStarted = Stopwatch.GetTimestamp();
+    private readonly Channel<object> evidence = Channel.CreateBounded<object>(new BoundedChannelOptions(16)
+        { SingleReader = true, FullMode = BoundedChannelFullMode.DropOldest });
+    private WindowsLoadedModuleLease? lease;
+    private FiniteRowsHostManifest? manifest;
+    private FiniteRowsPolicy? batch;
+    private string[]? firstLabels;
+    private nuint timer;
+    private int stopped, entered, terminal;
+    private double Monotonic() => Stopwatch.GetElapsedTime(clockStarted).TotalMilliseconds;
+    internal FiniteRowsCandidateHost(string assemblyPath)
+    {
+        configuration = FiniteRowsCandidateConfiguration.Read(assemblyPath);
+        using (var process = Process.GetCurrentProcess())
+            if (configuration.RecordedAt >= process.StartTime.ToUniversalTime() || configuration.RecordedAt > DateTimeOffset.UtcNow)
+                throw new InvalidOperationException("File identity record must predate game launch.");
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assemblyPath))).ToLowerInvariant();
+        context = new(Environment.ProcessId, Guid.NewGuid().ToString("D"), hash,
+            VerifiedWindowsBuild.GameAssemblySha256, configuration.WindowClass, platform.ThreadId);
+        admission = new(context);
+        Directory.CreateDirectory(configuration.PrivateRoot);
+        WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(configuration.PrivateRoot);
+        WritePrivate("session.json", new { schema_version = 4, mode = "goalkeeper_rows0_3", pid = context.Pid,
+            session_id = context.Session, bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash,
+            exe_sha256 = VerifiedWindowsBuild.ExecutableSha256, window_class = context.ConfirmedWindowClass,
+            entry_tid = context.EntryThread, finite_rows_enabled_by_default = false, raw_diagnostics_only = true,
+            allowed_scopes = new[] { "goalkeeper_rows0_3" }, maximum_chunks = 2, cooldown_ms = 2000,
+            per_chunk_ms = 1000, per_chunk_units = 2048, total_ms = 2000, total_units = 4096,
+            page_identity_verified = false, page_epoch_is_operator_assertion = true });
+        WriteState(); _ = Task.Run(WriteEvidence);
+        timer = platform.Start(Tick, 1000);
+        if (timer == 0) { evidence.Writer.TryComplete(); throw new InvalidOperationException("Finite timer unavailable."); }
+        _ = Task.Run(PrepareAndReadManifest);
+    }
+    private void WritePrivate(string name, object value)
+    {
+        var path = Path.Combine(configuration.PrivateRoot, name);
+        WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(path);
+        File.WriteAllText(path, JsonSerializer.Serialize(value));
+    }
+    private void WriteState() => WritePrivate("finite-rows-state.json", new
+    {
+        pid = context.Pid, session_id = context.Session, bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash,
+        consumed = admission.Taken, terminal = Volatile.Read(ref terminal) != 0,
+        chunks_consumed = batch?.ChunksConsumed ?? 0, total_units = batch?.TotalOperations ?? 0,
+        total_elapsed_ms = batch?.TotalMilliseconds ?? 0
+    });
+    private void Record(object value) => evidence.Writer.TryWrite(value);
+    private async Task WriteEvidence()
+    {
+        var path = Path.Combine(configuration.PrivateRoot, "finite-rows-evidence.jsonl");
+        await foreach (var item in evidence.Reader.ReadAllAsync())
+            try
+            {
+                WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(path);
+                await File.AppendAllTextAsync(path, JsonSerializer.Serialize(item) + Environment.NewLine);
+                WriteState();
+            }
+            catch { /* No private writer exception crosses a native callback. */ }
+    }
+    private async Task PrepareAndReadManifest()
+    {
+        try
+        {
+            var prepared = WindowsLoadedModuleLease.Acquire(configuration.Module);
+            if (Volatile.Read(ref stopped) != 0) { prepared.Dispose(); return; }
+            Volatile.Write(ref lease, prepared);
+            WritePrivate("module-status.json", new { state = "ready", pid = context.Pid, session_id = context.Session,
+                bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash, il2cpp_calls = 0 });
+            while (!cancel.IsCancellationRequested && Volatile.Read(ref terminal) == 0)
+            {
+                try
+                {
+                    var read = FiniteRowsCandidateConfiguration.ReadRequest(Path.Combine(configuration.PrivateRoot,
+                        FiniteRowsCandidateConfiguration.RequestName));
+                    Volatile.Write(ref manifest, read);
+                    return; // Retain ONE immutable manifest. Never reread/requeue/retry a replacement.
+                }
+                catch (FileNotFoundException) { }
+                await Task.Delay(250, cancel.Token);
+            }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            Volatile.Write(ref terminal, 1);
+            Record(new { phase = "finite_preparation_or_manifest_failed_no_retry", error = error.GetType().Name });
+        }
+    }
+    private void Tick(nuint id)
+    {
+        if (Interlocked.Exchange(ref entered, 1) != 0) return;
+        try
+        {
+            if (id == 0 || id != timer) return;
+            if (Volatile.Read(ref stopped) != 0 || Volatile.Read(ref terminal) != 0) { CancelOnOwner(); return; }
+            var ready = Volatile.Read(ref lease); var pending = Volatile.Read(ref manifest);
+            if (ready is null || pending is null) return; // No native scan without explicit immutable manifest.
+            if (batch is null)
+            {
+                batch = admission.TryTake(pending, DateTimeOffset.UtcNow);
+                if (batch is null) { Fail("finite_manifest_rejected_no_retry"); return; }
+            }
+            if (batch.Terminal || DateTimeOffset.UtcNow >= batch.Approval.ExpiresAt)
+            { batch.Stop(); Fail("finite_terminal_or_expired"); return; }
+            if (Monotonic() < batch.NotBeforeMonotonicMilliseconds) return; // No scan during cooldown.
+            RunChunk(ready, batch);
+            if (batch.Terminal) { Volatile.Write(ref terminal, 1); CancelOnOwner(); }
+        }
+        catch (Exception error)
+        {
+            batch?.Stop(); Fail("finite_callback_failed_no_retry", error.GetType().Name);
+        }
+        finally { Volatile.Write(ref entered, 0); }
+    }
+    private void RunChunk(WindowsLoadedModuleLease ready, FiniteRowsPolicy policy)
+    {
+        // Starts BEFORE outer admission/full-window scan, including all semantic and cleanup costs.
+        var started = Stopwatch.GetTimestamp(); var startedMono = Monotonic(); var startedUtc = DateTimeOffset.UtcNow;
+        var index = policy.NextChunkIndex;
+        var nonce = index == 0 ? policy.Approval.FirstNonce : policy.Approval.SecondNonce;
+        var request = new FiniteRowsRequest(4, policy.Approval.BatchId, policy.Approval.PageEpoch, index, nonce, policy.ApprovalSha256);
+        var grant = policy.TryBegin(request, MainThreadGuard.ReadWindowsScanIdentity(context.EntryThread), startedUtc, startedMono);
+        if (grant is null) { Fail("finite_admission_failed_no_retry"); return; }
+        DiscoveryPolicy? child = null; DiscoveryResult? result = null;
+        string[] labels = Array.Empty<string>(); var valid = false; string? errorType = null;
+        DateTimeOffset captureStartedUtc = DateTimeOffset.UtcNow, captureFinishedUtc;
+        try
+        {
+            child = new DiscoveryPolicy(new(context, nonce, 0, TargetedDiscoveryCollector.FocusRoot,
+                policy.Approval.CreatedAt, policy.Approval.ExpiresAt, true, grant.SelectionProfile),
+                () => policy.CheckActive(grant, DateTimeOffset.UtcNow, Monotonic(), cancel.Token), requiredWindow: grant.Window);
+            var token = new DiscoveryRequest(3, nonce, child.ApprovalSha256);
+            captureStartedUtc = DateTimeOffset.UtcNow;
+            result = ready.RunDiscoveryOnce(child, token, cancel.Token);
+            captureFinishedUtc = DateTimeOffset.UtcNow;
+            valid = result is not null && GroupedDiscoveryValidation.TryValidate(result, grant.SelectionProfile, out labels);
+            if (valid && firstLabels is not null && firstLabels.Intersect(labels, StringComparer.Ordinal).Any()) valid = false;
+        }
+        catch (Exception error)
+        {
+            captureFinishedUtc = DateTimeOffset.UtcNow;
+            child?.Stop(); errorType = error.GetType().Name;
+        }
+        var operations = child?.TotalOperations ?? 0;
+        var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        var accepted = policy.Finish(grant, operations, elapsed, valid, DateTimeOffset.UtcNow, Monotonic());
+        if (accepted && index == 0) firstLabels = labels; // Bounded managed strings only, never UI pointers/handles.
+        if (!accepted) { policy.Stop(); Volatile.Write(ref terminal, 1); }
+        if (policy.Terminal) Volatile.Write(ref terminal, 1);
+        Record(new { phase = "finite_rows_chunk_result", schema_version = 4, pid = context.Pid, session_id = context.Session,
+            bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash, entry_tid = context.EntryThread,
+            callback_tid = platform.ThreadId, batch_id = policy.Approval.BatchId, page_epoch = policy.Approval.PageEpoch,
+            page_epoch_is_operator_assertion = true, chunk_index = index, nonce, selection_profile = grant.SelectionProfile,
+            capture_started_at = captureStartedUtc, capture_finished_at = captureFinishedUtc,
+            chunk_started_at = startedUtc, chunk_finished_at = DateTimeOffset.UtcNow,
+            result = accepted ? result : null, accepted, error = errorType, operations, elapsed_ms = elapsed,
+            total_units = policy.TotalOperations, total_elapsed_ms = policy.TotalMilliseconds,
+            page_identity_verified = false, snapshot_atomic = false, business_facts = false, terminal = policy.Terminal });
+    }
+    private void Fail(string phase, string? error = null)
+    { Volatile.Write(ref terminal, 1); Record(new { phase, error, terminal = true, page_identity_verified = false }); CancelOnOwner(); }
+    private void CancelOnOwner()
+    { if (platform.ThreadId == context.EntryThread && timer != 0 && platform.Kill(timer)) timer = 0; }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref stopped, 1) != 0) return;
+        Volatile.Write(ref terminal, 1); cancel.Cancel(); batch?.Stop();
+        if (Interlocked.Exchange(ref entered, 1) == 0)
+        { try { CancelOnOwner(); } finally { Volatile.Write(ref entered, 0); } }
+        // Verified lease retained until process exit, never raced against in-flight callbacks.
+        evidence.Writer.TryComplete();
+    }
+}

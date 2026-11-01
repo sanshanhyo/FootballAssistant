@@ -107,6 +107,27 @@ sealed class BatchTreeFixture : IDisposable
         SetNodeText(GoalkeeperLabelPath, "TEST-ATTRIBUTE");
         SetNodeText(GoalkeeperValuePath, "17");
     }
+    internal static string GroupedRowPath(int row) => GoalkeeperCategoryPath + "/2/0/0/0/" + row;
+    internal static string GroupedLabelPath(int row) => GroupedRowPath(row) + "/0/0/0/0/0/0/0/0/0";
+    internal static string GroupedValuePath(int row) => GroupedRowPath(row) + "/0/0/0/0/0/0/1/1/0/0/0/0/0/0";
+    internal void BuildGoalkeeperRows(int firstRow, int count = 2)
+    {
+        if (firstRow is not (0 or 2) || count != 2) throw new ArgumentOutOfRangeException();
+        Children[103] = new();
+        EnsurePath(GoalkeeperTitlePath);
+        SetNodeText(GoalkeeperTitlePath, "守门");
+        // Four available rows, not merely the selected pair: exact edge assertions
+        // must prove that the collector never reads the other pair.
+        var labels = new[] { "出击(倾向)", "传球", "大脚开球", "反应" };
+        for (var row = 0; row < 4; row++)
+        {
+            EnsurePath(GroupedLabelPath(row)); EnsurePath(GroupedValuePath(row));
+            SetNodeText(GroupedLabelPath(row), labels[row]);
+            SetNodeText(GroupedValuePath(row), (12 + row).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+    internal bool InheritedContainerMethods;
+    internal int ParentLookups;
     private readonly List<nint> allocations = new();
     private readonly Dictionary<nint, nint> names = new();
     private readonly Dictionary<(nint, string, int), nint> methodIds = new();
@@ -178,7 +199,11 @@ sealed class BatchTreeFixture : IDisposable
         return value switch { 101 => 31, 102 => 32, 103 => 33, 104 => DerivedText ? 34 : 22, 105 => 32, 106 => DerivedText ? 34 : 22,
             201 or 205 or 206 => WrongBoxType ? 25 : 23, 202 => 24, 203 => 26, 204 => 25, _ => 0 };
     }
-    public nint il2cpp_class_get_parent(nint value) => 0;
+    public nint il2cpp_class_get_parent(nint value)
+    {
+        ParentLookups++;
+        return InheritedContainerMethods ? value switch { 33 => 40, 40 => 41, 41 => 42, 42 => 27, _ => 0 } : 0;
+    }
     public nint il2cpp_object_unbox(nint value)
     { UnboxReads++; RequireRoot(value); if (value == 205) PanelCountUnboxes++; return value switch { 201 => countPayload, 205 => panelCountPayload, 206 => zeroPayload, 202 => boolPayload, 203 => rectPayload, _ => 0 }; }
     public nint il2cpp_string_chars(nint value) { StringCharReads++; RequireRoot(value); return textObjects[value].Chars; }
@@ -187,7 +212,9 @@ sealed class BatchTreeFixture : IDisposable
     { AssignableChecks++; return parent == 22 && (child == 22 || child == 34); }
     public nint il2cpp_class_get_method_from_name(nint type, string name, int count)
     {
-        MethodLookups++; var key = (type, name, count);
+        MethodLookups++;
+        if (InheritedContainerMethods && (type == 33 || type == 40 || type == 41 || type == 42)) return 0;
+        var key = (type, name, count);
         if (!methodIds.TryGetValue(key, out var id)) { id = 1000 + methodIds.Count; methodIds[key] = id; methodNames[id] = name; }
         return id;
     }
