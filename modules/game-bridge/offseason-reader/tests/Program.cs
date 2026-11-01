@@ -49,3 +49,7 @@ var decodedTactic = TacticCandidateLookup.Decode(syntheticTactic)!;
 Check(decodedTactic.Positions.Count == 11 && decodedTactic.Positions[0] == "0x1");
 Check(decodedTactic.RolesDuties[0] == "Ball-Playing Goalkeeper / Support");
 Check(decodedTactic.Positions[1] == "unknown" && decodedTactic.RolesDuties[1] == "unknown");
+// Synthetic role mapping, independent of saved game samples.
+Check(TacticSecondRoleDecoder.Decode(0x800002) == "0x800002: Sweeper Keeper / Attack");
+Check(TacticSecondRoleDecoder.Decode(0x1000000000000000) == "unknown");
+Check(TacticSecondRoleDecoder.Decode(0xE00002) == "0xE00002: Sweeper Keeper / unknown");
