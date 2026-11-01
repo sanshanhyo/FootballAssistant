@@ -8,13 +8,17 @@ var mode = args.Length == 1 && args[0] == "components" ? 1 : args.Length == 1 &&
 var results = new List<object>();
 var status = 0;
 var errorCode = 0;
+var failureStage = 0;
+long[] initialObservation = Array.Empty<long>();
 try
 {
     if (mode < 0) throw new BenchmarkFailure(1);
     if (!OperatingSystem.IsWindows()) throw new BenchmarkFailure(2);
     foreach (var windowCount in new[] { 1, 8, 31 })
     {
+        failureStage = 1;
         using var windows = new OwnedWindows(windowCount);
+        failureStage = 2;
         var tid = MainThreadGuard.CurrentWindowsThreadId();
         var components = new GuardComponents();
         WindowsThreadIdentity Read() => mode == 0 ? MainThreadGuard.ReadWindowsScanIdentity(tid) :
@@ -25,9 +29,15 @@ try
         var first = Read();
         var firstTicks = Stopwatch.GetTimestamp() - firstStart;
         var own = first.WindowCandidates?.SingleOrDefault(x => x.Hwnd == windows.Primary.ToInt64());
+        failureStage = 3;
+        initialObservation = new long[] { windowCount, first.WindowScanStatus == "complete" ? 1 : 0,
+            own is null ? 0 : 1, own?.OwnerStable == true ? 1 : 0, own?.ClassNameComplete == true ? 1 : 0,
+            own?.VisibleStyle == true ? 1 : 0, own?.ClientRectAvailable == true ? 1 : 0,
+            own?.ClientWidth ?? -1, own?.ClientHeight ?? -1, first.WindowScanCount, own?.OwnerTid == tid ? 1 : 0 };
         Require(first.WindowScanStatus == "complete" && own is { OwnerStable: true, ClassNameComplete: true,
             VisibleStyle: true, ClientRectAvailable: true, ClientWidth: > 0, ClientHeight: > 0 } &&
             first.WindowScanCount == windowCount && own.OwnerTid == tid, 2);
+        failureStage = 4;
         var context = new SmokeContext(Environment.ProcessId, "own-window-benchmark", new string('a', 64),
             new string('b', 64), own!.ClassName!, tid);
         var policy = new WindowsSmokePolicy(context);
@@ -120,6 +130,7 @@ try
 catch (BenchmarkFailure failure) { errorCode = failure.Code; status = errorCode == 2 ? 2 : 1; }
 catch { status = 1; errorCode = 6; } // Never print OS exceptions, stack paths, identities or window data.
 string Output() => JsonSerializer.Serialize(new { schema_version = 1, status, error_code = errorCode, mode,
+    failure_stage = failureStage, initial_observation = initialObservation,
     stopwatch_frequency = Stopwatch.Frequency, scenarios = results });
 var output = Output();
 try
