@@ -56,12 +56,73 @@ def test_non_windows_refuses_transport(tmp_path):
 windows = pytest.mark.skipif(os.name != 'nt', reason='requires actual Windows security and kernel handles')
 
 
-@windows
-def test_windows_snapshot_and_hardlink_rejection(tmp_path):
+def _secure_windows_test_object(path):
+    """Provision only this test-created object, not a real producer directory.
+
+    Elevated Windows tokens can default new objects to Administrators ownership.
+    Production intentionally requires TOKEN_USER ownership, so establish that
+    fixture prerequisite explicitly instead of weakening the production check.
+    """
+    import ctypes
+    from football_assistant_data.windows_capture_files import HANDLE, DWORD, BOOL
+    files = WindowsFiniteFiles()
+    security = files.security
+    security.ConvertSidToStringSidW.restype = BOOL
+    security.ConvertSidToStringSidW.argtypes = [HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = BOOL
+    security.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [ctypes.c_wchar_p, DWORD, ctypes.POINTER(HANDLE), ctypes.POINTER(DWORD)]
+    security.SetFileSecurityW.restype = BOOL
+    security.SetFileSecurityW.argtypes = [ctypes.c_wchar_p, DWORD, HANDLE]
+    token, descriptor, old_descriptor, old_owner = HANDLE(), HANDLE(), HANDLE(), HANDLE()
+    sid_text = ctypes.c_wchar_p()
+    files._check(security.OpenProcessToken(files.api.GetCurrentProcess(), 8, ctypes.byref(token)))
+    try:
+        size = DWORD()
+        security.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))
+        assert 0 < size.value <= 65536
+        buffer = ctypes.create_string_buffer(size.value)
+        files._check(security.GetTokenInformation(token, 1, buffer, size.value, ctypes.byref(size)))
+        user_sid = ctypes.cast(buffer, ctypes.POINTER(HANDLE))[0]
+        with files._open(str(path), 0x20080, 7, directory=path.is_dir()) as handle:
+            result = security.GetSecurityInfo(handle, 1, 1, ctypes.byref(old_owner), None, None, None, ctypes.byref(old_descriptor))
+            assert result == 0
+            if not security.EqualSid(old_owner, user_sid):
+                with pytest.raises(ValueError, match='finite_source_not_owned_by_current_user'):
+                    files._owner(handle)  # Real non-owner negative, before provisioning.
+            # Log categories only, never the account SID/name or private path.
+            print('WINDOWS_TEST_FIXTURE_OWNER_BEFORE', {
+                'current_user': bool(security.EqualSid(old_owner, user_sid)),
+                'administrators': bool(security.IsWellKnownSid(old_owner, 26)),
+            })
+        files._check(security.ConvertSidToStringSidW(user_sid, ctypes.byref(sid_text)))
+        # Protected DACL: this user, SYSTEM and Administrators only. Inheritance
+        # applies to this disposable test directory's children, never ancestors.
+        sddl = f'O:{sid_text.value}D:P(A;OICI;FA;;;{sid_text.value})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
+        files._check(security.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), None))
+        files._check(security.SetFileSecurityW(str(path), 0x80000005, descriptor))
+        with files._open(str(path), 0x20080, 7, directory=path.is_dir()) as handle:
+            files._owner(handle)  # Actual production owner/DACL guard, no mock.
+    finally:
+        for allocation in (descriptor, old_descriptor, sid_text):
+            if allocation:
+                files.api.LocalFree(ctypes.cast(allocation, HANDLE))
+        files.api.CloseHandle(token)
+
+
+def _private_windows_fixture(tmp_path):
     root = tmp_path / 'private'
     root.mkdir()
+    _secure_windows_test_object(root)
     for name in FILES:
-        (root / name).write_bytes(b'{}\n')
+        child = root / name
+        child.write_bytes(b'{}\n')
+        _secure_windows_test_object(child)
+    return root
+
+
+@windows
+def test_windows_snapshot_and_hardlink_rejection(tmp_path):
+    root = _private_windows_fixture(tmp_path)
     files = WindowsFiniteFiles()
     assert files.read_snapshot(root) == ({}, {}, {}, [{}])
     (root / FILES[0]).unlink()
@@ -72,10 +133,7 @@ def test_windows_snapshot_and_hardlink_rejection(tmp_path):
 
 @windows
 def test_windows_per_file_bounds(tmp_path):
-    root = tmp_path / 'private'
-    root.mkdir()
-    for name in FILES:
-        (root / name).write_bytes(b'{}\n')
+    root = _private_windows_fixture(tmp_path)
     (root / FILES[0]).write_bytes(b'{}' + b' ' * CONTROL_BYTES)
     with pytest.raises(ValueError, match='oversize'):
         WindowsFiniteFiles().read_snapshot(root)
@@ -210,3 +268,34 @@ def test_only_unconsumed_running_producer_may_await_first_evidence_file(admitted
         with pytest.raises(FileNotFoundError): SyntheticFiles().read_snapshot('synthetic-root')
     else:
         assert SyntheticFiles().read_snapshot('synthetic-root')[-1] == []
+
+
+def test_owner_mismatch_is_rejected_before_acl_check():
+    """Default group ownership is not a production ownership exception."""
+    import ctypes
+    from types import SimpleNamespace
+    from football_assistant_data.windows_capture_files import HANDLE, DWORD
+    calls = []
+    class Security:
+        def OpenProcessToken(self, process, rights, token):
+            ctypes.cast(token, ctypes.POINTER(HANDLE))[0] = 99
+            return 1
+        def GetTokenInformation(self, token, kind, buffer, length, size):
+            ctypes.cast(size, ctypes.POINTER(DWORD))[0] = ctypes.sizeof(HANDLE)
+            if buffer is not None:
+                ctypes.cast(buffer, ctypes.POINTER(HANDLE))[0] = 123
+            return 1
+        def GetSecurityInfo(self, handle, kind, flags, owner, *rest):
+            ctypes.cast(owner, ctypes.POINTER(HANDLE))[0] = 456
+            return 0
+        def EqualSid(self, owner, current):
+            assert owner.value == 456 and current == 123
+            return 0
+    files = WindowsFiniteFiles.__new__(WindowsFiniteFiles)
+    files.security = Security()
+    files.api = SimpleNamespace(GetCurrentProcess=lambda: 1, CloseHandle=lambda handle: calls.append('closed'))
+    files._require = lambda: None
+    files._private_acl = lambda *args: calls.append('acl')
+    with pytest.raises(ValueError, match='finite_source_not_owned_by_current_user'):
+        files._owner(77)
+    assert calls == ['closed']
