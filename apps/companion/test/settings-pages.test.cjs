@@ -36,11 +36,77 @@ async function harness(overrides={}) {
   vm.runInNewContext(source,context);await flush();await flush();
   return {$:id=>elements.get(id),nav,calls,state,storage,document,api,event:value=>listener(value)};
 }
+
+test('saved key is visibly masked on opening and saving an untouched blank input never submits the mask', async()=>{
+ const h=await harness();
+ assert.equal(h.$('model-api-key').placeholder,'••••••••');assert.equal(h.$('model-api-key').value,'');
+ assert.equal(h.$('model-storage-note').textContent,'密钥已配置');
+ await h.$('model-fetch').fire('click');await h.$('model-config-form').fire('submit');await flush();
+ assert.equal(Object.hasOwn(h.calls.find(c=>c.save).save,'apiKey'),false);
+ assert.equal(Object.hasOwn(h.calls.find(c=>c.list).list,'apiKey'),false);
+ assert.equal(h.$('model-api-key').placeholder,'••••••••');
+ const reopened=await harness();assert.equal(reopened.$('model-api-key').placeholder,'••••••••');
+});
+
+test('provider and custom destination changes do not display or delete another destination key', async()=>{
+ const h=await harness();h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');
+ assert.equal(h.$('model-api-key').placeholder,'输入 API Key');assert.equal(h.$('model-remove-key').disabled,true);
+ await h.$('model-remove-key').fire('click');assert.equal(h.calls.some(c=>c.save),false);
+ h.$('model-provider').value='openai';await h.$('model-provider').fire('change');
+ assert.equal(h.$('model-api-key').placeholder,'••••••••');assert.equal(h.$('model-remove-key').disabled,false);
+});
+
+test('failed key replacement retains draft, old saved state and a retry; unrelated state updates do not erase it',async()=>{
+ const h=await harness({saveModelConfig:()=>Promise.resolve({ok:false,error:'保存失败'})});
+ h.$('model-api-key').value='TEST-replacement';await h.$('model-api-key').fire('input');await h.$('model-fetch').fire('click');
+ await h.$('model-config-form').fire('submit');await flush();
+ assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('model-save').disabled,false);
+ assert.equal(h.$('model-storage-note').textContent,'新密钥待保存');
+ h.event({type:'state',state:{...h.state,preferences:{expression:'happy'}}});
+ assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('error').textContent,'保存失败');
+});
+
+test('duplicate in-flight saves are blocked and successful response does not erase a newer key draft',async()=>{
+ let resolve,count=0;const h=await harness({saveModelConfig:()=>{count++;return new Promise(r=>resolve=r);}});
+ h.$('model-api-key').value='TEST-first';await h.$('model-api-key').fire('input');await h.$('model-fetch').fire('click');
+ await h.$('model-config-form').fire('submit');await h.$('model-config-form').fire('submit');assert.equal(count,1);
+ h.$('model-api-key').value='TEST-newer';await h.$('model-api-key').fire('input');
+ resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true,storage:'encrypted'}});await flush();
+ assert.equal(h.$('model-api-key').value,'TEST-newer');assert.equal(h.$('model-storage-note').textContent,'新密钥待保存');
+});
+
+test('late initial configuration read does not replace a provider or key the user already edited',async()=>{
+ let resolve;const h=await harness({getModelConfig:()=>new Promise(r=>resolve=r)});
+ h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');
+ h.$('model-api-key').value='TEST-draft';await h.$('model-api-key').fire('input');
+ resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true,storage:'encrypted'}});await flush();
+ assert.equal(h.$('model-provider').value,'deepseek');assert.equal(h.$('model-api-key').value,'TEST-draft');
+ assert.equal(h.$('model-api-key').placeholder,'输入 API Key');
+});
+
+test('explicit removal never submits a typed replacement and clears configured mask only on success',async()=>{
+ let received;const h=await harness({saveModelConfig:input=>{received={...input};return Promise.resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:false,storage:'none'}});}});
+ h.$('model-api-key').value='TEST-not-to-save';await h.$('model-api-key').fire('input');
+ await h.$('model-remove-key').fire('click');await flush();
+ assert.equal(received.removeKey,true);assert.equal(Object.hasOwn(received,'apiKey'),false);
+ assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-api-key').placeholder,'输入 API Key');
+ assert.equal(h.$('model-storage-note').textContent,'未配置密钥');
+});
 test('six pages; forbidden helper, branding, diagnostic and import DOM removed',()=>{
   assert.equal((html.match(/class="settings-page"/g)||[]).length,6);
   for(const forbidden of ['COMPANION','sidebar-footer','class="brand"','class="muted"','<small>','Windows 手动诊断导入','bridge-setup-card','模拟数据演示','page-description','discovery-settings.js','bridge-settings.js'])assert.ok(!html.includes(forbidden),forbidden);
   assert.match(html,/<select id="model-name"/);assert.doesNotMatch(html,/<input id="model-name"/);
   assert.match(css,/\.about-nav\{margin-top:auto\}/);
+});
+
+test('Alpha hides character presentation/selection while retaining persona editor and memory pages',async()=>{
+ assert.doesNotMatch(html,/character-card|character-introduction|data-page="characters?"|id="page-characters?"/);
+ for(const id of ['persona-content','persona-save','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
+ const h=await harness();const persona=h.nav.find(x=>x.dataset.page==='companion');await persona.fire('click');await flush();
+ assert.equal(h.$('page-companion').hidden,false);assert.equal(h.$('persona-content').value,'# Original');
+ persona.dataset.page='characters';await persona.fire('click');
+ assert.equal(h.$('page-connection').hidden,false);assert.equal(h.$('page-companion').hidden,true);
+ assert.equal(h.$('page-title').textContent,'连接');
 });
 test('unavailable backend remains visibly disconnected and unknown never becomes healthy',async()=>{const h=await harness();assert.equal(h.$('connection-status').textContent,'后台未连接');h.event({type:'state',state:{...h.state,connection:{state:'pending'}}});assert.equal(h.$('connection-status').textContent,'连接未确认');});
 test('preset URL hidden, custom URL shown, provider changes clear draft key and model list',async()=>{const h=await harness();assert.equal(h.$('custom-url-row').hidden,true);h.$('model-api-key').value='secret';h.$('model-provider').value='openai-compatible';await h.$('model-provider').fire('change');assert.equal(h.$('custom-url-row').hidden,false);assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-save').disabled,true);});
@@ -62,8 +128,8 @@ test('about check-update network failure is not reported as up to date',async()=
 test('persona refresh discards confirmed stale draft, but never overwrites newer typing',async()=>{const h=await harness();await h.$('persona-refresh').fire('click');h.$('persona-content').value='# Draft';await h.$('persona-content').fire('input');await h.$('persona-refresh').fire('click');assert.equal(h.$('persona-content').value,'# Original');let resolve;h.api.getPersona=()=>new Promise(r=>resolve=r);const request=h.$('persona-refresh').fire('click');h.$('persona-content').value='# Typed during request';await h.$('persona-content').fire('input');resolve({ok:true,value:{content:'# Server',revision:'r3',canEdit:true,canOpen:true,status:'ready'}});await request;assert.equal(h.$('persona-content').value,'# Typed during request');});
 test('late save response preserves a newer provider/key draft',async()=>{let resolve;const h=await harness({saveModelConfig:()=>new Promise(r=>resolve=r)});await h.$('model-fetch').fire('click');await h.$('model-config-form').fire('submit');h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');h.$('model-api-key').value='new draft secret';await h.$('model-api-key').fire('input');resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true,storage:'encrypted'}});await flush();assert.equal(h.$('model-provider').value,'deepseek');assert.equal(h.$('model-api-key').value,'new draft secret');assert.equal(h.$('model-save').disabled,true);});
 
-test('save clears typed secret before IPC and reports session-only storage/restart without exposing key', async()=>{
- let h,received;h=await harness({saveModelConfig:input=>{received={...input};assert.equal(h.$('model-api-key').value,'');return Promise.resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',hasApiKey:true,storage:'session',restartRequired:true}});}});
+test('save masks the committed key and reports session-only storage without secret readback', async()=>{
+ let h,received;h=await harness({saveModelConfig:input=>{received={...input};assert.equal(h.$('model-api-key').value,'test-secret');return Promise.resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',hasApiKey:true,storage:'session',restartRequired:true}});}});
  h.$('model-api-key').value='test-secret';await h.$('model-fetch').fire('click');h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();
  assert.deepEqual(received,{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',apiKey:'test-secret'});assert.equal(h.$('model-api-key').value,'');assert.match(h.$('model-storage-note').textContent,/仅本次/);assert.match(h.$('notice').textContent,/待重启/);
 });

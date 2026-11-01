@@ -21,6 +21,7 @@ function validate(input, { persisted = false } = {}) {
   if (!persisted && !input.model.trim()) throw Error('请输入模型名称。');
   if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 8192 || /[\x00-\x20\x7f]/.test(input.apiKey))) throw Error('API Key 格式无效，请勿包含空白。');
   if (input.removeKey !== undefined && typeof input.removeKey !== 'boolean') throw Error('清除密钥选项无效。');
+  if (typeof input.apiKey === 'string' && /^[•●*]{4,}$/.test(input.apiKey)) throw Error('请输入新密钥，不能保存遮罩占位符。');
   if (input.removeKey && input.apiKey) throw Error('不能同时保存和清除密钥。');
   if (input.apiKey && !baseUrl) throw Error('保存密钥前请填写服务地址。');
   const preset = PROVIDERS.find(item => item.id === input.provider);
@@ -76,9 +77,20 @@ function createCredentialConfig({ userData, safeStorage }) {
       nextStorage = 'encrypted';
     } else if (nextKey) nextStorage = 'session';
     // A crash between writes can only make the key unavailable, never send it to another host.
+    const previousSecret = fs.existsSync(secretFile) ? JSON.parse(fs.readFileSync(secretFile, 'utf8')) : null;
     if (encrypted) atomicWrite(secretFile, encrypted);
     else fs.rmSync(secretFile, { force: true });
-    atomicWrite(configFile, next, true);
+    const writtenSecretRevision = fileRevision(secretFile);
+    try { atomicWrite(configFile, next, true); }
+    catch (error) {
+      // Roll back a reported save failure, without overwriting another writer's key.
+      if (fileRevision(secretFile) === writtenSecretRevision) {
+        if (previousSecret) atomicWrite(secretFile, previousSecret);
+        else fs.rmSync(secretFile, { force: true });
+        secretRevision = fileRevision(secretFile);
+      }
+      throw error;
+    }
     configRevision = fileRevision(configFile); secretRevision = fileRevision(secretFile);
     config = next; apiKey = nextKey; storage = nextStorage;
     return getPublicConfig();
