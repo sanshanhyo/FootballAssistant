@@ -6,12 +6,29 @@ namespace FootballAssistant.GameBridge;
 // Deliberately NOT BatchText/BatchChunkResult: these are unverified UI observations,
 // not player facts, anchors or an atomic page snapshot. No conversion/merge API.
 internal sealed record DiscoveryText(string Path, string Text);
+// Existing reads only. Depth -1 means no panel root was obtained; child count -1 means
+// the current attempted edge has no completed count read. Stage identifies an attempt,
+// not a completed native call or an inferred cause. No object identity or raw UI data.
+internal sealed record DiscoveryFocusDiagnostic(int ResolvedDepth, int AttemptedEdge,
+    int RequestedChildIndex, int ObservedChildCount, int Stage);
 internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryText[] Observations,
     int NativeOperations, double ElapsedMilliseconds, int Nodes, int TotalRoots, int PeakRoots,
     bool TraversalBounded, DiscoveryRequest Request, int PanelIndex, string FocusPath)
 {
     public bool PageIdentityVerified => false;
     public string SelectionProfile { get; init; } = "single";
+    public DiscoveryFocusDiagnostic? FocusDiagnostic { get; init; }
+}
+
+// Shared host publication boundary: never expose rejected raw text, even if only
+// outer semantic validation failed after a successful capture. Numeric diagnostics
+// are explicitly separate so a null result cannot erase the failure location.
+internal sealed record DiscoveryPublication(
+    [property: System.Text.Json.Serialization.JsonPropertyName("result")] DiscoveryResult? Result,
+    [property: System.Text.Json.Serialization.JsonPropertyName("focus_diagnostic")] DiscoveryFocusDiagnostic? FocusDiagnostic)
+{
+    internal static DiscoveryPublication Create(DiscoveryResult? result, bool accepted) =>
+        new(accepted ? result : null, result?.FocusDiagnostic);
 }
 
 internal static class DiscoveryCollector
@@ -49,6 +66,8 @@ internal static class DiscoveryCollector
             var texts = new List<DiscoveryText>(MaximumTexts);
             var nodes = 0; var roots = 0; var peak = 0; var bounded = false;
             var success = false; var reason = "diagnostic_failure";
+            var focusDepth = -1; var focusEdge = -1; var focusIndex = -1;
+            var focusCount = -1; var focusStage = 0;
             BatchNativeBackend? backend = null;
             try
             {
@@ -131,21 +150,31 @@ internal static class DiscoveryCollector
                         VisitTargets(child, depth + 1, Join(path, index), remaining);
                     }
                 }
+                focusStage = 1; // Opening panel; no resolved prefix until it returns a root.
                 BatchObject? current = backend.OpenPanel(policy.Approval.PanelIndex, budget);
                 if (current is null) throw new UiSmokeStopped("discovery_panel_unavailable");
+                focusDepth = 0;
                 try
                 {
                     var edges = policy.Approval.FocusPath.Length == 0 ? Array.Empty<int>() :
                         policy.Approval.FocusPath.Split('/').Select(x => int.Parse(x, CultureInfo.InvariantCulture)).ToArray();
                     foreach (var index in edges)
                     {
+                        focusEdge = focusDepth; focusIndex = index; focusCount = -1;
+                        focusStage = 2; // Ancestor charge/visibility precheck or call.
                         Charge();
                         if (!backend.Visible(current, budget)) throw new UiSmokeStopped("discovery_ancestor_hidden");
-                        if (index >= backend.ChildCount(current, budget)) throw new UiSmokeStopped("discovery_focus_unavailable");
+                        focusStage = 3;
+                        focusCount = backend.ChildCount(current, budget);
+                        if (index >= focusCount) throw new UiSmokeStopped("discovery_focus_unavailable");
+                        focusStage = 4;
                         var child = backend.Child(current, index, budget);
                         if (child is null) throw new UiSmokeStopped("discovery_focus_unavailable");
                         current.Dispose(); current = child;
+                        focusDepth++;
                     }
+                    focusStage = 5; // Exact approved focus resolved; later failure is outside focus traversal.
+                    focusEdge = -1; focusIndex = -1; focusCount = -1;
                     if (targetedRow)
                         VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets(policy.Approval.SelectionProfile));
                     else Visit(current, edges.Length, policy.Approval.FocusPath);
@@ -184,7 +213,10 @@ internal static class DiscoveryCollector
             }
             return new(success ? "raw_diagnostics" : "terminal_failure", reason, observations,
                 budget.Operations, spent, nodes, roots, peak, bounded, request,
-                policy.Approval.PanelIndex, policy.Approval.FocusPath) { SelectionProfile = policy.Approval.SelectionProfile };
+                policy.Approval.PanelIndex, policy.Approval.FocusPath) {
+                    SelectionProfile = policy.Approval.SelectionProfile,
+                    FocusDiagnostic = new(focusDepth, focusEdge, focusIndex, focusCount, focusStage)
+                };
         }
         finally
         {

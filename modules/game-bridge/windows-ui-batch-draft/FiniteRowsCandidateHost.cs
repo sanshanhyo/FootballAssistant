@@ -258,6 +258,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             Volatile.Write(ref terminal, 1);
         }
         if (policy.Terminal) Volatile.Write(ref terminal, 1);
+        var publication = DiscoveryPublication.Create(result, accepted);
         Record(new { phase = "finite_rows_chunk_result", schema_version = 4, pid = context.Pid, session_id = context.Session,
             bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash, entry_tid = context.EntryThread,
             callback_tid = platform.ThreadId, batch_id = policy.Approval.BatchId, page_epoch = policy.Approval.PageEpoch,
@@ -267,7 +268,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             declared_ms = policy.MaximumDeclaredMilliseconds,
             capture_started_at = captureStartedUtc, capture_finished_at = captureFinishedUtc,
             chunk_started_at = startedUtc, chunk_finished_at = DateTimeOffset.UtcNow,
-            result = accepted ? result : null, accepted, error = errorType, operations, elapsed_ms = elapsed,
+            result = publication.Result, focus_diagnostic = publication.FocusDiagnostic, accepted, error = errorType, operations, elapsed_ms = elapsed,
             outcome = Volatile.Read(ref outcome), last_successful_chunk = Volatile.Read(ref lastSuccessfulChunk), last_failed_chunk = Volatile.Read(ref lastFailedChunk),
             failure_reason = Volatile.Read(ref failureReason),
             total_units = policy.TotalOperations, total_elapsed_ms = policy.TotalMilliseconds,

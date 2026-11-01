@@ -65,3 +65,32 @@ pretend the Windows adapter is the Mac reader.
 Synthetic native fixtures assert exact path unions, export/guard/root costs,
 cleanup and fail-closed behavior. C#/PowerShell tests need CI; no local SDK is
 available. All captured example values in tests are invented.
+
+## Numeric focus divergence diagnostic
+
+The finite event's top-level `focus_diagnostic` survives rejection even when `result`
+is intentionally null. It is copied through `DiscoveryPublication`, the same tested
+publication boundary that discards rejected raw text. An unavailable collector result
+produces null diagnostics, not invented zeros. `DiscoveryResult.FocusDiagnostic` and
+the top-level diagnostic contain exactly five integers from existing reads;
+it does not scan siblings, obtain names/types/text, or change admission, guards or budgets.
+`ResolvedDepth` is the number of successfully obtained focus edges (0 = panel root,
+-1 = panel root not yet obtained). Its deepest prefix is the first `ResolvedDepth`
+edges of the already approved `FocusPath`; this is topology, not semantic page identity.
+`AttemptedEdge` is zero-based and `RequestedChildIndex` is the fixed selector's edge.
+`ObservedChildCount` is -1 until that edge's count read completes, including hidden
+ancestor failures; 0 is an actually observed empty container, never an unknown value.
+`Stage`: 0 before panel attempt, 1 panel attempt, 2 ancestor charge/visibility,
+3 count attempt or out-of-range rejection, 4 child acquisition, 5 entire focus resolved.
+A stage describes an attempt, not proof that a native call completed; existing `Reason`
+and failure status remain authoritative. After focus resolution the pending edge,
+index and count are reset to -1. Diagnostics survive terminal failure, but raw text
+observations still discard on failure and final ownership/cleanup checks are unchanged.
+
+Alignment procedure: compare the exact failing prefix against the corrected Mac selector
+and its recorded child topology before proposing a changed Windows selector. A missing
+edge proves that selector does not fit this observed tree, not that a neighbouring edge
+has equivalent meaning. If source evidence cannot determine the replacement, obtain an
+explicitly bounded structural inspection plan for the divergent parent; do not iterate
+full guessed paths, scan arbitrary text, widen the generic focus parser, or silently
+fall back to another panel. No alignment native calls are enabled by this diagnostic.

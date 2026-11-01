@@ -44,6 +44,8 @@ internal static class DiscoveryCollectorTests
                 "exact source-derived discovery costs include prepare, ancestors, every fresh guard and final guard");
             Check(fixture.PanelOpens == 1 && fixture.PanelIndices.SequenceEqual(new[] { 0 }) &&
                 fixture.ChildIndices.Take(2).SequenceEqual(new[] { 0, 6 }), "one panel and exact focus edges, no sibling prefetch");
+            Check(result.FocusDiagnostic == new DiscoveryFocusDiagnostic(2, -1, -1, -1, 5),
+                "resolved focus records completed depth and no pending edge; exact costs above are unchanged");
             Clean(fixture, policy, result);
             Console.WriteLine($"Discovery container depth{depth}: operations={result.NativeOperations}, nodes={result.Nodes}, roots={result.TotalRoots}, peak={result.PeakRoots}; fake native exports, injected zero elapsed.");
         }
@@ -84,6 +86,46 @@ internal static class DiscoveryCollectorTests
                 result.Reason == (hidden ? "discovery_ancestor_hidden" : "discovery_focus_unavailable") &&
                 fixture.ChildIndices.SequenceEqual(new[] { 0 }) && !fixture.Invocations.Contains("get_text"),
                 "hidden/out-of-range focus ancestor fails closed without alternate branch");
+            Check(result.FocusDiagnostic == new DiscoveryFocusDiagnostic(1, 1, 6, hidden ? -1 : 6, hidden ? 2 : 3),
+                "hidden count remains unknown; failed child index records exact existing count and zero-based edge");
+            Clean(fixture, policy, result);
+        }
+        {
+            using var fixture = new BatchTreeFixture(); fixture.BuildDiscovery(2);
+            var container = fixture.Children[103][0]; fixture.Children[container][6] = 0;
+            var policy = Policy(); var result = Capture(policy, fixture);
+            Check(result.Reason == "discovery_focus_unavailable" && result.Observations.Length == 0 &&
+                result.FocusDiagnostic == new DiscoveryFocusDiagnostic(1, 1, 6, 7, 4) &&
+                fixture.ChildIndices.SequenceEqual(new[] { 0, 6 }),
+                "null child after valid count differs from index out-of-range, without any alternate read");
+            var json = System.Text.Json.JsonSerializer.Serialize(result.FocusDiagnostic);
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            Check(document.RootElement.EnumerateObject().Count() == 5 && json.Length < 160 &&
+                document.RootElement.EnumerateObject().All(p => p.Value.ValueKind == System.Text.Json.JsonValueKind.Number),
+                "focus diagnostic has exactly five bounded numeric values, no text, paths, pointers or identities");
+            // Same publication boundary used by the finite host, including outer rejection
+            // of a raw success. Rejected payload cannot leak provisional strings.
+            var publication = DiscoveryPublication.Create(result with
+            { Observations = new[] { new DiscoveryText("synthetic-private-path", "synthetic-private-text") } }, false);
+            var publishedJson = System.Text.Json.JsonSerializer.Serialize(publication);
+            using var published = System.Text.Json.JsonDocument.Parse(publishedJson);
+            Check(published.RootElement.GetProperty("result").ValueKind == System.Text.Json.JsonValueKind.Null &&
+                published.RootElement.GetProperty("focus_diagnostic").GetProperty("ResolvedDepth").GetInt32() == 1 &&
+                !publishedJson.Contains("synthetic-private"),
+                "serialized failure envelope retains numeric focus divergence while result and all raw text stay discarded");
+            Check(DiscoveryPublication.Create(null, false) == new DiscoveryPublication(null, null),
+                "no collector result never fabricates a numeric focus diagnostic");
+            Check(ReferenceEquals(DiscoveryPublication.Create(result, true).Result, result),
+                "accepted publication preserves the existing result without rewrite");
+            Clean(fixture, policy, result);
+        }
+        {
+            using var fixture = new BatchTreeFixture(); fixture.BuildDiscovery(2);
+            fixture.Children[103].Clear();
+            var policy = Policy(); var result = Capture(policy, fixture);
+            Check(result.FocusDiagnostic == new DiscoveryFocusDiagnostic(0, 0, 0, 0, 3) &&
+                result.Reason == "discovery_focus_unavailable" && fixture.ChildIndices.Count == 0,
+                "actual zero child count is distinct from unknown -1 and empty resolved prefix is panel root");
             Clean(fixture, policy, result);
         }
         {
