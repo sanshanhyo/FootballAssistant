@@ -11,6 +11,8 @@ internal sealed record DiscoveryText(string Path, string Text);
 // not a completed native call or an inferred cause. No object identity or raw UI data.
 internal sealed record DiscoveryFocusDiagnostic(int ResolvedDepth, int AttemptedEdge,
     int RequestedChildIndex, int ObservedChildCount, int Stage);
+internal readonly record struct DiscoveryFocusEdge(int Depth, int RequestedChildIndex,
+    int ObservedChildCount, int Stage);
 internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryText[] Observations,
     int NativeOperations, double ElapsedMilliseconds, int Nodes, int TotalRoots, int PeakRoots,
     bool TraversalBounded, DiscoveryRequest Request, int PanelIndex, string FocusPath)
@@ -18,6 +20,7 @@ internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryTe
     public bool PageIdentityVerified => false;
     public string SelectionProfile { get; init; } = "single";
     public DiscoveryFocusDiagnostic? FocusDiagnostic { get; init; }
+    public DiscoveryFocusEdge[]? FocusEdges { get; init; }
 }
 
 // Shared host publication boundary: never expose rejected raw text, even if only
@@ -25,10 +28,11 @@ internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryTe
 // are explicitly separate so a null result cannot erase the failure location.
 internal sealed record DiscoveryPublication(
     [property: System.Text.Json.Serialization.JsonPropertyName("result")] DiscoveryResult? Result,
-    [property: System.Text.Json.Serialization.JsonPropertyName("focus_diagnostic")] DiscoveryFocusDiagnostic? FocusDiagnostic)
+    [property: System.Text.Json.Serialization.JsonPropertyName("focus_diagnostic")] DiscoveryFocusDiagnostic? FocusDiagnostic,
+    [property: System.Text.Json.Serialization.JsonPropertyName("focus_edges")] DiscoveryFocusEdge[]? FocusEdges = null)
 {
     internal static DiscoveryPublication Create(DiscoveryResult? result, bool accepted) =>
-        new(accepted ? result : null, result?.FocusDiagnostic);
+        new(accepted ? result : null, result?.FocusDiagnostic, result?.FocusEdges);
 }
 
 internal static class DiscoveryCollector
@@ -68,6 +72,17 @@ internal static class DiscoveryCollector
             var success = false; var reason = "diagnostic_failure";
             var focusDepth = -1; var focusEdge = -1; var focusIndex = -1;
             var focusCount = -1; var focusStage = 0;
+            // One fixed candidate only. Value-type slots allocated before any native invocation.
+            var alignment = policy.Approval.SelectionProfile == "tactics_alignment_candidate";
+            var focusTrace = alignment ? new DiscoveryFocusEdge[35] : null;
+            var focusTraceCount = 0;
+            void TraceFocus()
+            {
+                if (focusTrace is null) return;
+                if (focusEdge is < 0 or >= 35) throw new UiSmokeStopped("alignment_trace_bound");
+                focusTrace[focusEdge] = new(focusDepth, focusIndex, focusCount, focusStage);
+                focusTraceCount = focusEdge + 1;
+            }
             BatchNativeBackend? backend = null;
             try
             {
@@ -162,15 +177,20 @@ internal static class DiscoveryCollector
                     {
                         focusEdge = focusDepth; focusIndex = index; focusCount = -1;
                         focusStage = 2; // Ancestor charge/visibility precheck or call.
+                        TraceFocus();
                         Charge();
                         if (!backend.Visible(current, budget)) throw new UiSmokeStopped("discovery_ancestor_hidden");
-                        focusStage = 3;
-                        focusCount = backend.ChildCount(current, budget);
+                        focusStage = 3; TraceFocus();
+                        focusCount = backend.ChildCount(current, budget); TraceFocus();
+                        // This is a hypothesis gate, not semantic identity. Never inspect a sibling.
+                        if (alignment && focusDepth == 14 && focusCount != 1)
+                            throw new UiSmokeStopped("alignment_parent_shape_changed");
                         if (index >= focusCount) throw new UiSmokeStopped("discovery_focus_unavailable");
-                        focusStage = 4;
+                        focusStage = 4; TraceFocus();
                         var child = backend.Child(current, index, budget);
                         if (child is null) throw new UiSmokeStopped("discovery_focus_unavailable");
                         current.Dispose(); current = child;
+                        focusStage = 5; TraceFocus();
                         focusDepth++;
                     }
                     focusStage = 5; // Exact approved focus resolved; later failure is outside focus traversal.
@@ -203,6 +223,7 @@ internal static class DiscoveryCollector
             try { budget.Check(); }
             catch { success = false; reason = "discovery_final_guard_failed"; }
             var observations = texts.ToArray();
+            var traceSnapshot = focusTrace is null ? null : focusTrace.Take(focusTraceCount).ToArray();
             var spent = elapsed();
             success = policy.Finish(grant, budget.Operations, spent, success, now());
             accounted = true;
@@ -215,7 +236,8 @@ internal static class DiscoveryCollector
                 budget.Operations, spent, nodes, roots, peak, bounded, request,
                 policy.Approval.PanelIndex, policy.Approval.FocusPath) {
                     SelectionProfile = policy.Approval.SelectionProfile,
-                    FocusDiagnostic = new(focusDepth, focusEdge, focusIndex, focusCount, focusStage)
+                    FocusDiagnostic = new(focusDepth, focusEdge, focusIndex, focusCount, focusStage),
+                    FocusEdges = traceSnapshot
                 };
         }
         finally

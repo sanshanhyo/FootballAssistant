@@ -18,6 +18,9 @@ internal sealed class FiniteCaptureSelection
     internal AttributeRowSelection? Attribute { get; }
     internal string[] GetPaths() => (string[])paths.Clone();
     internal const string TacticsRoot = "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0";
+    // Diagnostic hypothesis only: the observed depth14 parent had one child, not Mac's child1.
+    internal const string TacticsAlignmentParent = "0/4/0/0/0/0/0/0/0/0/0/0/0/0";
+    internal const string TacticsAlignmentRoot = TacticsAlignmentParent + "/0/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0";
     internal const string NextMatchRoot = "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2";
     internal const string ScheduleRoot = "0/4/0/0/0/0/0/1/0/0/0/0/0/0/1/0/5";
     private static readonly Dictionary<string, FiniteCaptureSelection> Pages = Build();
@@ -25,6 +28,9 @@ internal sealed class FiniteCaptureSelection
     {
         var pages=new Dictionary<string,FiniteCaptureSelection>(StringComparer.Ordinal);
         pages.Add("tactics_current",new("tactics_current","tactics",TacticsRoot,-1,0,new[] { "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/1/0/0/1/0", "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/0", "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/2/0/0/1/0/1", "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0/2/0/0/0/0/0" }));
+        pages.Add("tactics_alignment_candidate",new("tactics_alignment_candidate","tactics_alignment",
+            TacticsAlignmentRoot,-1,0,pages["tactics_current"].GetPaths()
+                .Select(path=>TacticsAlignmentRoot+path[TacticsRoot.Length..]).ToArray()));
         pages.Add("next_match_card",new("next_match_card","next_match",NextMatchRoot,-1,0,new[] { "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/0/0", "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/1/0/1/0/0", "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/1/0/1/1/0/0/0/0" }));
         for(var row=0;row<10;row++)
         {
@@ -47,6 +53,7 @@ internal sealed class FiniteCaptureSelection
     internal static string[] ManifestProfiles(string manifest) => manifest switch
     {
         "tactics_current" => new[] {"tactics_current"},
+        "tactics_alignment_candidate" => new[] {"tactics_alignment_candidate"},
         "next_match_card" => new[] {"next_match_card"},
         "schedule_rows0_9" => Enumerable.Range(0,10).Select(row=>"schedule_row"+row.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray(),
         _ => AttributeRowSelection.ManifestProfiles(manifest)

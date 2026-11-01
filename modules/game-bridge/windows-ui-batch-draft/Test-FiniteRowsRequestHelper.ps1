@@ -38,12 +38,12 @@ try {
     $refused=$false
     try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteTwoChunksConfirmed|Out-Null}catch{$refused=$true}
     Check ($refused -and [IO.File]::ReadAllText($path) -ceq $original) 'existing manifest cannot be replaced'
-    foreach($scope in @('profile_rows0_3','profile_all_rows','tactics_current','next_match_card','schedule_rows0_9')){
+    foreach($scope in @('profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','next_match_card','schedule_rows0_9')){
         Reset-Fixture
         $refused=$false
         try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -Scope $scope|Out-Null}catch{$refused=$true}
         Check ($refused -and -not [IO.File]::Exists($path)) 'old session cannot admit new manifest'
-        $script:Session.allowed_scopes=@('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','next_match_card','schedule_rows0_9');Save 'session.json' $script:Session
+        $script:Session.allowed_scopes=@('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','next_match_card','schedule_rows0_9');Save 'session.json' $script:Session
         $oldConsentRefused=$false
         try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteTwoChunksConfirmed -Scope $scope|Out-Null}catch{$oldConsentRefused=$true}
         Check ($oldConsentRefused -and -not [IO.File]::Exists($path)) 'old two-chunk confirmation cannot authorize expanded manifest'

@@ -44,6 +44,7 @@ internal static class PageDiscoveryTests
                 result.PeakRoots==(profile=="tactics_current"?11:profile=="next_match_card"?15:33) && guards==units+nodes+3,
                 "single-pass native trie exact units/nodes/roots/fresh guards");
             Check(PageDiscoveryValidation.TryValidate(result,profile),"all selected complete synthetic displays pass pinned semantics");
+            Check(result.FocusEdges is null,"normal page profiles never acquire candidate-only edge traces");
             DiscoveryResult TextAt(string path,string text)=>result with {Observations=result.Observations
                 .Select(o=>o.Path==path?o with {Text=text}:o).ToArray()};
             if(profile=="tactics_current")
@@ -121,6 +122,128 @@ internal static class PageDiscoveryTests
             if(failure is "badtitle" or "semantic") Check(result.Status=="raw_diagnostics"&&!PageDiscoveryValidation.TryValidate(result,profile),"raw getters do not imply semantic page success");
             else Check(result.Status=="terminal_failure"&&result.Observations.Length==0,"failure clears entire selected page set: "+failure);
             Clean(fixture,policy,result);
+        }
+        // One explicit alignment hypothesis only: original selectors with edge14 changed1→0.
+        const string alignment="tactics_alignment_candidate";
+        var alignmentPaths=BatchTreeFixture.PagePaths(alignment);
+        var originalParts=BatchTreeFixture.TacticsPageRoot.Split('/');
+        var candidateParts=BatchTreeFixture.TacticsAlignmentRoot.Split('/');
+        Check(originalParts.Length==35 && candidateParts.Length==35 && originalParts[14]=="1" && candidateParts[14]=="0" &&
+            Enumerable.Range(0,35).Where(i=>originalParts[i]!=candidateParts[i]).SequenceEqual(new[]{14}),
+            "independent literal root changes exactly the approved zero-based edge14");
+        Check(FiniteCaptureSelection.TryGet(alignment,out var alignedSelection) && alignedSelection.Kind=="tactics_alignment" &&
+            alignedSelection.FocusRoot==BatchTreeFixture.TacticsAlignmentRoot &&
+            alignedSelection.GetPaths().SequenceEqual(alignmentPaths),"candidate is separately named, with exact unchanged fixed suffixes");
+        var standardMethodLookups=0;var standardUnits=0;
+        foreach(var inherited in new[]{false,true})
+        {
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=inherited};fixture.BuildPageSelection(alignment);
+            var parent=fixture.NodeAt(BatchTreeFixture.TacticsAlignmentParent);
+            Check(fixture.Children[parent].Count==1,"fixture actually exposes one child at evidenced parent");
+            var policy=Policy(alignment);var guards=0;
+            var result=Capture(policy,fixture,fresh:()=>{guards++;return identity;});
+            Check(result.Status=="raw_diagnostics" && result.Nodes==64 && result.TotalRoots==199 && result.PeakRoots==11 &&
+                result.Observations.Select(o=>o.Path).SequenceEqual(alignmentPaths) &&
+                PageDiscoveryValidation.TryValidate(result,alignment),"all four generic synthetic displays pass candidate-only grammar");
+            Check(!PageDiscoveryValidation.TryValidate(result,"tactics_current"),"alignment capture never becomes normal tactics by rebinding");
+            Check(result.FocusEdges is {Length:35} && result.FocusEdges.Select(e=>e.Depth).SequenceEqual(Enumerable.Range(0,35)) &&
+                result.FocusEdges.Select(e=>e.RequestedChildIndex).SequenceEqual(candidateParts.Select(int.Parse)) &&
+                result.FocusEdges.All(e=>e.Stage==5 && e.ObservedChildCount>=1) && result.FocusEdges[14].ObservedChildCount==1,
+                "bounded numeric edge trace records each successful known count/obtained child");
+            Check(fixture.ChildEdges.Where(e=>e.Parent==parent).Select(e=>e.Index).SequenceEqual(new[]{0}) &&
+                fixture.TextReads.SequenceEqual(alignmentPaths.Select(fixture.NodeAt)),"sole child0 and four exact getters only");
+            var expectedEdges=new List<(nint Parent,int Index)>();
+            void Walk(string prefix)
+            {
+                foreach(var index in alignmentPaths.Where(path=>prefix.Length==0||path.StartsWith(prefix+"/",StringComparison.Ordinal))
+                    .Select(path=>path[(prefix.Length==0?0:prefix.Length+1)..].Split('/')[0]).Select(int.Parse).Distinct().OrderBy(i=>i))
+                {
+                    expectedEdges.Add((fixture.NodeAt(prefix),index));var next=prefix.Length==0?index.ToString():prefix+"/"+index;
+                    if(!alignmentPaths.Contains(next))Walk(next);
+                }
+            }
+            Walk("");
+            Check(expectedEdges.Count==63 && fixture.ChildEdges.SequenceEqual(expectedEdges),"no unselected siblings or original edge1 fallback obtained");
+            if(!inherited)
+            {
+                standardMethodLookups=fixture.MethodLookups;standardUnits=result.NativeOperations;
+                Check(result.NativeOperations==1241 && guards==1308,"numeric trace adds no native calls or fresh checks");
+            }
+            else
+            {
+                Check(fixture.ParentLookups>0 && fixture.MethodLookups>standardMethodLookups &&
+                    result.NativeOperations==standardUnits+fixture.ParentLookups+fixture.MethodLookups-standardMethodLookups &&
+                    guards==result.NativeOperations+result.Nodes+3,"inherited extra units equal actual fixture lookup exports, not a fabricated measured constant");
+                Console.WriteLine($"Alignment inherited fixture: units={result.NativeOperations},parents={fixture.ParentLookups},methods={fixture.MethodLookups},guards={guards}; owned delegates only.");
+            }
+            Clean(fixture,policy,result);
+            Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                ()=>throw new Exception("no retry"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"candidate remains one-shot after success");
+        }
+        foreach(var failure in new[]{"count0","count2","hidden","nullchild","suffix","semantic","guard","cleanup"})
+        {
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};fixture.BuildPageSelection(alignment);
+            var parent=fixture.NodeAt(BatchTreeFixture.TacticsAlignmentParent);
+            if(failure=="count0")fixture.Children[parent].Clear();
+            if(failure=="count2")fixture.Children[parent].Add(fixture.NodeAt("0/0"));
+            if(failure=="hidden")fixture.HiddenNodes.Add(parent);
+            if(failure=="nullchild")fixture.NullChildEdges.Add((parent,0));
+            nint wrongSuffixParent=0;
+            if(failure=="suffix")
+            {
+                wrongSuffixParent=fixture.NodeAt(alignmentPaths[0][..alignmentPaths[0].LastIndexOf('/')]);
+                fixture.Children[wrongSuffixParent].Add(fixture.Children[wrongSuffixParent][0]);
+                fixture.Children[wrongSuffixParent][0]=fixture.NodeAt("0/0");
+            }
+            if(failure=="semantic")fixture.SetNodeText(alignmentPaths[0],"均衡4-4-3 - 控球");
+            if(failure=="cleanup")fixture.FailFirstFree=true;
+            var policy=Policy(alignment);
+            var result=Capture(policy,fixture,fresh:()=>failure=="guard"&&fixture.ChildEdges.Count>=14?
+                identity with{WindowScanStatus="failed"}:identity);
+            var semantic=PageDiscoveryValidation.TryValidate(result,alignment);
+            if(failure=="semantic")Check(result.Status=="raw_diagnostics"&&!semantic,"native text success cannot imply aligned tactical semantic success");
+            else Check(result.Status=="terminal_failure"&&result.Observations.Length==0,"candidate failure discards all selected text: "+failure);
+            if(failure is "count0" or "count2")
+                Check(result.Reason=="alignment_parent_shape_changed" && !fixture.ChildEdges.Any(e=>e.Parent==parent) &&
+                    result.FocusEdges is {Length:15} && result.FocusEdges[14].Depth==14 && result.FocusEdges[14].RequestedChildIndex==0 &&
+                    result.FocusEdges[14].ObservedChildCount==(failure=="count0"?0:2) && result.FocusEdges[14].Stage==3,
+                    "sole-child shape checked after actual count, before any get_Item or alternate sibling");
+            if(failure=="hidden")Check(result.FocusEdges is {Length:15} && result.FocusEdges[14].Stage==2 &&
+                result.FocusEdges[14].ObservedChildCount==-1,"hidden ancestor does not invent an unobserved child count");
+            if(failure=="nullchild")Check(result.FocusEdges is {Length:15} && result.FocusEdges[14].Stage==4 &&
+                result.FocusEdges[14].ObservedChildCount==1,"null child preserves attempted-stage rather than claiming obtained");
+            if(failure=="suffix")Check(!fixture.ChildEdges.Contains((wrongSuffixParent,1)),"wrong suffix never hunts adjacent existing target");
+            var publication=DiscoveryPublication.Create(result,false);
+            Check(publication.Result is null && ReferenceEquals(publication.FocusEdges,result.FocusEdges) &&
+                ReferenceEquals(publication.FocusDiagnostic,result.FocusDiagnostic),"rejected publication retains only numeric focus evidence separately");
+            var json=System.Text.Json.JsonSerializer.Serialize(publication);
+            Check(json.Contains("\"focus_edges\"") && !json.Contains("均衡") && !json.Contains("Text"),"failure publication includes bounded numeric trace, never raw texts");
+            using(var encoded=System.Text.Json.JsonDocument.Parse(json))
+            {
+                var trace=encoded.RootElement.GetProperty("focus_edges");
+                Check(trace.ValueKind==System.Text.Json.JsonValueKind.Array && trace.GetArrayLength()<=35,
+                    "serialized candidate trace has at most35 bounded entries");
+                foreach(var edge in trace.EnumerateArray())
+                {
+                    var properties=edge.EnumerateObject().ToArray();
+                    Check(properties.Length==4 && properties.All(property=>
+                        new[]{"Depth","RequestedChildIndex","ObservedChildCount","Stage"}.Contains(property.Name) &&
+                        property.Value.ValueKind==System.Text.Json.JsonValueKind.Number && property.Value.TryGetInt32(out _)),
+                        "edge serialization contains exactly four numeric fields, no paths/pointers/text");
+                }
+            }
+            Clean(fixture,policy,result);
+        }
+        {
+            using var fixture=new BatchTreeFixture();fixture.BuildPageSelection(alignment);
+            var normal=Policy("tactics_current");var result=Capture(normal,fixture);
+            var parent=fixture.NodeAt(BatchTreeFixture.TacticsAlignmentParent);
+            Check(result.Status=="terminal_failure" && result.Observations.Length==0 && result.FocusEdges is null &&
+                !fixture.ChildEdges.Any(edge=>edge.Parent==parent),"normal tactics never silently switches old requestededge1 to candidatechild0");
+            Clean(fixture,normal,result);
+            var rejected=false;
+            try { _=Policy(alignment,BatchTreeFixture.TacticsAlignmentRoot+"/0"); } catch(ArgumentException) { rejected=true; }
+            Check(rejected,"candidate request cannot override the fixed remaining suffix/root");
         }
     }
 }

@@ -26,7 +26,7 @@ internal static class PageDiscoveryValidation
             if(item is null || item.Path!=paths[i] || item.Text is null || item.Text.Length is <1 or >128) return false;
             raw[i]=item.Text;
         }
-        return selection.Kind switch { "tactics"=>Tactics(raw), "next_match"=>NextMatch(raw),
+        return selection.Kind switch { "tactics"=>Tactics(raw), "tactics_alignment"=>Tactics(raw), "next_match"=>NextMatch(raw),
             "schedule"=>Schedule(raw), _=>false };
     }
     private static bool Letter(char c)=>char.IsLetter(c);

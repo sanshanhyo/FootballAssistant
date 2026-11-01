@@ -94,3 +94,37 @@ has equivalent meaning. If source evidence cannot determine the replacement, obt
 explicitly bounded structural inspection plan for the divergent parent; do not iterate
 full guessed paths, scan arbitrary text, widen the generic focus parser, or silently
 fall back to another panel. No alignment native calls are enabled by this diagnostic.
+
+## Isolated Windows tactics alignment candidate
+
+`tactics_alignment_candidate` is a one-chunk diagnostic manifest, not a replacement
+for `tactics_current` and not a normal tactics data source (`source_kind` is
+`tactics_alignment`). Its fixed panel0 parent is
+`0/4/0/0/0/0/0/0/0/0/0/0/0/0` (14 edges). A prior Windows diagnostic found
+exactly one child there whereas the corrected Mac selector requested child1.
+This justifies investigating the sole child, **not** asserting equivalent semantics.
+The candidate rechecks count==1, obtains only child0, then follows the original
+remaining Mac suffix and four leaf suffixes. Count0 or count2+ immediately stops;
+there is no sibling scan, fallback, alternate panel or automatic retry.
+
+The manifest still requires explicit finite-manifest confirmation and immutable
+nonce/session/window/module/expiry binding. It has one chunk under the unchanged
+1000ms soft/2048 reserved-operation ceiling, 800ms/1792 cooperative stop,
+depth48/node96/text8/live64/total512 limits. Generic focus parsing stays depth32;
+only this exact fixed35-edge candidate is separately admitted. Existing profiles
+and their selectors remain unchanged.
+
+Candidate-only `focus_edges` contains at most35 value-type entries from already
+required focus reads: Depth(zero-based source depth), RequestedChildIndex,
+ObservedChildCount(-1 unknown), Stage(2 visibility attempt,3 count attempt or
+rejection,4 child attempt,5 child obtained). Slots are preallocated before native
+calls. The snapshot is taken before elapsed accounting; there is no code inserted
+inside runtimeInvoke→gcNew. The top-level array survives a rejected/null result,
+without leaking raw failed text; other profiles emit null. Scalar focus diagnostics
+remain available as before. Target collection still uses only the four fixed leaves.
+
+Successful four-leaf grammar/title/style/mentality consistency is necessary but
+not proof of page/team identity or business facts. Output stays raw, identityfalse,
+non-atomic, and outside the normal tactics adapter. Actual Windows paths and texts
+must be reviewed against the visible page before a subsequent explicit fixed
+Windows selector can be accepted. Synthetic fixtures are not real page evidence.

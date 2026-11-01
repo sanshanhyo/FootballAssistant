@@ -109,7 +109,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             session_id = context.Session, bridge_sha256 = context.BridgeHash, game_sha256 = context.GameHash,
             exe_sha256 = VerifiedWindowsBuild.ExecutableSha256, window_class = context.ConfirmedWindowClass,
             entry_tid = context.EntryThread, finite_rows_enabled_by_default = false, raw_diagnostics_only = true,
-            allowed_scopes = new[] { "goalkeeper_rows0_3", "profile_rows0_3", "profile_all_rows", "tactics_current", "next_match_card", "schedule_rows0_9" }, maximum_chunks = 18, cooldown_ms = 2000,
+            allowed_scopes = new[] { "goalkeeper_rows0_3", "profile_rows0_3", "profile_all_rows", "tactics_current", "tactics_alignment_candidate", "next_match_card", "schedule_rows0_9" }, maximum_chunks = 18, cooldown_ms = 2000,
             per_chunk_ms = 1000, per_chunk_units = 2048, total_ms = 18000, total_units = 36864,
             page_identity_verified = false, page_epoch_is_operator_assertion = true });
         WriteState(); _ = Task.Run(WriteEvidence);
@@ -230,7 +230,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
                 if (valid && (seenLabels.Count + labels.Length > 35 ||
                     labels.Any(label => seenLabels.Contains((category!, label))))) valid = false;
             }
-            else valid = (sourceKind is "tactics" or "next_match" or "schedule") &&
+            else valid = (sourceKind is "tactics_alignment" or "tactics" or "next_match" or "schedule") &&
                 result is not null && PageDiscoveryValidation.TryValidate(result, grant.SelectionProfile);
         }
         catch (Exception error)
@@ -268,7 +268,7 @@ internal sealed class FiniteRowsCandidateHost : IDisposable
             declared_ms = policy.MaximumDeclaredMilliseconds,
             capture_started_at = captureStartedUtc, capture_finished_at = captureFinishedUtc,
             chunk_started_at = startedUtc, chunk_finished_at = DateTimeOffset.UtcNow,
-            result = publication.Result, focus_diagnostic = publication.FocusDiagnostic, accepted, error = errorType, operations, elapsed_ms = elapsed,
+            result = publication.Result, focus_diagnostic = publication.FocusDiagnostic, focus_edges = publication.FocusEdges, accepted, error = errorType, operations, elapsed_ms = elapsed,
             outcome = Volatile.Read(ref outcome), last_successful_chunk = Volatile.Read(ref lastSuccessfulChunk), last_failed_chunk = Volatile.Read(ref lastFailedChunk),
             failure_reason = Volatile.Read(ref failureReason),
             total_units = policy.TotalOperations, total_elapsed_ms = policy.TotalMilliseconds,

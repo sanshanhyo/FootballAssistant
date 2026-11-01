@@ -159,16 +159,21 @@ sealed class BatchTreeFixture : IDisposable
         EnsurePath(CategoryRow(category,labels.Length));
     }
     internal const string TacticsPageRoot = "0/4/0/0/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0";
+    internal const string TacticsAlignmentRoot = "0/4/0/0/0/0/0/0/0/0/0/0/0/0/0/0/2/0/0/0/1/0/0/0/0/0/0/0/0/0/0/0/0/0/0";
+    internal const string TacticsAlignmentParent = "0/4/0/0/0/0/0/0/0/0/0/0/0/0";
+    internal readonly HashSet<(nint Parent,int Index)> NullChildEdges = new();
     internal const string NextMatchPageRoot = "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2";
     internal const string SchedulePageRoot = "0/4/0/0/0/0/0/1/0/0/0/0/0/0/1/0/5";
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_current" => TacticsPageRoot, "next_match_card" => NextMatchPageRoot,
+    { "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
        _ when profile.StartsWith("schedule_row",StringComparison.Ordinal) => SchedulePageRoot,
        _ => throw new ArgumentException() };
     internal static string[] PagePaths(string profile)
     {
         if(profile=="tactics_current") return new[] { TacticsPageRoot+"/0/0/0/0/1/0/0/1/0",TacticsPageRoot+"/0/0/1/0/0/0/0/0/0",
             TacticsPageRoot+"/0/0/2/0/0/1/0/1",TacticsPageRoot+"/2/0/0/0/0/0" };
+        if(profile=="tactics_alignment_candidate") return new[] { TacticsAlignmentRoot+"/0/0/0/0/1/0/0/1/0",TacticsAlignmentRoot+"/0/0/1/0/0/0/0/0/0",
+            TacticsAlignmentRoot+"/0/0/2/0/0/1/0/1",TacticsAlignmentRoot+"/2/0/0/0/0/0" };
         if(profile=="next_match_card") return new[] {NextMatchPageRoot+"/0/0/0/0/0/0/0",NextMatchPageRoot+"/0/0/0/0/0/1/0/1/0/0",
             NextMatchPageRoot+"/0/0/0/0/0/1/0/1/1/0/0/0/0"};
         if(!profile.StartsWith("schedule_row",StringComparison.Ordinal) || !int.TryParse(profile[12..],out var row) || row is <0 or >9)
@@ -192,7 +197,7 @@ sealed class BatchTreeFixture : IDisposable
         else
         {
             var paths=PagePaths(profile);
-            var values=profile=="tactics_current" ? new[] {"均衡4-4-2 - 控球","控球","均衡","队形"} :
+            var values=profile is "tactics_current" or "tactics_alignment_candidate" ? new[] {"均衡4-4-2 - 控球","控球","均衡","队形"} :
                 new[] {"下一场比赛（2030-2-28）","TEST OPPONENT","TEST FRIENDLY"};
             for(var i=0;i<paths.Length;i++){EnsurePath(paths[i]);SetNodeText(paths[i],values[i]);}
         }
@@ -303,7 +308,7 @@ sealed class BatchTreeFixture : IDisposable
         {
             var index = Marshal.ReadInt32(Marshal.ReadIntPtr(args));
             if (instance == 101) { PanelIndices.Add(index); if (index != 0) throw new Exception("Wrong panel."); return 102; }
-            ChildIndices.Add(index); ChildEdges.Add((instance, index)); return Children[instance][index];
+            ChildIndices.Add(index); ChildEdges.Add((instance, index)); return NullChildEdges.Contains((instance,index)) ? 0 : Children[instance][index];
         }
         throw new Exception("Unexpected getter.");
     }
