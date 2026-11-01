@@ -13,6 +13,31 @@ internal static class FinitePrivateFileWriterTests
             var writer = new FinitePrivateFileWriter(root);
             var path = Path.Combine(root,"finite-rows-state.json");
             writer.Write("finite-rows-state.json",new { sequence=0, payload=new string('x',2048) });
+            // Deterministic open-reader case, not merely probabilistic scheduling.
+            using (var held = new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
+            {
+                writer.Write("finite-rows-state.json",new { sequence=-1, payload="replacement" });
+                using var oldSnapshot = JsonDocument.Parse(held);
+                Check(oldSnapshot.RootElement.GetProperty("sequence").GetInt32()==0,
+                    "already-open reader retains complete old snapshot while path is replaced");
+                using var newSnapshot = JsonDocument.Parse(File.ReadAllBytes(path));
+                Check(newSnapshot.RootElement.GetProperty("sequence").GetInt32()==-1,
+                    "new readers see complete replacement without deleting old snapshot first");
+            }
+            if (OperatingSystem.IsWindows())
+            {
+                using var denied = new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read);
+                var blocked=false;
+                try { writer.Write("finite-rows-state.json",new { sequence=-2 }); }
+                catch(IOException) { blocked=true; }
+                catch(UnauthorizedAccessException) { blocked=true; }
+                Check(blocked,"reader without delete sharing is respected, not bypassed or retried");
+                using var retained = JsonDocument.Parse(denied);
+                Check(retained.RootElement.GetProperty("sequence").GetInt32()==-1,
+                    "denied replacement preserves the prior complete snapshot");
+                Check(!Directory.EnumerateFiles(root,"*.tmp").Any(),"denied replacement cleans only its owned temporary");
+            }
+            writer.Write("finite-rows-state.json",new { sequence=0, payload=new string('x',2048) });
             var writes = Task.Run(() =>
             {
                 for(var i=1;i<=32;i++) writer.Write("finite-rows-state.json",new { sequence=i, payload=new string('x',2048) });

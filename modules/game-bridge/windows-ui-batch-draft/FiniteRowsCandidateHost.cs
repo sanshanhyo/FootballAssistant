@@ -30,7 +30,12 @@ internal sealed class FinitePrivateFileWriter
                 { created = true; stream.Write(bytes); stream.Flush(flushToDisk: true); }
                 WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(path);
                 WindowsProbeConfiguration.ValidateAbsoluteNonReparsePath(temporary);
-                File.Move(temporary, path, overwrite: true);
+                // MoveFileEx(overwrite) on Windows can deny an open destination even
+                // when its reader shares DELETE. ReplaceFile supports shared readers
+                // and preserves destination ACLs; never ignore metadata/ACL errors.
+                // No delete/copy fallback, permission bypass, or unbounded retry.
+                if (File.Exists(path)) File.Replace(temporary, path, destinationBackupFileName: null);
+                else File.Move(temporary, path);
             }
             finally
             {
