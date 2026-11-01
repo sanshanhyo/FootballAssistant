@@ -18,7 +18,22 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - run: python modules/game-bridge/tests/verify_guard_component_scan.py
       - run: dotnet run --project modules/game-bridge/tests/WindowsProbeTests.csproj
+      - name: Owned-window guard benchmark (baseline, no game)
+        if: runner.os == 'Windows'
+        run: dotnet run --configuration Release --project modules/game-bridge/tests/WindowsGuardBenchmark.csproj -- baseline
+      - name: Owned-window guard benchmark (instrumented, no game)
+        if: runner.os == 'Windows'
+        run: dotnet run --configuration Release --project modules/game-bridge/tests/WindowsGuardBenchmark.csproj -- components
+      - name: Upload numeric guard benchmark results
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-owned-window-guard-benchmark
+          path: guard-benchmark-*.json
+          if-no-files-found: warn
+          retention-days: 7
       - run: dotnet build modules/game-bridge/FootballAssistant.DirectBridge.csproj --configuration Release --output build/windows-probe
       - name: Upload own probe-only bridge and corresponding source (no game/runtime)
         if: runner.os == 'Windows'
