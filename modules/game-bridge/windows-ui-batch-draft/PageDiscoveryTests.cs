@@ -322,7 +322,7 @@ internal static class PageDiscoveryTests
                 Check(publication.Result is null && ReferenceEquals(publication.Topology,result.Topology),"failure publication preserves numeric topology only");
                 using(var json=System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(publication)))
                     foreach(var node in json.RootElement.GetProperty("topology").EnumerateArray())
-                        Check(node.EnumerateObject().Count()==10 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"topology is ten integers only");
+                        Check(node.EnumerateObject().Count()==14 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"topology is fourteen integers only");
                 Clean(fixture,policy,result);
                 Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
                     ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"probe cannot retry in consumed request");
@@ -390,7 +390,7 @@ internal static class PageDiscoveryTests
             var publication=DiscoveryPublication.Create(result,false);
             using(var json=System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(publication)))
                 foreach(var node in json.RootElement.GetProperty("topology").EnumerateArray())
-                    Check(node.EnumerateObject().Count()==10 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"all10 topology fields numeric on rejected publication");
+                    Check(node.EnumerateObject().Count()==14 && node.EnumerateObject().All(p=>p.Value.TryGetInt32(out _)),"all14 topology fields numeric on rejected publication");
             Clean(fixture,policy,result);
             Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
                 ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"fixed frontier request cannot replay");
@@ -473,6 +473,82 @@ internal static class PageDiscoveryTests
             Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
                 ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"remaining scope cannot replay");
             Console.WriteLine($"Remaining {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; owned inherited fixture only.");
+        }
+        foreach(var scenario in new[]{"positive","zero","nan","negative","infinity","nontext","blank","oversize","utf16","getter","hidden","work","hard","guard","cleanup"})
+        {
+            const string profile="tactics_ineligible_text7";var focus=BatchTreeFixture.EligibilityRoot;
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};fixture.BuildRemaining(profile);
+            var paths=BatchTreeFixture.EligibilitySuffixes.Select(suffix=>focus+"/"+suffix).ToArray();
+            Check(FiniteCaptureSelection.TryGet(profile,out var selection)&&selection.FocusRoot==focus&&
+                selection.Kind=="tactics_ineligible_probe"&&selection.GetPaths().SequenceEqual(paths),"one fixed seven-leaf diagnostic scope only");
+            var first=fixture.NodeAt(paths[0]);var last=fixture.NodeAt(paths[^1]);
+            foreach(var path in paths) {
+                var node=fixture.NodeAt(path);
+                fixture.BoundsOverrides[node]=scenario switch {
+                    "zero"=>new float[]{0,0,0,0}, "nan"=>new float[]{float.NaN,0,float.NaN,10},
+                    "negative"=>new float[]{-1,-2,-3,-4}, "infinity"=>new float[]{float.PositiveInfinity,float.NegativeInfinity,float.PositiveInfinity,float.NegativeInfinity},
+                    _=>new float[]{0,0,10,10}};
+            }
+            if(scenario=="nontext")fixture.SetNodeText(paths[0],null);
+            if(scenario=="blank")fixture.SetNodeText(paths[0],"   ");
+            if(scenario=="oversize")fixture.SetNodeText(paths[^1],new string('X',129));
+            if(scenario=="utf16")fixture.SetNodeText(paths[^1],"\uD800");
+            if(scenario=="getter")fixture.ThrowingTextNodes.Add(last);
+            if(scenario=="hidden")fixture.HiddenNodes.Add(first);
+            if(scenario=="cleanup")fixture.FailFirstFree=true;
+            var policy=Policy(profile);var guards=0;
+            var result=Capture(policy,fixture,elapsed:()=>scenario=="work"&&fixture.TextReads.Count>0?801:
+                scenario=="hard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?1001:0,
+                fresh:()=>{guards++;return scenario=="guard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?identity with{WindowScanStatus="failed"}:identity;});
+            var failed=scenario is "oversize" or "utf16" or "getter" or "hard" or "guard" or "cleanup";
+            Check(result.Observations.Length==0,"ineligible mode NEVER publishes normal observations, even with positive bounds");
+            Check(result.Status==(failed?"terminal_failure":"raw_diagnostics"),"ineligible diagnostic status: "+scenario);
+            Check(PageDiscoveryValidation.TryValidate(result,profile)==!failed,"host validates only the explicitly selected private diagnostic envelope");
+            if(!failed)
+            {
+                Check(!PageDiscoveryValidation.TryValidate(result with
+                    { Observations=new[]{new DiscoveryText(paths[0],"NO NORMAL OBSERVATION")} },profile) &&
+                    !PageDiscoveryValidation.TryValidate(result with
+                    { DiagnosticTexts=new[]{new DiscoveryDiagnosticText(focus+"/7","UNSELECTED")} },profile),
+                    "diagnostic payload cannot leak normal observations or include an unselected path");
+                Check(!PageDiscoveryValidation.TryValidate(result with { SelectionProfile="tactics_leaf_eligibility7",
+                    Reason=result.TraversalBounded?"bounded_raw_diagnostics":"approved_leaf_eligibility_complete" },"tactics_leaf_eligibility7"),
+                    "diagnostic texts cannot be rebound to ordinary eligibility scope");
+            }
+            if(failed)Check(result.DiagnosticTexts.Length==0,"late getter/UTF16/length/cleanup/accounting failures discard BOTH arrays");
+            else {
+                Check(result.DiagnosticTexts.Length==(scenario is "nontext" or "hidden"?6:scenario=="work"?1:7)&&
+                    result.DiagnosticTexts.All(text=>!text.CurrentUiEligible&&paths.Contains(text.Path)&&text.Text.Length<=128)&&
+                    result.DiagnosticTexts.Sum(text=>text.Text.Length)<=896,"separate explicit-ineligible payload, fixed7/128/896 caps");
+                Check(guards==result.NativeOperations+result.Nodes+3,"diagnostic classification adds no native checks or calls");
+                if(scenario is not "hidden" and not "work")Check(result.Reason=="approved_ineligible_diagnostic_complete"&&result.Nodes==42,
+                    "seven fixed leaves completed without claiming prefix exhausted");
+            }
+            var readNode=result.Topology?.FirstOrDefault(node=>node.TextReadCompleted==1);
+            if(scenario=="positive")Check(readNode is {BoundsEligible:1,RectXClass:0,RectYClass:0,WidthClass:1,HeightClass:1},"positive finite classification remains diagnostic-only");
+            if(scenario=="zero")Check(readNode is {BoundsEligible:0,RectXClass:0,RectYClass:0,WidthClass:0,HeightClass:0},"zero rectangles classified despite successful diagnostic getter");
+            if(scenario=="nan")Check(readNode is {BoundsEligible:0,RectXClass:3,WidthClass:3},"NaN classification no raw float serialization");
+            if(scenario=="negative")Check(readNode is {BoundsEligible:0,RectXClass:2,RectYClass:2,WidthClass:2,HeightClass:2},"negative finite classification");
+            if(scenario=="infinity")Check(readNode is {BoundsEligible:0,RectXClass:4,RectYClass:5,WidthClass:4,HeightClass:5},"signed infinity classification");
+            if(scenario=="nontext")Check(!fixture.TextReads.Contains(first),"typefalse never invokes getter even in diagnostic mode");
+            if(scenario=="blank")Check(result.DiagnosticTexts[0].Text=="   "&&result.Topology!.Any(node=>node.TextLength==3),"raw blank retained separately, not promoted or trimmed");
+            Check(fixture.TextReads.All(node=>paths.Select(fixture.NodeAt).Contains(node)),"no text read outside seven approved leaves");
+            foreach(var path in paths)Check(!fixture.ChildEdges.Any(edge=>edge.Parent==fixture.NodeAt(path)),"no leaf descendants or adjacent roots obtained");
+            var publication=DiscoveryPublication.Create(result,false);
+            var encoded=System.Text.Json.JsonSerializer.Serialize(publication);
+            Check(publication.Result is null&&!encoded.Contains("DiagnosticTexts")&&!encoded.Contains("TEST RAW LEAF"),"rejected host publication exposes no diagnostic text outside result");
+            Clean(fixture,policy,result);
+            Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"no retry after diagnostic chunk");
+            Console.WriteLine($"Ineligible {scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; inherited owned fixture only.");
+        }
+        {
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};fixture.BuildRemaining("tactics_leaf_eligibility7");
+            foreach(var suffix in BatchTreeFixture.EligibilitySuffixes)fixture.ZeroBoundsNodes.Add(fixture.NodeAt(BatchTreeFixture.EligibilityRoot+"/"+suffix));
+            var policy=Policy("tactics_leaf_eligibility7");var result=Capture(policy,fixture);
+            Check(result.Status=="raw_diagnostics"&&result.Observations.Length==0&&result.DiagnosticTexts.Length==0&&fixture.TextReads.Count==0,
+                "old eligibility profile still skips all invalid bounds; no implicit opt-in");
+            Clean(fixture,policy,result);
         }
     }
 }

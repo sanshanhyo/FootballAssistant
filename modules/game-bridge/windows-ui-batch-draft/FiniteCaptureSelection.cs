@@ -44,6 +44,8 @@ internal sealed class FiniteCaptureSelection
         pages.Add("tactics_leaf_eligibility7",new("tactics_leaf_eligibility7","tactics_remaining_probe",TacticsEligibilityRoot,-1,0,
             new[]{"0/0/0","0/0/1","0/0/2","1/0/0/0/0","1/0/0/0/1/0","1/0/0/0/2/0","1/0/0/0/3/0"}
                 .Select(suffix=>TacticsEligibilityRoot+"/"+suffix).ToArray()));
+        pages.Add("tactics_ineligible_text7",new("tactics_ineligible_text7","tactics_ineligible_probe",TacticsEligibilityRoot,-1,0,
+            pages["tactics_leaf_eligibility7"].GetPaths()));
         foreach(var (profile,suffix) in new[]{("tactics_remaining45_1","1/1"),("tactics_remaining46_1","1/0/1"),
             ("tactics_remaining46_2","1/0/2"),("tactics_remaining56_1","1/0/0/0/4/1"),("tactics_remaining56_2","1/0/0/0/4/2")})
             pages.Add(profile,new(profile,"tactics_remaining_probe",TacticsEligibilityRoot+"/"+suffix,-1,0,Array.Empty<string>()));
@@ -74,6 +76,7 @@ internal sealed class FiniteCaptureSelection
         "tactics_layout_diagnostic" => new[] {"tactics_root_census","tactics_frontier35"},
         "tactics_remaining_diagnostic" => new[] {"tactics_leaf_eligibility7","tactics_remaining45_1","tactics_remaining46_1",
             "tactics_remaining46_2","tactics_remaining56_1","tactics_remaining56_2"},
+        "tactics_ineligible_text7" => new[] {"tactics_ineligible_text7"},
         "next_match_card" => new[] {"next_match_card"},
         "schedule_rows0_9" => Enumerable.Range(0,10).Select(row=>"schedule_row"+row.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray(),
         _ => AttributeRowSelection.ManifestProfiles(manifest)

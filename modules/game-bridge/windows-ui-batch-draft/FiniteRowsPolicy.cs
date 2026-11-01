@@ -49,7 +49,7 @@ internal sealed class FiniteRowsPolicy
             .GetBytes(JsonSerializer.Serialize(approval)))).ToLowerInvariant();
         lastUtc = approval.CreatedAt;
     }
-    internal static bool ValidManifest(string? name) => name is "goalkeeper_rows0_3" or "profile_rows0_3" or "profile_all_rows" or "tactics_current" or "tactics_alignment_candidate" or "tactics_sibling_inventory" or "tactics_layout_diagnostic" or "tactics_remaining_diagnostic" or "next_match_card" or "schedule_rows0_9";
+    internal static bool ValidManifest(string? name) => name is "goalkeeper_rows0_3" or "profile_rows0_3" or "profile_all_rows" or "tactics_current" or "tactics_alignment_candidate" or "tactics_sibling_inventory" or "tactics_layout_diagnostic" or "tactics_remaining_diagnostic" or "tactics_ineligible_text7" or "next_match_card" or "schedule_rows0_9";
     // First two operator-approved nonces remain unchanged. Additional fixed chunks are
     // deterministic from immutable manifest identifiers; no caller-supplied nonce array.
     private static Guid DeriveNonce(FiniteRowsApproval approval,int index)

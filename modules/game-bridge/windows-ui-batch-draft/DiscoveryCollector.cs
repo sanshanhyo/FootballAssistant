@@ -6,6 +6,10 @@ namespace FootballAssistant.GameBridge;
 // Deliberately NOT BatchText/BatchChunkResult: these are unverified UI observations,
 // not player facts, anchors or an atomic page snapshot. No conversion/merge API.
 internal sealed record DiscoveryText(string Path, string Text);
+internal sealed record DiscoveryDiagnosticText(string Path, string Text)
+{
+    public bool CurrentUiEligible => false;
+}
 // Existing reads only. Depth -1 means no panel root was obtained; child count -1 means
 // the current attempted edge has no completed count read. Stage identifies an attempt,
 // not a completed native call or an inferred cause. No object identity or raw UI data.
@@ -17,12 +21,14 @@ internal readonly record struct DiscoveryFocusEdge(int Depth, int RequestedChild
 // visibility2, type3, count4. Parent -1/edge -1 denotes the selected subtree root.
 internal readonly record struct DiscoveryTopologyNode(int ParentRecordIndex, int ChildEdge,
     int GlobalDepth, int Visible, int TextElement, int ChildCount, int Stage,
-    int BoundsEligible = -1, int TextReadCompleted = -1, int TextLength = -1);
+    int BoundsEligible = -1, int TextReadCompleted = -1, int TextLength = -1,
+    int RectXClass = -1, int RectYClass = -1, int WidthClass = -1, int HeightClass = -1);
 internal sealed record DiscoveryResult(string Status, string Reason, DiscoveryText[] Observations,
     int NativeOperations, double ElapsedMilliseconds, int Nodes, int TotalRoots, int PeakRoots,
     bool TraversalBounded, DiscoveryRequest Request, int PanelIndex, string FocusPath)
 {
     public bool PageIdentityVerified => false;
+    public DiscoveryDiagnosticText[] DiagnosticTexts { get; init; } = Array.Empty<DiscoveryDiagnosticText>();
     public string SelectionProfile { get; init; } = "single";
     public DiscoveryFocusDiagnostic? FocusDiagnostic { get; init; }
     public DiscoveryFocusEdge[]? FocusEdges { get; init; }
@@ -75,6 +81,7 @@ internal static class DiscoveryCollector
                     throw new UiSmokeStopped("discovery_grant_changed");
             }, 1000, 2048);
             var texts = new List<DiscoveryText>(MaximumTexts);
+            var diagnosticTexts = new List<DiscoveryDiagnosticText>(7);
             var nodes = 0; var roots = 0; var peak = 0; var bounded = false;
             var success = false; var reason = "diagnostic_failure";
             var focusDepth = -1; var focusEdge = -1; var focusIndex = -1;
@@ -85,7 +92,8 @@ internal static class DiscoveryCollector
                 "tactics_sibling12" => 12, "tactics_sibling7" => 7, "tactics_sibling4" => 4, _ => -1 };
             var census = policy.Approval.SelectionProfile == "tactics_root_census";
             var frontier = policy.Approval.SelectionProfile == "tactics_frontier35";
-            var eligibility = policy.Approval.SelectionProfile == "tactics_leaf_eligibility7";
+            var ineligible = policy.Approval.SelectionProfile == "tactics_ineligible_text7";
+            var eligibility = ineligible || policy.Approval.SelectionProfile == "tactics_leaf_eligibility7";
             var remainingGate = policy.Approval.SelectionProfile switch {
                 "tactics_remaining45_1" => (Depth:26, Count:2),
                 "tactics_remaining46_1" or "tactics_remaining46_2" => (Depth:27, Count:3),
@@ -124,7 +132,7 @@ internal static class DiscoveryCollector
                 }
                 bool StopWork()
                 {
-                    if (texts.Count >= MaximumTexts || nodes >= MaximumNodes ||
+                    if (texts.Count + diagnosticTexts.Count >= MaximumTexts || nodes >= MaximumNodes ||
                         budget.Operations >= WorkOperations || elapsed() >= WorkMilliseconds)
                     { bounded = true; return true; }
                     return false;
@@ -136,9 +144,10 @@ internal static class DiscoveryCollector
                     var record = topology is null ? -1 : topologyCount++;
                     var visible = -1; var textElement = -1; var childCount = -1; var stage = 1;
                     var boundsEligible = -1; var textRead = -1; var textLength = -1;
+                    var rectX = -1; var rectY = -1; var rectWidth = -1; var rectHeight = -1;
                     void TraceNode() {
                         if (topology is not null) topology[record] = new(parentRecord, childEdge,
-                            depth, visible, textElement, childCount, stage, boundsEligible, textRead, textLength);
+                            depth, visible, textElement, childCount, stage, boundsEligible, textRead, textLength, rectX, rectY, rectWidth, rectHeight);
                     }
                     TraceNode();
                     visible = backend.Visible(node, budget) ? 1 : 0; stage = 2; TraceNode();
@@ -146,14 +155,23 @@ internal static class DiscoveryCollector
                     var inspectLeaf = eligibleTargets is null || eligibleTargets.Any(suffix => suffix.Length == 0);
                     if (inspectLeaf) { textElement = backend.IsTextElement(node, budget) ? 1 : 0; stage = 3; TraceNode(); }
                     if (textElement == 1 || eligibleTargets is not null && inspectLeaf)
-                    { boundsEligible = backend.Bounds(node, budget).PositiveFinite ? 1 : 0; TraceNode(); }
-                    if (textElement == 1 && boundsEligible == 1)
+                    {
+                        var bounds = backend.Bounds(node, budget);
+                        boundsEligible = bounds.PositiveFinite ? 1 : 0;
+                        rectX = ClassifyRect(bounds.X); rectY = ClassifyRect(bounds.Y);
+                        rectWidth = ClassifyRect(bounds.Width); rectHeight = ClassifyRect(bounds.Height); TraceNode();
+                    }
+                    if (textElement == 1 && (boundsEligible == 1 || ineligible))
                     {
                         // Complete text only. No silently truncated name/anchor candidates.
                         textRead = 0; TraceNode();
                         var text = backend.ReadAnchorText(node, budget);
                         textRead = 1; textLength = text.Length; TraceNode();
-                        if (!string.IsNullOrWhiteSpace(text)) texts.Add(new(path, text));
+                        if (ineligible) {
+                            if (diagnosticTexts.Count >= 7) throw new UiSmokeStopped("diagnostic_text_limit");
+                            diagnosticTexts.Add(new(path,text));
+                        }
+                        else if (!string.IsNullOrWhiteSpace(text)) texts.Add(new(path, text));
                     }
                     if (StopWork()) return;
                     var count = backend.ChildCount(node, budget);
@@ -202,12 +220,15 @@ internal static class DiscoveryCollector
                         var childVisible=backend.Visible(child,budget)?1:0;
                         topology[record]=new(rootRecord,index,depth+1,childVisible,-1,-1,2);
                         if(childVisible==0){bounded=true;continue;}
-                        bounds=backend.Bounds(child,budget).PositiveFinite?1:0;
-                        topology[record]=new(rootRecord,index,depth+1,1,-1,-1,2,bounds);
+                        var rectangle=backend.Bounds(child,budget);
+                        bounds=rectangle.PositiveFinite?1:0;
+                        var x=ClassifyRect(rectangle.X);var y=ClassifyRect(rectangle.Y);
+                        var width=ClassifyRect(rectangle.Width);var height=ClassifyRect(rectangle.Height);
+                        topology[record]=new(rootRecord,index,depth+1,1,-1,-1,2,bounds,-1,-1,x,y,width,height);
                         type=backend.IsTextElement(child,budget)?1:0;
-                        topology[record]=new(rootRecord,index,depth+1,1,type,-1,3,bounds);
+                        topology[record]=new(rootRecord,index,depth+1,1,type,-1,3,bounds,-1,-1,x,y,width,height);
                         childCount=backend.ChildCount(child,budget);
-                        topology[record]=new(rootRecord,index,depth+1,1,type,childCount,4,bounds);
+                        topology[record]=new(rootRecord,index,depth+1,1,type,childCount,4,bounds,-1,-1,x,y,width,height);
                     }
                 }
                 void VisitTargets(BatchObject node, int depth, string path, int[][] suffixes)
@@ -289,7 +310,7 @@ internal static class DiscoveryCollector
                 success = true;
                 reason = targetedRow && !diagnostic ? (policy.Approval.SelectionProfile == "single" ?
                     "approved_row_targets_complete" : "approved_group_targets_complete") :
-                    bounded ? "bounded_raw_diagnostics" : eligibility ? "approved_leaf_eligibility_complete" : "approved_prefix_exhausted";
+                    bounded ? "bounded_raw_diagnostics" : ineligible ? "approved_ineligible_diagnostic_complete" : eligibility ? "approved_leaf_eligibility_complete" : "approved_prefix_exhausted";
             }
             catch (Exception error)
             {
@@ -309,6 +330,7 @@ internal static class DiscoveryCollector
             try { budget.Check(); }
             catch { success = false; reason = "discovery_final_guard_failed"; }
             var observations = texts.ToArray();
+            var diagnosticObservations = diagnosticTexts.ToArray();
             var traceSnapshot = focusTrace is null ? null : focusTrace.Take(focusTraceCount).ToArray();
             var topologySnapshot = topology is null ? null : topology.Take(topologyCount).ToArray();
             var spent = elapsed();
@@ -317,12 +339,14 @@ internal static class DiscoveryCollector
             if (!success)
             {
                 observations = Array.Empty<DiscoveryText>();
-                if (reason is "approved_leaf_eligibility_complete" or "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete" or "approved_group_targets_complete") reason = "discovery_accounting_rejected";
+                diagnosticObservations = Array.Empty<DiscoveryDiagnosticText>();
+                if (reason is "approved_ineligible_diagnostic_complete" or "approved_leaf_eligibility_complete" or "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete" or "approved_group_targets_complete") reason = "discovery_accounting_rejected";
             }
             return new(success ? "raw_diagnostics" : "terminal_failure", reason, observations,
                 budget.Operations, spent, nodes, roots, peak, bounded, request,
                 policy.Approval.PanelIndex, policy.Approval.FocusPath) {
                     SelectionProfile = policy.Approval.SelectionProfile,
+                    DiagnosticTexts = diagnosticObservations,
                     FocusDiagnostic = new(focusDepth, focusEdge, focusIndex, focusCount, focusStage),
                     FocusEdges = traceSnapshot,
                     Topology = topologySnapshot
@@ -342,6 +366,9 @@ internal static class DiscoveryCollector
             }
         }
     }
+    private static int ClassifyRect(float value) => float.IsNaN(value) ? 3 :
+        float.IsPositiveInfinity(value) ? 4 : float.IsNegativeInfinity(value) ? 5 :
+        value == 0 ? 0 : value > 0 ? 1 : 2;
     private static string Join(string path, int index) => path.Length == 0 ? index.ToString(CultureInfo.InvariantCulture) :
         path + "/" + index.ToString(CultureInfo.InvariantCulture);
 }

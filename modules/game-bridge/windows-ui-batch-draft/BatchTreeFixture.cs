@@ -176,6 +176,7 @@ sealed class BatchTreeFixture : IDisposable
     }
     internal const string FrontierRoot = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/1";
     internal readonly HashSet<nint> ZeroBoundsNodes = new();
+    internal readonly Dictionary<nint,float[]> BoundsOverrides = new();
     internal void BuildFrontier(bool census, params string[] suffixes)
     {
         Children[103]=new(); var root=census?"0":FrontierRoot;
@@ -185,13 +186,13 @@ sealed class BatchTreeFixture : IDisposable
     internal const string EligibilityRoot = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0";
     internal static readonly string[] EligibilitySuffixes = {"0/0/0","0/0/1","0/0/2","1/0/0/0/0","1/0/0/0/1/0","1/0/0/0/2/0","1/0/0/0/3/0"};
     internal static string RemainingFocus(string profile) => EligibilityRoot + (profile switch {
-        "tactics_leaf_eligibility7" => "", "tactics_remaining45_1" => "/1/1",
+        "tactics_leaf_eligibility7" or "tactics_ineligible_text7" => "", "tactics_remaining45_1" => "/1/1",
         "tactics_remaining46_1" => "/1/0/1", "tactics_remaining46_2" => "/1/0/2",
         "tactics_remaining56_1" => "/1/0/0/0/4/1", "tactics_remaining56_2" => "/1/0/0/0/4/2", _ => throw new ArgumentException() });
     internal void BuildRemaining(string profile, params string[] children)
     {
         Children[103]=new(); var focus=RemainingFocus(profile); EnsurePath(focus);
-        if(profile=="tactics_leaf_eligibility7") {
+        if(profile is "tactics_leaf_eligibility7" or "tactics_ineligible_text7") {
             foreach(var suffix in EligibilitySuffixes){EnsurePath(focus+"/"+suffix);SetNodeText(focus+"/"+suffix,"TEST RAW LEAF");}
             EnsurePath(focus+"/"+EligibilitySuffixes[0]+"/0"); // Available but explicitly outside the fixed leaf plan.
         }
@@ -202,7 +203,7 @@ sealed class BatchTreeFixture : IDisposable
         }
     }
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_leaf_eligibility7" or "tactics_remaining45_1" or "tactics_remaining46_1" or "tactics_remaining46_2" or "tactics_remaining56_1" or "tactics_remaining56_2" => RemainingFocus(profile),
+    { "tactics_ineligible_text7" or "tactics_leaf_eligibility7" or "tactics_remaining45_1" or "tactics_remaining46_1" or "tactics_remaining46_2" or "tactics_remaining56_1" or "tactics_remaining56_2" => RemainingFocus(profile),
       "tactics_root_census" => "0", "tactics_frontier35" => FrontierRoot,
       "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
       "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
@@ -341,7 +342,7 @@ sealed class BatchTreeFixture : IDisposable
         if (name == "get_Count") { Marshal.WriteInt32(panelCountPayload, 1); return 205; }
         if (name == "get_visualTree") return 103;
         if (name == "get_visible") { Marshal.WriteByte(boolPayload, HiddenNodes.Contains(instance) ? (byte)0 : (byte)1); return 202; }
-        if (name == "get_worldBound") { Marshal.Copy(new float[]{0,0,ZeroBoundsNodes.Contains(instance)?0:10,10},0,rectPayload,4); return 203; }
+        if (name == "get_worldBound") { Marshal.Copy(BoundsOverrides.TryGetValue(instance,out var rectangle)?rectangle:new float[]{0,0,ZeroBoundsNodes.Contains(instance)?0:10,10},0,rectPayload,4); return 203; }
         if (name == "get_childCount") { Marshal.WriteInt32(countPayload, Children[instance].Count); return 201; }
         if (name == "get_text") { TextReads.Add(instance); return ChangePostAnchor && panelOpens >= 4 && instance == anchor1 ? changedAnchor : nodeTexts[instance]; }
         if (name == "get_Item")

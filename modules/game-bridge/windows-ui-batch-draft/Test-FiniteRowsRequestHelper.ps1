@@ -38,16 +38,26 @@ try {
     $refused=$false
     try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteTwoChunksConfirmed|Out-Null}catch{$refused=$true}
     Check ($refused -and [IO.File]::ReadAllText($path) -ceq $original) 'existing manifest cannot be replaced'
-    foreach($scope in @('profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','tactics_layout_diagnostic','tactics_remaining_diagnostic','next_match_card','schedule_rows0_9')){
+    foreach($scope in @('profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','tactics_layout_diagnostic','tactics_remaining_diagnostic','tactics_ineligible_text7','next_match_card','schedule_rows0_9')){
         Reset-Fixture
         $refused=$false
-        try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -Scope $scope|Out-Null}catch{$refused=$true}
+        try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -IneligibleTextDiagnosticConfirmed:($scope -eq 'tactics_ineligible_text7') -Scope $scope|Out-Null}catch{$refused=$true}
         Check ($refused -and -not [IO.File]::Exists($path)) 'old session cannot admit new manifest'
-        $script:Session.allowed_scopes=@('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','tactics_layout_diagnostic','tactics_remaining_diagnostic','next_match_card','schedule_rows0_9');Save 'session.json' $script:Session
+        $script:Session.allowed_scopes=@('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows','tactics_current','tactics_alignment_candidate','tactics_sibling_inventory','tactics_layout_diagnostic','tactics_remaining_diagnostic','tactics_ineligible_text7','next_match_card','schedule_rows0_9');Save 'session.json' $script:Session
         $oldConsentRefused=$false
         try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteTwoChunksConfirmed -Scope $scope|Out-Null}catch{$oldConsentRefused=$true}
         Check ($oldConsentRefused -and -not [IO.File]::Exists($path)) 'old two-chunk confirmation cannot authorize expanded manifest'
-        & $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -Scope $scope|Out-Null
+        if($scope -eq 'tactics_ineligible_text7') {
+            $missingDiagnosticConsent=$false
+            try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -Scope $scope|Out-Null}catch{$missingDiagnosticConsent=$true}
+            Check ($missingDiagnosticConsent -and -not [IO.File]::Exists($path)) 'ordinary finite consent cannot authorize ineligible-text diagnostic'
+            & $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -IneligibleTextDiagnosticConfirmed -Scope $scope|Out-Null
+        } else {
+            $wrongDiagnosticConsent=$false
+            try{& $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -IneligibleTextDiagnosticConfirmed -Scope $scope|Out-Null}catch{$wrongDiagnosticConsent=$true}
+            Check ($wrongDiagnosticConsent -and -not [IO.File]::Exists($path)) 'ineligible diagnostic flag cannot rebind to another scope'
+            & $helper -CandidateDirectory $directory -StableProfileAsserted -FiniteManifestConfirmed -Scope $scope|Out-Null
+        }
         $expanded=[IO.File]::ReadAllText($path)|ConvertFrom-Json
         Check ($expanded.mode -ceq $scope -and $expanded.schema_version -eq 4 -and $expanded.PSObject.Properties.Name.Count -eq 14) 'exact14field selected manifest'
         Check (($expanded.PSObject.Properties.Name -notcontains 'focus_path') -and ($expanded.PSObject.Properties.Name -notcontains 'profiles')) 'no arbitrary subset/path'

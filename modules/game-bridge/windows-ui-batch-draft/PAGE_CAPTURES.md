@@ -261,3 +261,45 @@ roots. The selected-leaf chunk emits at most7strings. Actual fixture costs must 
 verified in CI; node arithmetic is not a measured latency claim. One native call
 cannot be forcibly interrupted at the soft deadline. All handles are cleaned each
 chunk; no retries,automatic alternate roots,window actions or crosschunk pointers.
+
+## Explicit seven-object ineligible-text diagnostic (one chunk)
+
+`tactics_ineligible_text7` is a separate opt-in manifest/profile, selecting only the
+same seven known paths of `tactics_leaf_eligibility7`. It adds no parent/navigation
+read, top-level17/18 scope, other frontier, generic query, new export or retry.
+The helper requires both `-FiniteManifestConfirmed` and the scope-specific
+`-IneligibleTextDiagnosticConfirmed`; the latter is rejected for every other scope.
+The exact mode remains bound in the existing immutable14-field request/grant.
+
+The user-approved exception is only geometry eligibility for a diagnostic getter.
+Every selected object must still be freshly owned, rooted and type-compatible
+with TextElement; visibility, module/window/thread/grant checks, object return type,
+string limits/UTF16 validation and final cleanup/ownership checks remain intact.
+The normal reader and all other profiles still do not call get_text for invalid
+bounds. No pointer is used outside its root lifetime, and the invoke→gcNew critical
+section is unchanged.
+
+All strings from this mode, even those with positive bounds, are placed only in
+`DiagnosticTexts` as `{Path,Text,CurrentUiEligible:false}`. `Observations` stays empty.
+Blank/empty returns are retained here as diagnostic results, not normalized into
+facts. The separate source kind is `tactics_ineligible_probe`; no data-core/agent
+adapter is enabled for it. This can identify labels retained in inactive/template
+objects, but neither proves caching nor establishes current visible game data.
+All safety, getter, oversized/invalid string, cleanup, accounting or final-guard
+failures discard BOTH text arrays; failed outer publication also drops the entire
+result while retaining only bounded numeric diagnostics.
+
+Topology appends `RectXClass`, `RectYClass`, `WidthClass`, `HeightClass`, computed
+from the same already-read worldBound four-float copy: -1 unknown,0 zero (including
+negative zero),1 positive finite,2 negative finite,3 NaN,4 positive infinity,
+5 negative infinity. No raw coordinates/NaN JSON values or additional Rect getter
+calls are emitted. X/Y signs alone do not invalidate bounds; the original rule
+requires all four components finite and width/height strictly positive.
+
+Exactly one chunk under the original1000ms/2048 ceiling,800ms/1792 cooperative
+cutoff,node96/globaldepth48/live64/allocated512 roots. Shared trie42nodes/depth31;
+at most7diagnostic strings,128UTF16 units each,896total. Normal combinedtext8/1024
+ceiling is also retained. Completion reason `approved_ineligible_diagnostic_complete`
+means selected diagnostic work finished, not that current UI/business facts were
+read. Partial work remains explicitly bounded. CI must verify actual fixture cost;
+no timing or exactdeadline guarantee follows from node arithmetic.

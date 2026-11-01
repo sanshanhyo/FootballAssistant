@@ -9,7 +9,9 @@ internal static class PageDiscoveryValidation
 {
     internal static bool TryValidate(DiscoveryResult? result,string profile)
     {
-        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe" or "tactics_remaining_probe"))
+        if (result is not null && (result.DiagnosticTexts is null ||
+            profile!="tactics_ineligible_text7" && result.DiagnosticTexts.Length!=0)) return false;
+        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe" or "tactics_remaining_probe" or "tactics_ineligible_probe"))
             return ValidateProbe(result,probe);
         if(!FiniteCaptureSelection.TryGet(profile,out var selection) || selection.Kind=="attributes" || result is null ||
             result.Status!="raw_diagnostics" || result.Reason!="approved_group_targets_complete" ||
@@ -34,7 +36,8 @@ internal static class PageDiscoveryValidation
     // A raw bounded inventory is NOT tactical-field validation or page identity.
     private static bool ValidateProbe(DiscoveryResult? result,FiniteCaptureSelection selection)
     {
-        var completeReason=selection.Profile=="tactics_leaf_eligibility7"?"approved_leaf_eligibility_complete":"approved_prefix_exhausted";
+        var completeReason=selection.Profile=="tactics_ineligible_text7"?"approved_ineligible_diagnostic_complete":
+            selection.Profile=="tactics_leaf_eligibility7"?"approved_leaf_eligibility_complete":"approved_prefix_exhausted";
         if(result is null || result.Status!="raw_diagnostics" || result.SelectionProfile!=selection.Profile ||
             result.PageIdentityVerified || result.PanelIndex!=0 || result.FocusPath!=selection.FocusRoot ||
             result.Reason!=(result.TraversalBounded?"bounded_raw_diagnostics":completeReason) ||
@@ -42,6 +45,18 @@ internal static class PageDiscoveryValidation
             result.TotalRoots is <0 or >512 || result.PeakRoots is <0 or >64 ||
             !double.IsFinite(result.ElapsedMilliseconds) || result.ElapsedMilliseconds is <0 or >1000 ||
             result.Observations is null || result.Observations.Length>8) return false;
+        if(selection.Profile=="tactics_ineligible_text7")
+        {
+            if(result.Observations.Length!=0 || result.DiagnosticTexts.Length>7) return false;
+            var allowed=selection.GetPaths();var seen=new HashSet<string>(StringComparer.Ordinal);var length=0;
+            foreach(var item in result.DiagnosticTexts)
+            {
+                if(item is null || item.CurrentUiEligible || item.Path is null || !allowed.Contains(item.Path,StringComparer.Ordinal) ||
+                    !seen.Add(item.Path) || item.Text is null || item.Text.Length>128) return false;
+                length+=item.Text.Length;
+            }
+            return length<=896;
+        }
         if(selection.Profile=="tactics_root_census" && result.Observations.Length!=0) return false;
         if(selection.Profile=="tactics_leaf_eligibility7" && (result.Observations.Length>7 ||
             result.Observations.Any(item=>item is null || !selection.GetPaths().Contains(item.Path,StringComparer.Ordinal)))) return false;
