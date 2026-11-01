@@ -22,7 +22,7 @@ internal sealed partial class WindowsLoadedModuleLease
             var budget = new UiSmokeBudget(() => watch.Elapsed.TotalMilliseconds, () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!policy.CheckStartedResolve(grant, MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId()), DateTimeOffset.UtcNow))
+                if (!policy.CheckStartedResolve(grant, MainThreadGuard.ReadWindowsScanIdentity(MainThreadGuard.CurrentWindowsThreadId()), DateTimeOffset.UtcNow))
                     throw new UiSmokeStopped("grant_or_window_changed");
             }, 250, 2048);
             UiResolveResult Finish(bool succeeded, string reason)
@@ -58,7 +58,7 @@ internal sealed partial class WindowsLoadedModuleLease
             try
             {
                 return WindowsSmokeReader.TryReadAuthorized(policy, request, uiBackend,
-                    () => MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId()),
+                    () => MainThreadGuard.ReadWindowsScanIdentity(MainThreadGuard.CurrentWindowsThreadId()),
                     () => DateTimeOffset.UtcNow, cancellationToken);
             }
             finally

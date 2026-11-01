@@ -101,6 +101,74 @@ var identity = new WindowsThreadIdentity(0, 12, 0, 34, 0, 34, false) { WindowSca
     WindowCandidates = new[] { new WindowsWindowDiagnostic(56, 12, 34, true, "FixtureWindow", true, 0, true, true, 10, 10, 0) } };
 SmokeRequest Request(SmokeStage stage) => new(Guid.NewGuid(), 12, context.Session, context.BridgeHash, context.GameHash,
     context.ConfirmedWindowClass, stage, now, now.AddSeconds(30));
+// Scan-only policy input intentionally omits legacy MainWindowHandle diagnostics.
+// The shared native collector is unchanged; these fixtures prove policy decisions use
+// only fresh scan/PID/TID evidence, never the omitted diagnostic fields.
+WindowsThreadIdentity ScanOnly(WindowsThreadIdentity source) => source with
+    { Window = 0, OwnerProcessId = 0, OwnerThreadId = 0, ExplicitWindow = false };
+var explicitIdentity = identity with { Window = 56, OwnerProcessId = 12, OwnerThreadId = 34, ExplicitWindow = true };
+Check(explicitIdentity.Matches() && !ScanOnly(explicitIdentity).Matches(),
+    "scan-only identity cannot authorize the legacy explicit-window path");
+var candidate = identity.WindowCandidates![0];
+WindowsThreadIdentity Row(WindowsWindowDiagnostic row) => explicitIdentity with { WindowCandidates = new[] { row } };
+var scanCases = new[]
+{
+    explicitIdentity,
+    explicitIdentity with { ProcessId = 99 },
+    explicitIdentity with { CurrentThreadId = 99 },
+    explicitIdentity with { InstallerThreadId = 99 },
+    explicitIdentity with { CurrentThreadId = 0, InstallerThreadId = 0 },
+    explicitIdentity with { WindowScanStatus = "failed" },
+    explicitIdentity with { WindowScanStatus = "bounded" },
+    explicitIdentity with { WindowScanStatus = "callback_failed" },
+    explicitIdentity with { WindowCandidates = null },
+    explicitIdentity with { WindowCandidates = Array.Empty<WindowsWindowDiagnostic>(), WindowScanCount = 0 },
+    explicitIdentity with { WindowScanCount = 2 },
+    explicitIdentity with { WindowCandidates = Enumerable.Repeat(candidate, 33).ToArray(), WindowScanCount = 33 },
+    explicitIdentity with { WindowCandidates = new[] { candidate, candidate }, WindowScanCount = 2 },
+    explicitIdentity with { WindowCandidates = new[] { candidate, candidate with { Hwnd = 57, OwnerTid = 99 } }, WindowScanCount = 2 },
+    Row(candidate with { Hwnd = 0 }),
+    Row(candidate with { OwnerPid = 99 }),
+    Row(candidate with { OwnerTid = 99 }),
+    Row(candidate with { OwnerStable = false }),
+    Row(candidate with { ClassName = "OtherWindow" }),
+    Row(candidate with { ClassName = null, ClassNameComplete = false }),
+    Row(candidate with { ClassNameComplete = false }),
+    Row(candidate with { VisibleStyle = false }),
+    Row(candidate with { ClientRectAvailable = false }),
+    Row(candidate with { ClientWidth = 0 }),
+    Row(candidate with { ClientHeight = -1 }),
+    Row(candidate with { ClientWidth = null }),
+    explicitIdentity with { WindowCandidates = new[] { candidate, candidate with { Hwnd = 57, ClassName = "OtherWindow", ClassNameComplete = false } }, WindowScanCount = 2 }
+};
+var scanPolicy = new WindowsSmokePolicy(context);
+for (var scanIndex = 0; scanIndex < scanCases.Length; scanIndex++)
+{
+    var diagnosticDecision = scanPolicy.SelectWindow(scanCases[scanIndex]);
+    Check(diagnosticDecision == scanPolicy.SelectWindow(ScanOnly(scanCases[scanIndex])),
+        "diagnostic and scan-only policy decisions remain identical: " + scanIndex);
+    Check(scanIndex == 0 ? diagnosticDecision == 56 : diagnosticDecision is null,
+        "all incomplete, ambiguous, stale-owner, shape and thread failures remain denied: " + scanIndex);
+}
+(UiSmokeResult? Result, int IdentityReads) CaptureIdentityVariant(bool scanOnly)
+{
+    var p = new WindowsSmokePolicy(context);
+    var m = p.TryConsume(Request(SmokeStage.Metadata), explicitIdentity, now)!;
+    Check(p.TryBeginCall(m, explicitIdentity, now), "identity variant metadata starts"); p.CompleteMetadata(m, true);
+    var r = p.TryConsume(Request(SmokeStage.UiResolve), explicitIdentity, now)!;
+    Check(p.TryBeginCall(r, explicitIdentity, now), "identity variant resolve starts"); p.CompleteResolve(r, true);
+    var identityReads = 0;
+    var result = WindowsSmokeReader.TryReadAuthorized(p, Request(SmokeStage.UiText), new FakeBackend(),
+        () => { identityReads++; return scanOnly ? ScanOnly(explicitIdentity) : explicitIdentity; }, () => now, elapsedForTest: () => 0);
+    return (result, identityReads);
+}
+var diagnosticCapture = CaptureIdentityVariant(false);
+var scanCapture = CaptureIdentityVariant(true);
+Check(diagnosticCapture.Result is not null && scanCapture.Result is not null &&
+    diagnosticCapture.Result.Text == scanCapture.Result.Text && diagnosticCapture.Result.StopReason == scanCapture.Result.StopReason &&
+    diagnosticCapture.Result.Nodes == scanCapture.Result.Nodes && diagnosticCapture.Result.NativeOperations == scanCapture.Result.NativeOperations &&
+    diagnosticCapture.IdentityReads == scanCapture.IdentityReads && scanCapture.IdentityReads > scanCapture.Result.NativeOperations,
+    "scan-only identity preserves capture outcome and every fresh guard/consume/begin check");
 var policy = new WindowsSmokePolicy(context);
 var ambiguous = identity with { WindowScanCount = 2, WindowCandidates = new[] {
     identity.WindowCandidates![0], identity.WindowCandidates![0] with { Hwnd = 57, OwnerTid = 99 } } };

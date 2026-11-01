@@ -42,7 +42,24 @@ internal static class MainThreadGuard
         uint owner = 0;
         var thread = window == 0 ? 0 : GetWindowThreadProcessId(window, out owner);
         var identity = new WindowsThreadIdentity(window, (uint)process.Id, owner, GetCurrentThreadId(), thread, installerThread, selected);
-        // Enumerate even if MainWindowHandle is nonzero: uniqueness cannot be inferred from that property.
+        return ReadCompleteWindowScan(identity);
+    }
+
+    // Candidate policy checks consume only ProcessId/CurrentThreadId/InstallerThreadId
+    // and the complete scan below. Do not do a second, diagnostic-only main-window
+    // discovery for every native gate. This is NOT a legacy explicit-window identity:
+    // its Window/owner/ExplicitWindow fields stay zero/false, so Matches() fails closed.
+    // No identity or HWND is retained between calls; every call runs the full scan.
+    internal static WindowsThreadIdentity ReadWindowsScanIdentity(uint installerThread)
+    {
+        var identity = new WindowsThreadIdentity(0, (uint)Environment.ProcessId, 0,
+            GetCurrentThreadId(), 0, installerThread, false);
+        return ReadCompleteWindowScan(identity);
+    }
+
+    private static WindowsThreadIdentity ReadCompleteWindowScan(WindowsThreadIdentity identity)
+    {
+        // Same complete bounded enumeration for diagnostic and candidate-only callers.
         var candidates = new List<WindowsWindowDiagnostic>(32);
         // No titles/text or other-process window details retained; diagnostics never authorize a window.
         var owned = 0;
@@ -57,7 +74,7 @@ internal static class MainThreadGuard
             {
                 if (++visited > 512) { bounded = true; return false; }
                 var candidateThread = GetWindowThreadProcessId(candidate, out var candidateOwner);
-                if (candidateOwner == (uint)process.Id && candidateThread != 0)
+                if (candidateOwner == identity.ProcessId && candidateThread != 0)
                 {
                     if (owned++ == 0) { first = candidate; firstThread = candidateThread; }
                     var name = new StringBuilder(128);
