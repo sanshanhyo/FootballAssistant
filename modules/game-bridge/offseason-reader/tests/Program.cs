@@ -23,3 +23,18 @@ Check(PlayerValueDecoder.Contract(0, 0, 0).WageRaw is null);
 Check(PlayerValueDecoder.Contract(-1, 0, 0).StartDate is null);
 Check(PlayerValueDecoder.Contract(1234, (2023u << 16) | 365u, (2027u << 16) | 365u) == new PlayerContractCandidate("experimental", "2023-12-31", "2027-12-31", 1234));
 Console.WriteLine("Decoder checks passed");
+// Synthetic packed positions and roles: no real game samples.
+Check(TacticCandidateLookup.Read(0, 1).Status == "invalid_input");
+Check(TacticCandidateLookup.Decode(null) is null);
+Check(TacticCandidateLookup.Decode(new byte[21]) is null);
+var syntheticTactic = new byte[22];
+ushort packedGk = (ushort)(((108 << 6) | 49)); // signed indices: role -20, position -15
+syntheticTactic[0] = (byte)packedGk;
+syntheticTactic[1] = (byte)(packedGk >> 8);
+ushort packedUnknown = (ushort)((64 << 6) | 32); // both outside mapped ranges
+syntheticTactic[2] = (byte)packedUnknown;
+syntheticTactic[3] = (byte)(packedUnknown >> 8);
+var decodedTactic = TacticCandidateLookup.Decode(syntheticTactic)!;
+Check(decodedTactic.Positions.Count == 11 && decodedTactic.Positions[0] == "0x1");
+Check(decodedTactic.RolesDuties[0] == "Ball-Playing Goalkeeper / Support");
+Check(decodedTactic.Positions[1] == "unknown" && decodedTactic.RolesDuties[1] == "unknown");
