@@ -49,16 +49,22 @@ public static class PersonLookup
             // permits the upstream -0x288 adjustment for this build.
             if (!Read64(memory, item, out long personVtable)) return new("unavailable", null, null);
             PlayerDetails? details = null;
+            CandidateAffiliation? affiliation = null;
             if (personVtable == image + 0x04D27758 && item >= 0x288)
+            {
                 details = ReadDetails(memory, item, item - 0x288);
+                affiliation = ReadAffiliation(memory, image, item, item - 0x288);
+            }
             var after = ReadHeader(memory, image);
             if (after != header || !Read64(memory, header.Value.Begin + index * 8, out long same) || same != item ||
                 !Read32(memory, item + 0x0C, out int sameUid) || sameUid != uid ||
                 !Read64(memory, item, out long sameVtable) || sameVtable != personVtable ||
-                (details is not null && ReadDetails(memory, item, item - 0x288) != details) || clock.ElapsedMilliseconds >= 2000)
+                (details is not null && ReadDetails(memory, item, item - 0x288) != details) ||
+                (affiliation is not null && ReadAffiliation(memory, image, item, item - 0x288) != affiliation) ||
+                clock.ElapsedMilliseconds >= 2000)
                 return new("changed_during_read", null, null);
             var display = string.IsNullOrWhiteSpace(common) ? $"{first} {last}".Trim() : common;
-            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details);
+            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details, affiliation);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
         { return new("unavailable", null, null); }
@@ -108,6 +114,21 @@ public static class PersonLookup
         return new(Attribute(p, player + 0x174), Attribute(p, player + 0x16A),
             Attribute(p, player + 0x170), Attribute(p, player + 0x186), height, birthday);
     }
+    private static CandidateAffiliation? ReadAffiliation(SafeProcessHandle p, long image, long person, long player)
+    {
+        // One validated sample supports an affiliation, not managed-team or
+        // loan semantics. Exact types fail closed for other valid subclasses.
+        if (!Read32(p, person - 4, out int displacement) || displacement != 0 ||
+            !Read64(p, player + 0x130, out long team) || team <= 0 ||
+            !Read64(p, team, out long teamType) || teamType != image + 0x04CE1108 ||
+            !Read64(p, team + 0x30, out long club) || club <= 0 ||
+            !Read64(p, club, out long clubType) || clubType != image + 0x04CDA1F8 ||
+            !ReadBytes(p, team + 0x0C, 4, out var teamId) || !ReadBytes(p, club + 0x0C, 4, out var clubId) ||
+            !Read64(p, club + 0xC8, out long nameObject) || nameObject <= 0 ||
+            !ReadBytes(p, nameObject + 4, 64, out var nameBytes)) return null;
+        uint teamUid = BitConverter.ToUInt32(teamId, 0), clubUid = BitConverter.ToUInt32(clubId, 0);
+        return PlayerValueDecoder.Affiliation(teamUid, clubUid, nameBytes);
+    }
     private static bool Read32(SafeProcessHandle p, long address, out int value)
     { value = 0; if (!ReadBytes(p, address, 4, out var b)) return false; value = BitConverter.ToInt32(b, 0); return true; }
     private static bool Read64(SafeProcessHandle p, long address, out long value)
@@ -125,6 +146,8 @@ public static class PersonLookup
     }
 }
 
-public sealed record PersonResult(string Status, int? Uid, string? DisplayName, PlayerDetails? Details = null);
+public sealed record PersonResult(string Status, int? Uid, string? DisplayName, PlayerDetails? Details = null,
+    CandidateAffiliation? Affiliation = null);
 public sealed record PlayerDetails(byte? ReflexesRaw, byte? HandlingRaw, byte? AnticipationRaw,
     byte? JumpingRaw, int? HeightCm, string? DateOfBirth);
+public sealed record CandidateAffiliation(uint TeamUid, uint ClubUid, string ClubShortName);
