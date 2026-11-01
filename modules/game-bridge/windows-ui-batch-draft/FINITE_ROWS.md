@@ -94,3 +94,18 @@ The real preceding GK pair measured1378 units and about674–695 ms. Carrying it
 73-unit overhead forward is only a planning estimate; new categories may differ.
 Neither fixture zero-time nor aggregate estimates promise actual responsiveness.
 C#/PowerShell tests must run in CI; this cloud workspace has no SDK or PowerShell.
+
+### Windows status-reader protocol
+
+Status replacement preserves complete snapshots for opened handles; it does not
+promise uninterrupted pathname availability. Windows CI observed a transient
+`FileNotFoundException` when another thread opened the destination during
+`File.Replace`. A trusted consumer may defer that specific transient absence
+within a bounded running-producer window, without producing an observation or
+advancing capture freshness. Permission, malformed JSON, identity/ACL change, or
+writer failure is not that condition. Permanent absence, expiration or loss of
+the producer must invalidate the source; never defer indefinitely. The owned
+fixture bounds active-writer deferral to4096 attempts/10 seconds, propagates the
+writer task result, then unconditionally requires the complete final sequence32
+and no leaked temporary files. The production adapter must use its own approved
+producer/lifecycle and time bounds rather than copying a test's task predicate.

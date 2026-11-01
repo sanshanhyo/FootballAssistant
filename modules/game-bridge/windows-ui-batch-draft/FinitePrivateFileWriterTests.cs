@@ -42,19 +42,55 @@ internal static class FinitePrivateFileWriterTests
             {
                 for(var i=1;i<=32;i++) writer.Write("finite-rows-state.json",new { sequence=i, payload=new string('x',2048) });
             });
-            var reads=0;
+            var reads=0; var transientMissing=0; var attempts=0;
+            var readDeadline=System.Diagnostics.Stopwatch.StartNew();
+            bool ReadComplete(bool writerWasActive)
+            {
+                try
+                {
+                    using var stream = new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+                    using var document = JsonDocument.Parse(stream);
+                    Check(document.RootElement.GetProperty("sequence").GetInt32() is >=0 and <=32 &&
+                        document.RootElement.GetProperty("payload").GetString() == new string('x',2048),
+                        "every successfully opened snapshot is complete JSON");
+                    return true;
+                }
+                catch(FileNotFoundException) when(writerWasActive)
+                {
+                    // Observed Windows ReplaceFile namespace gap: no observation,
+                    // no freshness advancement. Permissions/JSON/other IO errors propagate.
+                    return false;
+                }
+            }
             do
             {
-                using var stream = new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
-                using var document = JsonDocument.Parse(stream);
-                Check(document.RootElement.GetProperty("sequence").GetInt32() is >=0 and <=32 &&
-                    document.RootElement.GetProperty("payload").GetString() == new string('x',2048), "every observed snapshot is complete JSON");
-                reads++; Thread.Sleep(1);
+                Check(++attempts<=4096 && readDeadline.Elapsed<TimeSpan.FromSeconds(10),
+                    "concurrent reader deferral has a finite attempt/time bound");
+                var writerWasActive=!writes.IsCompleted; // Evidence captured BEFORE this open attempt.
+                if(ReadComplete(writerWasActive)) reads++; else transientMissing++;
+                Thread.Sleep(1);
             } while(!writes.IsCompleted);
-            writes.GetAwaiter().GetResult();
-            using(var final=JsonDocument.Parse(File.ReadAllBytes(path)))
-                Check(final.RootElement.GetProperty("sequence").GetInt32()==32,"last completed atomic replacement retained");
+            writes.GetAwaiter().GetResult(); // Never hide a writer failure behind transient read deferral.
+            using(var final=JsonDocument.Parse(File.ReadAllBytes(path))) // Unconditional: permanent absence fails.
+                Check(final.RootElement.GetProperty("sequence").GetInt32()==32 &&
+                    final.RootElement.GetProperty("payload").GetString()==new string('x',2048),
+                    "completed writer leaves exact final complete snapshot");
             Check(reads>0 && !Directory.EnumerateFiles(root,"*.tmp").Any(),"own temp files cleaned after replacement");
+            if(OperatingSystem.IsWindows())
+            {
+                using var exclusive=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.None);
+                var permissionFailed=false;
+                try { ReadComplete(writerWasActive:true); }
+                catch(IOException) { permissionFailed=true; }
+                catch(UnauthorizedAccessException) { permissionFailed=true; }
+                Check(permissionFailed,"sharing/permission failures are never treated as transient absence");
+            }
+            File.Delete(path); // Owned fixture file only: a completed writer cannot excuse permanent absence.
+            var missingFailed=false;
+            try { ReadComplete(writerWasActive:false); } catch(FileNotFoundException) { missingFailed=true; }
+            Check(missingFailed,"missing status after writer completion must fail, not defer forever");
+            writer.Write("finite-rows-state.json",new { sequence=32, payload=new string('x',2048) });
+            Console.WriteLine($"Finite status reader: complete_reads={reads}, transient_missing={transientMissing}, attempts={attempts}; no freshness on deferral.");
             foreach(var name in new[]{"../escape.json","request.json",Path.Combine(root,"other.json")})
             {
                 var denied=false;

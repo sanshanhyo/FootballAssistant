@@ -4,7 +4,8 @@ using System.Text.Json;
 using System.Threading.Channels;
 namespace FootballAssistant.GameBridge;
 
-// Atomic snapshots for the three fixed private status files, not arbitrary filesystem access.
+// Complete snapshot replacement for three fixed private status files, not arbitrary filesystem access.
+// Open handles see complete versions; Windows pathname lookup may transiently report not found.
 // Path checks retain the existing best-effort owner-controlled-directory contract.
 internal sealed class FinitePrivateFileWriter
 {
