@@ -4,7 +4,7 @@ namespace FootballAssistant.OffseasonReader;
 // Caller must validate game hash and team, and recheck its complete root after reading.
 internal static class TacticOutRoleReader
 {
-internal static IReadOnlyList<string>? Read(SafeHandle h, long image, long targetTeam)
+internal static TacticTreeRoles? Read(SafeHandle h, long image, long targetTeam)
 {
     try
     {
@@ -39,7 +39,7 @@ internal static IReadOnlyList<string>? Read(SafeHandle h, long image, long targe
             if(idx < -1 || idx >= (te-tb)/8) return null;
             if(idx>=0 && t.I64(tb+idx*8L)==targetTeam)
             {
-                if(++matches>1) return null;
+                if(++matches>1 || t.U8(node+0x1050)!=0) return null;
                 long b=t.I64(node+0x1038), e=t.I64(node+0x1040), c=t.I64(node+0x1048);
                 if(b==0 && e==0 && c==0) targets=0;
                 else { if(b<65536 || (b&7)!=0 || e<b || c<e || (e-b)%8!=0 || (c-b)%8!=0 || (c-b)/8>64) return null; targets=checked((int)((e-b)/8)); if(targets!=1) return null; target=t.I64(b); if(target<65536 || (target&7)!=0) return null; }
@@ -49,19 +49,26 @@ internal static IReadOnlyList<string>? Read(SafeHandle h, long image, long targe
         long schedule=t.I64(targetTeam+0xA0); if(schedule<65536) return null;
         long source=t.I64(schedule+0xD0); if(source<65536 || t.I64(source+0xA0)!=targetTeam) return null;
         uint[] positions = { 0x1, 0, 0x4, 0x200010, 0x10, 0x100010, 0x8, 0x20, 0x200080, 0x80, 0x100080, 0x40, 0x100, 0x200400, 0x400, 0x100400, 0x200, 0x800, 0x202000, 0x2000, 0x102000, 0x1000, 0x800, 0x204000, 0x4000, 0x104000, 0x1000 };
-        var roles=new string[11];
+        bool firstMatches=true, secondMatches=true;
         for(int i=0;i<11;i++) {
-            int raw=t.U16(source+0x18+i*2L)&0x3f, signed=raw>=32?raw-64:raw, index=signed+15;
-            if(index<0 || index>=positions.Length || positions[index]==0 || t.U32(target+0x438+i*0x48L)!=positions[index]) return null;
-            roles[i]=TacticSecondRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x478+i*0x48L)));
+            int firstRaw=t.U16(source+i*2L)&0x3f, firstSigned=firstRaw>=32?firstRaw-64:firstRaw, firstIndex=firstSigned+15;
+            int secondRaw=t.U16(source+0x18+i*2L)&0x3f, secondSigned=secondRaw>=32?secondRaw-64:secondRaw, secondIndex=secondSigned+15;
+            uint first=t.U32(target+0x118+i*0x48L), second=t.U32(target+0x438+i*0x48L);
+            firstMatches &= firstIndex>=0 && firstIndex<positions.Length && positions[firstIndex]!=0 && first==positions[firstIndex];
+            secondMatches &= secondIndex>=0 && secondIndex<positions.Length && positions[secondIndex]!=0 && second==positions[secondIndex];
+        }
+        string[]? firstRoles=firstMatches?new string[11]:null, secondRoles=secondMatches?new string[11]:null;
+        for(int i=0;i<11;i++) {
+            if(firstRoles is not null) firstRoles[i]=TacticFirstRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x158+i*0x48L)));
+            if(secondRoles is not null) secondRoles[i]=TacticSecondRoleDecoder.Decode(unchecked((ulong)t.I64(target+0x478+i*0x48L)));
         }
         if(!t.Stable()) return null;
-        return roles;
-    }
+        return new TacticTreeRoles(firstRoles,secondRoles);    }
     catch(Exception ex) when(ex is InvalidOperationException or OverflowException or ArgumentException) { return null; }
 }
 
 }
+internal sealed record TacticTreeRoles(IReadOnlyList<string>? FirstRoles, IReadOnlyList<string>? SecondRoles);
 public static class TacticSecondRoleDecoder
 {
 // Role names follow FMMatchLens TacticalFormationDecoder (MIT, vendor/LICENSE).
@@ -128,3 +135,68 @@ static class NativeProbe { [DllImport("kernel32.dll", SetLastError=true)] public
 
 
 
+
+// Candidate labels only; current selection and duty semantics are not fully verified.
+public static class TacticFirstRoleDecoder
+{
+public static string Decode(ulong mask)
+{
+    const ulong dutyMask = 0x200000UL | 0x400000UL | 0x800000UL | 0x2000000UL | 0x4000000UL | 0x400000000UL;
+    string name=(mask & ~dutyMask) switch {
+        0x1UL => "Goalkeeper",
+        0x1000UL => "Ball-Playing Goalkeeper",
+        0x20000000000000UL => "No-Nonsense Goalkeeper",
+        0x4UL => "Full-Back",
+        0x8UL => "Wing-Back",
+        0x1000000000UL => "No-Nonsense Full-Back",
+        0x4000000000UL => "Advanced Wing-Back",
+        0x100000000000UL => "Inverted Wing-Back",
+        0x10000000000000UL => "Inverted Full-Back",
+        0x80000000000000UL => "Playmaking Wing-Back",
+        0x2UL => "Central Defender",
+        0x4000UL => "Libero",
+        0x1000000UL => "Ball-Playing Defender",
+        0x20000000UL => "No-Nonsense Centre-Back",
+        0x8000000000000UL => "Wide Centre-Back",
+        0x40000000000000UL => "Overlapping Centre-Back",
+        0x200000000000000UL => "Midfield Playmaker",
+        0x10UL => "Defensive Midfielder",
+        0x20UL => "Central Midfielder",
+        0x8000UL => "Deep-Lying Playmaker",
+        0x10000UL => "Box-to-Box Midfielder",
+        0x10000000UL => "Ball-Winning Midfielder",
+        0x200000000UL => "Anchor",
+        0x800000000UL => "Half-Back",
+        0x2000000000UL => "Enganche",
+        0x8000000000UL => "Regista",
+        0x400000000000UL => "Box-to-Box Playmaker",
+        0x800000000000UL => "Mezzala",
+        0x4000000000000UL => "Segundo Volante",
+        0x40UL => "Wide Midfielder",
+        0x80UL => "Winger",
+        0x200UL => "Attacking Midfielder",
+        0x100000000000000UL => "Channel Midfielder",
+        0x20000UL => "Advanced Playmaker",
+        0x8000000UL => "Inside Forward",
+        0x2000000000000UL => "Inverted Winger",
+        0x40000000UL => "Defensive Winger",
+        0x100000000UL => "Trequartista",
+        0x40000000000UL => "Wide Target Forward",
+        0x80000000000UL => "Wide Playmaker",
+        0x200000000000UL => "Wide Forward",
+        0x1000000000000UL => "Wide Central Midfielder",
+        0x400UL => "Deep-Lying Forward",
+        0x800UL => "Centre-Forward",
+        0x40000UL => "Target Man",
+        0x80000UL => "Poacher",
+        0x100000UL => "Complete Forward",
+        0x80000000UL => "Channel Forward",
+        0x10000000000UL => "False Nine",
+        0x20000000000UL => "Shadow Striker",
+        _ => "unknown"
+    };
+    string duty=(mask & dutyMask) switch { 0x200000UL => "Defend", 0x400000UL => "Support", 0x800000UL => "Attack", 0x2000000UL => "Stopper", 0x4000000UL => "Cover", 0x400000000UL => "Float", _ => "unknown" };
+    return name == "unknown" ? "unknown" : name + " / " + duty;
+}
+
+}

@@ -53,3 +53,7 @@ Check(decodedTactic.Positions[1] == "unknown" && decodedTactic.RolesDuties[1] ==
 Check(TacticSecondRoleDecoder.Decode(0x800002) == "0x800002: Sweeper Keeper / Attack");
 Check(TacticSecondRoleDecoder.Decode(0x1000000000000000) == "unknown");
 Check(TacticSecondRoleDecoder.Decode(0xE00002) == "0xE00002: Sweeper Keeper / unknown");
+// Synthetic target first-group role masks; no game sample.
+Check(TacticFirstRoleDecoder.Decode(0x401000) == "Ball-Playing Goalkeeper / Support");
+Check(TacticFirstRoleDecoder.Decode(0x1000000000000000) == "unknown");
+Check(TacticFirstRoleDecoder.Decode(0xE01000) == "Ball-Playing Goalkeeper / unknown");

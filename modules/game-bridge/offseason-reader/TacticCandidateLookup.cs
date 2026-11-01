@@ -57,14 +57,14 @@ try
     var selected = candidates[0];
     if (selected.Relation != "backref_matches_team") return new("unavailable");
     var players = TacticPlayerAssociations.Read(memory, image, selected.Team, selected.Slot);
-    var secondPhaseRoles = TacticOutRoleReader.Read(memory, image, selected.Team);
+    var treeRoles = TacticOutRoleReader.Read(memory, image, selected.Team);
     if (ReadCandidate(memory, image, selected.Object, targetClubUid).Candidate != selected ||
         ReadHeader(memory, image) != header || clock.ElapsedMilliseconds >= 2000)
         return new("changed_during_read");
     foreach (var entry in inspected)
         if (!Read64(memory, entry.Slot, out long current) || current != entry.Object) return new("changed_during_read");
     if (ReadHeader(memory, image) != header || clock.ElapsedMilliseconds >= 2000) return new("changed_during_read");
-    return new("experimental", "unknown", selected.PositionMasks.Split(','), selected.RolesDuties.Split(','), DateTimeOffset.UtcNow, players, secondPhaseRoles, "unknown", "Candidate may not track active or unsaved tactical edits; observedAt is read time only.");
+    return new("experimental", "unknown", selected.PositionMasks.Split(','), selected.RolesDuties.Split(','), DateTimeOffset.UtcNow, players, treeRoles?.SecondRoles, "unknown", "RolesDuties comes from a template candidate and may not track edits. FirstTargetRoles is a separate experimental tree candidate; active selection and unsaved edits remain unverified. observedAt is read time only.", treeRoles?.FirstRoles);
 }
 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
 { return new("unavailable"); }
@@ -151,11 +151,13 @@ private sealed class SafeProcessHandle : Microsoft.Win32.SafeHandles.SafeHandleZ
 
 
 }
-public sealed record TacticCandidateResult(string Status, string? Phase = null, IReadOnlyList<string>? PositionMasks = null, IReadOnlyList<string>? RolesDuties = null, DateTimeOffset? ObservedAt = null, IReadOnlyList<TacticPlayerCandidate>? Players = null, IReadOnlyList<string>? SecondPhaseRoles = null, string? ContentFreshness = null, string? Limitation = null);
+public sealed record TacticCandidateResult(string Status, string? Phase = null, IReadOnlyList<string>? PositionMasks = null, IReadOnlyList<string>? RolesDuties = null, DateTimeOffset? ObservedAt = null, IReadOnlyList<TacticPlayerCandidate>? Players = null, IReadOnlyList<string>? SecondPhaseRoles = null, string? ContentFreshness = null, string? Limitation = null, IReadOnlyList<string>? FirstTargetRoles = null);
 
 
 
 public sealed record TacticDecoded(IReadOnlyList<string> Positions, IReadOnlyList<string> RolesDuties);
+
+
 
 
 
