@@ -123,6 +123,7 @@ jobs:
           if ($report.platform -ne 'win32' -or $report.arch -ne 'x64') { throw 'Unexpected desktop target' }
           if ($report.bootstrap.backend.state -ne 'ready') { throw 'Embedded backend did not become ready' }
           if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
+          if (-not $report.renderer.ipcOk -or -not $report.settingsRenderer.ipcOk -or -not $report.settingsRenderer.aboutOk -or -not $report.settingsRenderer.customControls) { throw 'Packaged window IPC/controls check failed' }
       - name: Verify NSIS installation, reinstall and uninstall preserve user data
         if: runner.os == 'Windows'
         shell: powershell

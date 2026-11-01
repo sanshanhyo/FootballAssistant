@@ -4,6 +4,16 @@ const assert = require('node:assert/strict');
 const { createSettingsContent } = require('../src/settings-content.cjs');
 const { allowsWindowIpc } = require('../src/companion-security.cjs');
 const metadata = require('../package.json');
+
+test('packaged metadata without electron-builder build fields still renders about',()=>{
+  const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+  const filename=path.join(__dirname,'../src/settings-content.cjs');
+  const localRequire=require('node:module').createRequire(filename);
+  const module={exports:{}};
+  vm.runInNewContext(fs.readFileSync(filename,'utf8'),{module,__dirname:path.dirname(filename),require:name=>name==='../package.json'?{version:'0.0.1',author:'fixture'}:localRequire(name)});
+  const result=module.exports.createSettingsContent({version:'0.0.2',openExternal:async()=>{}}).about();
+  assert.equal(result.name,'FootballAssistant');assert.equal(result.version,'0.0.2');
+});
 test('introduction is separate packaged Markdown and uses existing character PNG', async () => {
   const service = createSettingsContent({version:'test-version',openExternal:async()=>{}});
   const result = await service.introduction();

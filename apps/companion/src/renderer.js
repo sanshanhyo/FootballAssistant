@@ -5,6 +5,7 @@
   const UI = window.CompanionUI;
   const Bubbles = window.CompanionBubbles;
   const Scenes = window.CompanionScenes;
+  const motion = window.CompanionMotion?.bind({ image: $('character-image'), media: window.matchMedia?.('(prefers-reduced-motion: reduce)') });
   let gameStatus = { state: 'unknown' };
   let gamePollTimer;
   let sceneClosed = false;
@@ -51,6 +52,7 @@
     $('compact-bubble').setAttribute('aria-disabled', String(!part.hasNext));
     $('compact-text').title = '';
     $('bubble-body').scrollTop = 0;
+    refreshExpression();
     updateRects();
   } });
 
@@ -108,14 +110,14 @@
     const manual = preferences().expression;
     const expression = manual !== 'auto' ? manual : next;
     $('pet').dataset.expression = UI.EXPRESSIONS[expression] ? expression : 'idle';
-    // Static discussion artwork is independent of this interaction-state label.
-    $('expression-label').textContent = UI.EXPRESSIONS[next] || UI.EXPRESSIONS.idle;
+    motion?.setState($('pet').dataset.expression);
   }
 
   function refreshExpression() {
     if (!$('error').hidden) return setExpression('error');
     if (speechPhase !== 'idle') return setExpression(({ recording:'listening', permission:'listening', transcribing:'transcribing', speaking:'speaking' })[speechPhase] || 'idle');
     if ([...requests.values()].some(item => ['pending', 'running', 'accepted', 'queued'].includes(item.status))) return setExpression('thinking');
+    if (!$('compact-bubble').hidden) return setExpression('speaking');
     setExpression('idle');
   }
 
@@ -152,7 +154,6 @@
     pet.setAttribute('aria-label', `${character.displayName}：单击打字，长按说话，拖动移动，右键设置`);
     pet.title = `${character.displayName} / ${character.englishName} · ${character.visual?.label || '视觉待确认'}`;
     $('chat-form').setAttribute('aria-label', `给${character.displayName}发消息`);
-    $('compact-bubble').setAttribute('aria-label', `${character.displayName}的对白`);
   }
 
   $('character-image').addEventListener('load', () => {
@@ -186,6 +187,7 @@
     const providersChanged = next.preferences && (next.preferences.sttProvider !== oldPreferences.sttProvider || next.preferences.ttsProvider !== oldPreferences.ttsProvider);
     if (switched || providersChanged) cancelVoice(providersChanged && state ? '语音服务已切换' : '');
     if (switched) {
+      clearTimeout(noticeTimer); motion?.reset();
       messages = new Map(); tools.clear(); requests.clear(); blockedReplyId = null; bubbleQueue?.clear();
       $('message').value = ''; resetDraftNote(); resizeComposer();
     }
@@ -206,15 +208,19 @@
 
   function onRuntimeEvent(event) {
     if (!event || typeof event !== 'object') return;
-    if (event.type === 'visibility') { if (event.visible === false) { bubbleQueue?.pause(); cancelVoice('桌宠已隐藏，语音操作已停止', false); } else bubbleQueue?.resume(); return; }
+    if (event.type === 'visibility') { motion?.setVisible(event.visible !== false); if (event.visible === false) { bubbleQueue?.pause(); cancelVoice('桌宠已隐藏，语音操作已停止', false); } else bubbleQueue?.resume(); return; }
     if (event.type === 'stop-speech') { cancelVoice('语音操作已停止', false); return; }
     if (event.type === 'composer') { setComposer(event.open !== false, true); return; }
     if (event.type === 'read-last-reply') { speakLast(); return; }
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') { onSpeechEvent(event.state); return; }
     if (event.type === 'message' && UI.belongsToSession(event.message, state)) {
+      const isNew = !messages.has(event.message.id);
       messages.set(event.message.id, event.message); renderCharacter(); renderBubble();
-      if (event.message.origin === 'proactive') { setExpression('notice'); clearTimeout(noticeTimer); noticeTimer = setTimeout(refreshExpression, 2500); }
+      if (isNew && event.message.origin === 'proactive' && speechPhase === 'idle' && $('error').hidden &&
+          ![...requests.values()].some(item => ['pending', 'running', 'accepted', 'queued'].includes(item.status))) {
+        setExpression('notice'); clearTimeout(noticeTimer); noticeTimer = setTimeout(refreshExpression, 2500);
+      }
     }
     if (event.type === 'tool' && UI.belongsToSession(event, state)) { tools.set(`${event.requestId}:${event.tool.id}`, event); renderTasks(); }
     if (event.type === 'request' && UI.belongsToSession(event, state)) {
@@ -498,7 +504,7 @@
     document.addEventListener('toggle', updateRects, true);
     window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
     window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
-    window.addEventListener('beforeunload', () => { sceneClosed = true; disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
+    window.addEventListener('beforeunload', () => { sceneClosed = true; motion?.dispose(); clearTimeout(noticeTimer); disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
     const observer = new ResizeObserver(updateRects);
     [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
   }
@@ -520,7 +526,7 @@
     return;
   }
   bindEvents();
-  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: () => { resizeComposer(); updateRects(); }});
+  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeechCapabilities();

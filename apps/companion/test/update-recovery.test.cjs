@@ -100,3 +100,42 @@ test('health acknowledgement cannot skip first-launch journal processing', async
   assert.equal((await another.acknowledgeHealthy()).state, 'awaiting_health');
   assert.equal((await another.beginLaunch()).state, 'recovery_required');
 });
+
+test('upgrade checkpoints preserve allowlisted account, history, memories and persona without decrypting or touching live data',async t=>{
+  const f=await fixture(t);await fs.mkdir(path.join(f.userData,'backend'));
+  const originals={
+    'companion-ui.json':JSON.stringify({version:1,historyEnabled:true,messages:[{id:'synthetic',text:'fixture history'}],memories:[{id:'fixture',text:'fixture memory'}]}),
+    'model-config.json':JSON.stringify({schema_version:1,provider:'openai-compatible',baseUrl:'https://fixture.test/v1',model:'fixture-model'}),
+    'credentials.enc.json':JSON.stringify({schema_version:1,ciphertext:Buffer.from('opaque synthetic ciphertext').toString('base64')}),
+    'backend/persona.md':'# User-authored fixture persona\nKeep my words.\n',
+  };
+  for(const [name,bytes] of Object.entries(originals))await fs.writeFile(path.join(f.userData,name),bytes);
+  await fs.writeFile(path.join(f.userData,'backend','live.sqlite'),'not a snapshot candidate');
+  const prepared=await f.create().prepare({targetVersion});assert.equal(prepared.state,'prepared');assert.equal(prepared.snapshots.length,4);
+  for(const entry of prepared.snapshots){assert.equal(await fs.readFile(path.join(path.dirname(prepared.journalPath),entry.backup),'utf8'),originals[entry.source]);}
+  const after=f.create(targetVersion);await after.beginLaunch();await after.fail('synthetic startup failure');
+  assert.equal((await f.create(targetVersion).beginLaunch()).state,'recovery_required');
+  for(const [name,bytes] of Object.entries(originals))assert.equal(await fs.readFile(path.join(f.userData,name),'utf8'),bytes);
+  assert.equal(prepared.snapshots.some(x=>x.source.includes('sqlite')),false);
+  assert.ok(!JSON.stringify(prepared).includes('opaque synthetic'));
+});
+test('corrupted user-data checkpoint blocks automatic upgrades without restoring stale user files',async t=>{
+  const f=await fixture(t);await fs.writeFile(path.join(f.userData,'companion-ui.json'),'{"version":1,"messages":[]}');
+  const prepared=await f.create().prepare({targetVersion});await fs.writeFile(path.join(path.dirname(prepared.journalPath),prepared.snapshots[0].backup),'tampered');
+  const newer='{"version":1,"messages":[{"id":"new"}]}';await fs.writeFile(path.join(f.userData,'companion-ui.json'),newer);
+  assert.equal((await f.create(targetVersion).beginLaunch()).state,'recovery_required');assert.equal(await fs.readFile(path.join(f.userData,'companion-ui.json'),'utf8'),newer);
+});
+test('an outside persona edit during checkpoint blocks installation and preserves the editor content',async t=>{
+  const f=await fixture(t);await fs.mkdir(path.join(f.userData,'backend'));
+  const persona=path.join(f.userData,'backend','persona.md');await fs.writeFile(persona,'original synthetic persona');
+  const open=fs.open.bind(fs);
+  t.mock.method(fs,'open',async(...args)=>{
+    const handle=await open(...args);
+    if(path.basename(String(args[0])).startsWith('data-')){
+      const write=handle.writeFile.bind(handle);handle.writeFile=async bytes=>{await write(bytes);await fs.writeFile(persona,'outside editor changed this');};
+    }
+    return handle;
+  });
+  assert.equal((await f.create().prepare({targetVersion})).state,'recovery_required');
+  assert.equal(await fs.readFile(persona,'utf8'),'outside editor changed this');
+});

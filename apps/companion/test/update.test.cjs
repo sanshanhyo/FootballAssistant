@@ -103,6 +103,15 @@ test('unpublished signed channel reports no_release, never silently downloads un
   const controller = createUpdateController({ ...context, publicKey: pem, feedUrl: `${root}alpha-update.json`, fetchImpl: async () => { calls++; return new Response('', { status: 404 }); } });
   assert.equal((await controller.check()).state, 'no_release'); assert.equal(calls, 1);
 });
+
+test('background checks preserve a staged installer while conversations defer restart', async () => {
+  let checks=0,stages=0;let resolveReady;const ready=new Promise(resolve=>resolveReady=resolve);
+  const installed={status:{automaticInstallEnabled:true},stage:async()=>{stages++;installed.status={automaticInstallEnabled:true,state:'ready_for_safe_exit'};return {...installed.status};}};
+  const controller=createUpdateController({...context,publicKey:pem,feedUrl:`${root}alpha-update.json`,installedUpdater:installed,fetchImpl:async()=>{checks++;return Response.json(sign(manifest()));},onStatus:state=>{if(state.state==='ready_for_safe_exit')resolveReady();}});
+  controller.start();await ready;
+  installed.status.state='deferred';await controller.check();await controller.download();controller.stop();
+  assert.equal(checks,1);assert.equal(stages,1);assert.equal(controller.status.state,'ready_for_safe_exit');
+});
 test('production contains only approved public Ed25519 trust and a fixed official feed', () => {
   const trust = require('../src/update-trust.cjs');
   const key = crypto.createPublicKey(trust.productionTrust.publicKey);

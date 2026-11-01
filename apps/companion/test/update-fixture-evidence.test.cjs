@@ -4,6 +4,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { assertEvidence } = require('./assert-update-fixture.cjs');
+const { copyFixtureModules } = require('./update-native-fixture.cjs');
+
+test('isolated updater fixture loads recovery with its transitive validation dependencies', async t => {
+  const project = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fa-fixture-modules-'));
+  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
+  await copyFixtureModules(path.resolve(__dirname, '..'), project);
+  const { createUpdateRecovery } = require(path.join(project, 'update-recovery.cjs'));
+  const profile = path.join(project, 'profile');
+  fs.mkdirSync(profile);
+  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '' }));
+  const recovery = createUpdateRecovery({ userData: profile, currentVersion: '0.0.1-alpha.1' });
+  assert.equal((await recovery.prepare({ targetVersion: '0.0.2-alpha.1' })).state, 'prepared');
+});
 test('fixture success requires actual upgrade evidence, never just process exit or passed flag', () => {
   assert.throws(() => assertEvidence({ passed: false, error: 'builder failure', events: '', requests: [] }));
   assert.throws(() => assertEvidence({ passed: true }));

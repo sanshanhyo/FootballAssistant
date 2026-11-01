@@ -95,3 +95,16 @@ test('latest reply excludes previous input, old request responses and old sessio
   assert.equal(latestReply(messages, { ...session, epoch: 2 }), null);
   messages.push({ ...session, id: 'notice', role: 'assistant', origin: 'proactive', text: '本地提示' }); assert.equal(latestReply(messages, session).id, 'notice');
 });
+
+test('approximate length keeps closing punctuation with its sentence at the boundary', () => {
+  const text = '中'.repeat(39) + '。”下一段。';
+  assert.deepEqual(splitReply(text), ['中'.repeat(39) + '。”', '下一段。']);
+  const edge = '中'.repeat(40) + '！？下一段。';
+  assert.deepEqual(splitReply(edge), ['中'.repeat(40) + '！？', '下一段。']);
+  assert.deepEqual(splitReply('a'.repeat(40) + '. Next.'), ['a'.repeat(40) + '.', 'Next.']);
+  assert.deepEqual(splitReply('中'.repeat(40) + '，下一段。'), ['中'.repeat(40) + '，', '下一段。']);
+  const emoji = '👩🏽‍💻'.repeat(40) + '！';
+  assert.deepEqual(splitReply(emoji), [emoji]);
+  const malformed = splitReply('中'.repeat(40) + '！'.repeat(100));
+  assert.ok(malformed.every(part => graphemes(part).length <= 44));
+});

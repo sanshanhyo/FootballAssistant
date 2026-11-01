@@ -15,7 +15,7 @@ function createSettingsContent({ version, openExternal }) {
     },
     about() {
       return { version: typeof version === 'string' && version.length <= 128 ? version : metadata.version,
-        name: metadata.build.productName, description: metadata.description,
+        name: metadata.productName || metadata.build?.productName || 'FootballAssistant', description: metadata.description,
         author: typeof metadata.author === 'string' ? metadata.author : null,
         repository: REPOSITORY, contributorsUrl: CONTRIBUTORS };
     },

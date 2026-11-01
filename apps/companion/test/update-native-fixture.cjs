@@ -102,6 +102,15 @@ function verifyFixtureEvidenceEncoding() {
   return true;
 }
 
+async function copyFixtureModules(companion, project) {
+  for (const name of ['update-installed.cjs', 'update-security.cjs', 'update-recovery.cjs', 'credentials.cjs', 'model-providers.cjs']) {
+    await fs.copyFile(path.join(companion, 'src', name), path.join(project, name));
+  }
+  // Fail before packaging if a new local dependency was omitted from this isolated app.
+  require(path.join(project, 'update-recovery.cjs'));
+  require(path.join(project, 'update-installed.cjs'));
+}
+
 async function main() {
   requireDisposableWindows();
   verifyFixtureEvidenceEncoding();
@@ -140,7 +149,7 @@ async function main() {
   const config = { initialVersion, targetVersion, install, profile, originalSettings, serverUrl, publicKey: publicKey.export({ type: 'spki', format: 'pem' }) };
   let initialChild = null;
   try {
-    for (const name of ['update-installed.cjs', 'update-security.cjs', 'update-recovery.cjs']) await fs.copyFile(path.join(companion, 'src', name), path.join(project, name));
+    await copyFixtureModules(companion, project);
     await fs.writeFile(path.join(project, 'main.cjs'), appSource);
     await fs.writeFile(path.join(project, 'fixture-config.json'), JSON.stringify(config));
     const packageFile = path.join(project, 'package.json');
@@ -211,4 +220,4 @@ async function main() {
   }
 }
 if (require.main === module) main().catch(error => { console.error(error.stack); process.exit(1); });
-module.exports = { requireDisposableWindows, fixtureAppSource: appSource, verifyFixtureEvidenceEncoding };
+module.exports = { requireDisposableWindows, fixtureAppSource: appSource, verifyFixtureEvidenceEncoding, copyFixtureModules };

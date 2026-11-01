@@ -285,14 +285,25 @@
   const APPEARANCE_KEY = Appearance.KEY;
   function applyAppearance(value) {
     const prefs = Appearance.apply(document, value);
-    $('font-family').value = prefs.fontFamily; $('font-size').value = String(prefs.fontSize); $('dark-mode').checked = prefs.darkMode;
+    $('font-family').value = prefs.fontFamily; $('font-size').value = String(prefs.fontSize); $('dark-mode').checked = prefs.darkMode; $('light-motion').checked = prefs.lightMotion;
   }
   function saveAppearance() {
-    const value = { fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked };
+    const value = { fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked, lightMotion:$('light-motion').checked };
     try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value); }
     catch { showError('外观保存失败'); }
   }
+  function saveLightMotion() {
+    try {
+      let previous = {};
+      try { previous = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}'); } catch {}
+      const value = { ...previous, lightMotion:$('light-motion').checked };
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value);
+    } catch { showError('外观保存失败'); }
+  }
   function bind() {
+    for (const [id, action] of [['window-minimize','minimize'],['window-maximize','toggle-maximize'],['window-close','close']]) {
+      $(id).addEventListener('click', () => perform(() => api.controlSettingsWindow(action)));
+    }
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     Object.entries(UI.EXPRESSIONS).forEach(([value,label]) => { if (value === 'auto') return; const option=node('option','',label); option.value=value; $('expression').append(option); });
     $('proactivity').addEventListener('input', () => { proactivityEditing=true; $('proactivity-value').textContent=`${$('proactivity').value}%`; });
@@ -321,6 +332,7 @@
     $('open-repository').addEventListener('click',() => perform(() => api.openRepository()));
     $('open-contributors').addEventListener('click',() => perform(() => api.openContributors()));
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
+    $('light-motion').addEventListener('change',saveLightMotion);
     window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
   }
   try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}')); } catch { applyAppearance({}); }
