@@ -17,6 +17,8 @@
 
 <!-- 待补充 FootballAssistant 的实际界面截图。 -->
 
+ 使用说明
+
 ## 下载
 
 请前往 [Releases](https://github.com/sanshanhyo/FootballAssistant/releases) 下载对应平台的版本。
@@ -25,34 +27,34 @@
 
 **⚠️⚠️目前 Football Assistant 处于 Alpha 测试阶段，各项功能仍不稳定，同时正在快速更新中，请做好存档备份⚠️⚠️**
 
-若遇到 BUG，可以在 [Issues](https://github.com/sanshanhyo/FootballAssistant/issues) 中或加入 QQ 群反馈。如果你有好点子，也欢迎提出；能提供实现的 Fork 或提交 PR 就更好了！
+若遇到 BUG，可以在 [Issues](https://github.com/sanshanhyo/FootballAssistant/issues) 中或加入 QQ 群反馈。如果你有好点子，也欢迎提出；能提供实现的 Fork 提交 PR 就更好了！
 
 ## 功能
 
-- [X] 允许玩家在游戏中与桌宠进行文字聊天。
-- [X] 第三方模型 API 接入，可在设置中配置。
-- [X] 读取已支持页面中的球员属性、战术摘要、赛程及下一场比赛信息。
-- [X] 根据已读取的数据回复玩家，并对已支持的数据变化提供基础主动提示。
-- [X] 分段短句回复，可编辑 `persona.md` 调整人设。
+- [X]  允许玩家在游戏中与桌宠进行文字聊天。
+- [X]  第三方模型 API 接入，可在设置中配置。
+- [X]  读取已支持页面中的球员属性、战术摘要、赛程及下一场比赛信息。
+- [X]  根据已读取的数据回复玩家，并对已支持的数据变化提供基础主动提示。
+- [X]  分段短句回复，可编辑 `persona.md` 调整人设。
 
 ## Road Map
 
-- [ ] Alpha 0.0.2 - 角色库，角色切换，实装 TTS 系统，修改界面；
-- [ ] Alpha - 扩充读取覆盖与建议质量，完善滚动更新、配置迁移和故障恢复，加入不依赖新游戏接口的轻量娱乐互动；
-- [ ] Beta - 接入 FMAPI，稳定读取接口；
+- [ ]  Alpha 0.0.2 - 角色库，角色切换，实装 TTS 系统，修改界面；
+- [ ]  Alpha阶段 - 扩充读取覆盖与建议质量，完善滚动更新、配置迁移和故障恢复，加入不依赖新游戏接口的轻量娱乐互动；
+- [ ]  Beta阶段 - 完整接入 FMAPI，稳定读取接口；
 
-**我们非常需要你的帮助，无论是提出功能、反馈 BUG，还是提交 PR，这对我们都十分重要。**
+**我们非常需要你的帮助，无论是提出功能、反馈 BUG，还是提交 PR，这对我们都十分重要！**
 
 ## 致谢
 
 FootballAssistant 的实现离不开以下优秀的开源项目与社区资源：
 
 - [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)：部分桌宠多屏窗口与拖拽处理代码。
+- [FMMatchLens](https://github.com/osnsyc/FMMatchLens) ：解决了如何读取内存的问题。
 - [UnityDoorstop](https://github.com/NeighTools/UnityDoorstop) 与 [.NET/CoreCLR](https://github.com/dotnet/runtime)：游戏桥接加载与运行基础。
-- [fm26-player-export-macos](https://github.com/DadMych/fm26-player-export-macos)：macOS 兼容与加载方案参考。
+- [fm26-player-export-macos](https://github.com/DadMych/fm26-player-export-macos)：macOS 兼容与加载方案参考（虽然现在我们完全没有做到 macOS 兼容就是了）。
 - [fmsave](https://github.com/rhiever/fmsave)：可选的有限存档解析适配。
-- [BepInEx](https://github.com/BepInEx/BepInEx) 与 [Dobby](https://github.com/BepInEx/Dobby)：早期兼容实验及可选原生观察模块。
-- 851 GBai Marker 字体及其作者与贡献者：具体来源和许可见项目内的第三方声明。
+- [BepInEx](https://github.com/BepInEx/BepInEx) 与 [Dobby](https://github.com/BepInEx/Dobby)：实现了读取内存的方式。
 
 也感谢所有直接或间接参与上述项目的开发者与贡献者。第三方代码与资源分别遵循其各自许可。
 
@@ -60,4 +62,4 @@ FootballAssistant 的实现离不开以下优秀的开源项目与社区资源�
 
 FootballAssistant 是独立开发的非官方辅助项目，与 Football Manager 27 的开发商、发行商不存在官方隶属、合作或背书关系；游戏名称、商标及相关内容的权利归各自权利人所有。本项目不提供游戏本体、破解或授权绕过功能，请使用合法取得的游戏，并遵守适用的游戏许可协议及法律法规。
 
-本项目基于 [GNU General Public License v3.0](LICENSE) 开源。第三方代码与资源分别遵循其各自许可。
+本项目基于 [MIT](LICENSE) 开源。第三方代码与资源分别遵循其各自许可。
