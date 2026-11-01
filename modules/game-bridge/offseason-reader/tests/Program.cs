@@ -91,3 +91,18 @@ var syntheticPartial = FixtureCalendarLookup.Finish(3, 1, 0, 2, syntheticFixture
 Check(syntheticPartial.Status == "partial" && syntheticPartial.Fixtures![0].Date == "2030-02-01");
 Check(FixtureCalendarLookup.Finish(3, 0, 1, 2, syntheticFixtures, DateTimeOffset.UnixEpoch).Status == "partial");
 Check(FixtureCalendarLookup.Finish(3, 0, 0, 2, syntheticFixtures, DateTimeOffset.UnixEpoch).Status == "experimental_loaded_buckets_only");
+Check(FixtureCalendarLookup.VenueCandidate(0x02, 11, 11) == "home");
+Check(FixtureCalendarLookup.VenueCandidate(0x02, 12, 11) == "away");
+Check(FixtureCalendarLookup.VenueCandidate(0x00, 11, 11) == "unknown");
+Check(FixtureCalendarLookup.VenueCandidate(0x04, 11, 11) == "unknown");
+var syntheticCrossing = FixtureCalendarLookup.Days(new DateTime(2030, 2, 25), new DateTime(2030, 3, 3)).ToArray();
+Check(syntheticCrossing.Length == 7 && syntheticCrossing[0] == new DateTime(2030, 2, 25) && syntheticCrossing[^1] == new DateTime(2030, 3, 3));
+Check(FixtureCalendarLookup.LoadedState(0) == "unloaded" && FixtureCalendarLookup.LoadedState(1) == "loaded" && FixtureCalendarLookup.LoadedState(2) == "unknown");
+byte[] syntheticMemory = { 1, 2, 3, 4 };
+var syntheticTracked = new FixtureCalendarLookup.Tracked((address, length) => syntheticMemory.ToArray());
+Check(syntheticTracked.Bytes(65536, 4).SequenceEqual(syntheticMemory) && syntheticTracked.Stable());
+syntheticMemory[1] = 9;
+Check(!syntheticTracked.Stable());
+var syntheticShortRead = new FixtureCalendarLookup.Tracked((address, length) => new byte[length - 1]);
+try { syntheticShortRead.Bytes(65536, 4); throw new Exception("short read accepted"); } catch (InvalidOperationException) { }
+try { syntheticTracked.Bytes(0, 4); throw new Exception("bad address accepted"); } catch (InvalidOperationException) { }

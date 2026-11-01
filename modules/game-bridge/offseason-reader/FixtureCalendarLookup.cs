@@ -6,7 +6,7 @@ using Microsoft.Win32.SafeHandles;
 namespace FootballAssistant.OffseasonReader;
 
 // Experimental loaded-bucket view only; no complete-calendar claim.
-public sealed record FixtureCalendarEntry(string Date,uint OpponentTeamUid,uint OpponentClubUid,string OpponentName,string Side);
+public sealed record FixtureCalendarEntry(string Date,uint OpponentTeamUid,uint OpponentClubUid,string OpponentName,string Side,string? Venue=null,byte? RawFlags=null);
 public sealed record FixtureCalendarResult(string Status,int Buckets=0,int Unloaded=0,int Unknown=0,int InspectedEntries=0,IReadOnlyList<FixtureCalendarEntry>? Fixtures=null,DateTimeOffset? ObservedAt=null);
 public static class FixtureCalendarLookup
 {
@@ -16,6 +16,14 @@ public static class FixtureCalendarLookup
         finish.Year==start.Year && (finish-start).Days<30 && start.Year is >=1901 and <=2100;
     internal static FixtureCalendarResult Finish(int buckets,int unloaded,int unknown,int total,IEnumerable<FixtureCalendarEntry> entries,DateTimeOffset observedAt) =>
         new(unloaded>0||unknown>0?"partial":"experimental_loaded_buckets_only",buckets,unloaded,unknown,total,entries.OrderBy(x=>x.Date,StringComparer.Ordinal).ThenBy(x=>x.OpponentClubUid).ToArray(),observedAt);
+    internal static string LoadedState(byte value) => value switch { 0 => "unloaded", 1 => "loaded", _ => "unknown" };
+    internal static string VenueCandidate(byte flags,uint firstTeamUid,uint targetTeamUid) =>
+        (flags & 0x02)==0 || firstTeamUid is 0 or uint.MaxValue || targetTeamUid is 0 or uint.MaxValue ? "unknown" : firstTeamUid==targetTeamUid ? "home" : "away";
+    internal static IEnumerable<DateTime> Days(DateTime start,DateTime finish)
+    {
+        if(!IsValidRange(start,finish)) throw new ArgumentException();
+        for(int i=0;i<=(finish-start).Days;i++) yield return start.AddDays(i);
+    }
     public static FixtureCalendarResult Read(int pid,uint clubUid,DateTime start,DateTime finish)
     {
         if(pid<=0 || clubUid is 0 or uint.MaxValue || !IsValidRange(start,finish)) return new("unknown");
@@ -27,8 +35,10 @@ public static class FixtureCalendarLookup
     if(string.IsNullOrEmpty(module.FileName)) throw new InvalidOperationException();
     using(var file=File.OpenRead(module.FileName)) using(var sha=SHA256.Create()) if(Convert.ToHexString(sha.ComputeHash(file))!=Hash) throw new InvalidOperationException();
     using var handle=Native.OpenProcess(0x1010,false,pid); if(handle.IsInvalid) throw new InvalidOperationException();
-    var clock=Stopwatch.StartNew(); long image=module.BaseAddress.ToInt64(); var mem=new Tracked(handle);
+    var clock=Stopwatch.StartNew(); long image=module.BaseAddress.ToInt64();
+    var mem=new Tracked((address,length)=>Native.Read(handle,address,length));
     var r=new Reader(mem,image,clubUid); var root=r.FindTeam();
+    uint targetTeamUid=r.U32(root.Team+0x0C); if(targetTeamUid is 0 or uint.MaxValue) throw new InvalidOperationException();
     long rule=r.I64(image+0x05709280);
     if(rule<65536 || r.I64(rule)!=image+0x04CB86A8) throw new InvalidOperationException();
     long comp=r.I64(rule+0x138);
@@ -42,8 +52,8 @@ public static class FixtureCalendarLookup
     {
         if(clock.ElapsedMilliseconds>=15000)throw new InvalidOperationException();
         long bucket=r.I64(b+i*8L); if(bucket<65536 || (bucket&7)!=0){unknown++;continue;}
-        byte loaded=mem.Bytes(bucket+0xB70,1)[0]; if(loaded!=1){if(loaded==0)unloaded++;else unknown++;continue;}
-        for(var date=start;date<=finish;date=date.AddDays(1))
+        string state=LoadedState(mem.Bytes(bucket+0xB70,1)[0]); if(state!="loaded"){if(state=="unloaded")unloaded++;else unknown++;continue;}
+        foreach(var date in Days(start,finish))
         {
         if(clock.ElapsedMilliseconds>=15000)throw new InvalidOperationException();
         long day=r.I64(bucket+(date.DayOfYear-1)*8L); if(day==0)continue;
@@ -73,7 +83,9 @@ public static class FixtureCalendarLookup
             var fd=new DateTime(y,1,1).AddDays(d-1);
             if(fd.Date!=date.Date){unknown++;continue;}
             if(!unique.Add(fixture))continue;
-            matches++;output.Add(new FixtureCalendarEntry(fd.ToString("yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture),teamId,clubId,name,a==root.Team?"first":"second"));
+            byte flags=mem.Bytes(fixture+0x36,1)[0];
+            uint firstTeamUid=a==root.Team?targetTeamUid:teamId;
+            matches++;output.Add(new FixtureCalendarEntry(fd.ToString("yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture),teamId,clubId,name,a==root.Team?"first":"second",VenueCandidate(flags,firstTeamUid,targetTeamUid),flags));
         }
         }
     }
@@ -120,21 +132,22 @@ sealed class Reader
     }
 
 }
-sealed class Tracked
+internal sealed class Tracked
 {
-    private readonly SafeProcessHandle handle;
-    public Tracked(SafeProcessHandle handle){this.handle=handle;}
+    private readonly Func<long,int,byte[]> read;
+    internal Tracked(Func<long,int,byte[]> read){this.read=read;}
     readonly List<(long Address,byte[] Bytes)> reads=new();
     public byte[] Bytes(long address,int length)
     {
         if(address<65536||length<=0||length>64||reads.Count>=120000)throw new InvalidOperationException();
-        var b=Read(address,length); reads.Add((address,b)); return b;
+        var b=Read(address,length); reads.Add((address,(byte[])b.Clone())); return b;
     }
-    byte[] Read(long address,int length) {var b=new byte[length];if(!Native.ReadProcessMemory(handle,(IntPtr)address,b,(nuint)length,out nuint n)||n!=(nuint)length)throw new InvalidOperationException();return b;}
+    byte[] Read(long address,int length) {var b=read(address,length);if(b is null || b.Length!=length)throw new InvalidOperationException();return b;}
     public bool Stable(){foreach(var r in reads)if(!r.Bytes.SequenceEqual(Read(r.Address,r.Bytes.Length)))return false;return true;}
 }
 static class Native
 {
+    internal static byte[] Read(SafeProcessHandle handle,long address,int length) {var b=new byte[length];if(!ReadProcessMemory(handle,(IntPtr)address,b,(nuint)length,out nuint n)||n!=(nuint)length)throw new InvalidOperationException();return b;}
     [DllImport("kernel32.dll", SetLastError = true)] public static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool ReadProcessMemory(SafeProcessHandle process, IntPtr address, byte[] buffer, nuint size, out nuint read);
 }
