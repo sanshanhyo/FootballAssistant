@@ -249,6 +249,30 @@ class RealReaderClient {
   async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
+    // Never infer a selected club or range from a conversation or current save.
+    if (typeof message === 'string' && /(?:赛程|schedule|fixtures?)/i.test(message) && /(?:俱乐部\s*UID|club\s*UID)/i.test(message)) {
+      const markers = [...message.matchAll(/(?:俱乐部\s*UID|club\s*UID)/gi)];
+      const uidMatches = [...message.matchAll(/(?:俱乐部\s*UID|club\s*UID)\s*[:：#]?\s*([0-9]+)(?![A-Za-z0-9_.-])/gi)];
+      const dates = [...message.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)].map(match => match[0]);
+      const meta = { source: 'native_calendar_candidate', synthetic: false, freshness: 'unknown', partial: true,
+        limitations: ['仅包含已加载赛程候选，可能不完整；所选俱乐部不代表当前执教球队。'] };
+      let clubUid;
+      try {
+        if (markers.length !== 1 || uidMatches.length !== 1 || dates.length !== 2) throw new Error('invalid selection');
+        clubUid = Number(uidMatches[0][1]);
+        calendarEndpoint(clubUid, dates[0], dates[1]);
+      } catch {
+        return { text: '请明确提供一个俱乐部 UID 和两个同年日期（YYYY-MM-DD），范围最多 30 天。', conversationId, cards: [], metadata: meta };
+      }
+      const result = await this.calendarAdvice({ message, conversationId, clubUid, start: dates[0], end: dates[1], signal });
+      if (result?.status !== 'partial' || result.context?.status !== 'partial' || result.context?.selected_club_uid !== clubUid ||
+          result.context?.start !== dates[0] || result.context?.end !== dates[1] || typeof result.reply !== 'string' || !result.reply.trim()) {
+        return { text: '所选范围的赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
+      }
+      return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [],
+        metadata: { ...meta, sampledAt: result.context?.observed_at ?? null, selectedClubUid: clubUid,
+          limitations: [...meta.limitations, `未加载范围：${result.context?.unloaded ?? '未知'}；未知项：${result.context?.unknown ?? '未知'}。`] } };
+    }
     if (/(比分|比赛情况|比赛怎么样|比赛进展|score)/i.test(message)) {
       const view = matchView(await this.match({ signal }));
       if (!view) return { text: '当前没有可用的新鲜比赛快照。', conversationId, cards: [],
