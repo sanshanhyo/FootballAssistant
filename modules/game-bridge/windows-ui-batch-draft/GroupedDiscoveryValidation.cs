@@ -4,26 +4,19 @@ namespace FootballAssistant.GameBridge;
 // proves the player identity or that two chunks observed an unchanged page.
 internal static class GroupedDiscoveryValidation
 {
-    // Matches the Mac goalkeeper category's observed-label allowlist, not row ordering.
-    private static readonly HashSet<string> Labels = new(StringComparer.Ordinal)
-    {
-        "出击(倾向)", "传球", "大脚开球", "反应", "拦截传中", "拳击球(倾向)",
-        "手控球", "手抛球", "停球", "一对一", "意外性", "指挥防守", "制空范围"
-    };
-
     internal static bool TryValidate(DiscoveryResult? result, string profile, out string[] labels)
     {
         labels = Array.Empty<string>();
-        if (profile is not ("goalkeeper_rows0_1" or "goalkeeper_rows2_3") || result is null ||
+        if (!AttributeRowSelection.TryGet(profile, out var selected) || result is null ||
             result.Status != "raw_diagnostics" || result.Reason != "approved_group_targets_complete" ||
             result.SelectionProfile != profile || result.PageIdentityVerified || result.TraversalBounded ||
-            result.PanelIndex != 0 || result.FocusPath != TargetedDiscoveryCollector.FocusRoot ||
+            result.PanelIndex != 0 || result.FocusPath != selected.FocusRoot ||
             result.NativeOperations is < 0 or > 2048 || result.Nodes is < 1 or > 96 ||
             result.TotalRoots is < 0 or > 512 || result.PeakRoots is < 0 or > 64 ||
             !double.IsFinite(result.ElapsedMilliseconds) || result.ElapsedMilliseconds is < 0 or > 1000 ||
-            result.Observations is null || result.Observations.Length != 5) return false;
+            result.Observations is null || result.Observations.Length != 1 + 2 * selected.RowCount) return false;
         var paths = TargetedDiscoveryCollector.GetTargetPaths(profile);
-        var values = new string[5];
+        var values = new string[paths.Length];
         for (var i = 0; i < paths.Length; i++)
         {
             var observation = result.Observations[i];
@@ -32,9 +25,12 @@ internal static class GroupedDiscoveryValidation
             // No trimming, Unicode compatibility folding, markup stripping or value repair.
             values[i] = observation.Text.Replace("\u200b", "", StringComparison.Ordinal);
         }
-        if (values[0] != "守门" || !Labels.Contains(values[1]) || !Labels.Contains(values[3]) ||
-            values[1] == values[3] || !Rating(values[2]) || !Rating(values[4])) return false;
-        labels = new[] { values[1], values[3] };
+        if (values[0] != selected.Title) return false;
+        var observed = new HashSet<string>(StringComparer.Ordinal);
+        for (var row = 0; row < selected.RowCount; row++)
+            if (!selected.AllowsLabel(values[1 + row * 2]) || !observed.Add(values[1 + row * 2]) ||
+                !Rating(values[2 + row * 2])) return false;
+        labels = Enumerable.Range(0, selected.RowCount).Select(row => values[1 + row * 2]).ToArray();
         return true;
     }
 

@@ -6,7 +6,7 @@ ROOT = HERE.parents[2]
 COMPILES = {
     'FiniteRowsCandidateEntrypoint.cs','FiniteRowsCandidateHost.cs','FiniteRowsCandidateConfiguration.cs','FiniteRowsPolicy.cs',
     'GroupedDiscoveryValidation.cs','DiscoveryCandidateConfiguration.cs','DiscoveryPolicy.cs','DiscoveryCollector.cs',
-    'TargetedDiscoveryCollector.cs','BatchNativeBackend.cs','WindowsLoadedModuleLease.Discovery.cs',
+    'TargetedDiscoveryCollector.cs','AttributeRowSelection.cs','BatchNativeBackend.cs','WindowsLoadedModuleLease.Discovery.cs',
     '../windows-ui-smoke-draft/WindowsSmokeReader.cs','../windows-smoke-draft/WindowsSmokePolicy.cs',
     '../windows-smoke-draft/WindowsLoadedModuleLease.cs','../windows-smoke-draft/MetadataSmoke.cs',
     '../src/MainThreadGuard.cs','../src/WindowsProbeScheduler.cs','../src/WindowsProbeConfiguration.cs',

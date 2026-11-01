@@ -1,12 +1,15 @@
-# One explicitly approved fixed two-chunk manifest. No launch, retries or path overrides.
+# One explicitly approved fixed finite manifest. No launch, retries or path overrides.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][string]$CandidateDirectory,
     [Parameter(Mandatory=$true)][switch]$StableProfileAsserted,
-    [Parameter(Mandatory=$true)][switch]$FiniteTwoChunksConfirmed
+    [switch]$FiniteManifestConfirmed,
+    [switch]$FiniteTwoChunksConfirmed,
+    [ValidateSet('goalkeeper_rows0_3','profile_rows0_3','profile_all_rows')][string]$Scope = 'goalkeeper_rows0_3'
 )
 $ErrorActionPreference = 'Stop'
-if (-not $StableProfileAsserted -or -not $FiniteTwoChunksConfirmed) { throw 'Explicit stable-profile assertion and fixed two-chunk approval required.' }
+if (-not $StableProfileAsserted -or (-not $FiniteManifestConfirmed -and
+    (-not $FiniteTwoChunksConfirmed -or $Scope -ne 'goalkeeper_rows0_3'))) { throw 'Explicit stable-profile assertion and fixed manifest approval required; old two-chunk confirmation applies only to legacy scope.' }
 if ($CandidateDirectory -notmatch '^[A-Za-z]:[\\/]') { throw 'Absolute private candidate directory required.' }
 function Assert-NonReparse([string]$Path) {
     $cursor = [IO.Path]::GetFullPath($Path)
@@ -30,7 +33,7 @@ $sessionPath = Join-Path $root 'session.json'
 $session = Read-Bounded $sessionPath
 if ($session.schema_version -ne 4 -or $session.mode -cne 'goalkeeper_rows0_3' -or
     $session.finite_rows_enabled_by_default -ne $false -or $session.raw_diagnostics_only -ne $true -or
-    @($session.allowed_scopes) -cnotcontains 'goalkeeper_rows0_3' -or $session.window_class -cne 'UnityWndClass') { throw 'Unexpected finite rows session scope.' }
+    @($session.allowed_scopes) -cnotcontains $Scope -or $session.window_class -cne 'UnityWndClass') { throw 'Unexpected finite rows session scope.' }
 if ([string]$session.bridge_sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or [string]$session.game_sha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
     [string]::IsNullOrWhiteSpace([string]$session.session_id) -or ([string]$session.session_id).Length -gt 128 -or
     [string]$session.pid -cnotmatch '\A[1-9][0-9]*\z') { throw 'Invalid session binding.' }
@@ -44,7 +47,7 @@ if ($state.pid -ne $session.pid -or $state.session_id -cne $session.session_id -
     $state.terminal -ne $false -or $state.consumed -ne $false) { throw 'Discovery unavailable or already consumed.' }
 $now = [DateTimeOffset]::UtcNow
 $request = [ordered]@{
-    schema_version = 4; mode = 'goalkeeper_rows0_3'; batch_id = [Guid]::NewGuid().ToString('D')
+    schema_version = 4; mode = $Scope; batch_id = [Guid]::NewGuid().ToString('D')
     page_epoch = [Guid]::NewGuid().ToString('D'); first_nonce = [Guid]::NewGuid().ToString('D'); second_nonce = [Guid]::NewGuid().ToString('D')
     pid = [int]$session.pid; session_id = $session.session_id; bridge_sha256 = $session.bridge_sha256; game_sha256 = $session.game_sha256
     window_class = $session.window_class; stable_profile_asserted = $true
@@ -59,6 +62,7 @@ if ($bytes.Length -gt 4096) { throw 'Request exceeds bound.' }
 $stream = [IO.File]::Open(($path + '.tmp'), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $stream.Write($bytes, 0, $bytes.Length) } finally { $stream.Dispose() }
 Move-Item -LiteralPath ($path + '.tmp') -Destination $path
-Write-Output 'Wrote one finite manifest: goalkeeper rows0..1 then2..3 only; at least2s cooldown; no retries or further chunks.'
-Write-Output 'Each chunk: 2048 units /1000ms soft; total:4096 units /2000ms soft. Manifest expires120s. Stop on any failure.'
+$chunks = switch ($Scope) { 'goalkeeper_rows0_3' { 2 } 'profile_rows0_3' { 6 } 'profile_all_rows' { 18 } }
+Write-Output "Wrote one fixed manifest: $Scope; maximum $chunks chunks, at least2s cooldown; no retries or further chunks."
+Write-Output "Each chunk: 2048 units /1000ms soft; manifest totals:$($chunks * 2048) units /$($chunks * 1000)ms soft. Expires120s. Stop on any failure."
 Write-Output 'Stable-profile and page-epoch are operator assertions, NOT verified page/player identity. Keep the same profile open; no navigation during this finite capture.'

@@ -1,76 +1,96 @@
-# Finite goalkeeper display diagnostic (opt-in candidate)
+# Finite profile attribute display diagnostic (opt-in candidate)
 
-This is a separate experimental candidate, not the production Windows reader and
-not an enabled background collector. It does not supply a player ID, player name,
-verified page identity, or an atomic multi-chunk snapshot.
+Separate experimental candidate, not an enabled background collector. No player
+ID/name, verified page identity, or atomic multi-chunk snapshot is produced.
 
-## Fixed scope
+## Explicit immutable manifests
 
-One explicit request authorizes exactly two chunks, in order:
+`Request-FiniteRows.ps1 -Scope <name> -StableProfileAsserted -FiniteManifestConfirmed`
+creates one approved manifest in a fresh private candidate directory. No enabling
+configuration/request ships in the artifact. No timer native work occurs without
+that request. A stale or replacement request is rejected, never retried.
 
-1. Panel 0, the source-defined goalkeeper category, rows 0 and 1.
-2. The same category, rows 2 and 3, only after chunk 1 succeeds and at least two
-   monotonic seconds have elapsed since its completion.
+| Scope | Fixed chunks | Selected rows | Aggregate reserved units / soft execution time |
+|---|---:|---:|---:|
+| `goalkeeper_rows0_3` (legacy default) | 2 | GK 0–3: 4 | 4096 / 2000 ms |
+| `profile_rows0_3` (smaller fixed subset) | 6 | GK, mental, physical 0–3: 12 | 12288 / 6000 ms |
+| `profile_all_rows` (full fixed collection; explicit approval required) | 18 | GK 0–12, mental 0–13, physical 0–7: 35 | 36864 / 18000 ms |
 
-Each chunk obtains only the category title and the two rows' label/value leaves
-using a shared-prefix trie. It does not enumerate other rows, substitute another
-panel, seek an alternate path, retry a failed chunk, or expand to all attributes.
-The manifest is fixed in code; request JSON cannot supply native paths.
+Legacy `-FiniteTwoChunksConfirmed` is accepted only for the legacy scope. It cannot
+approve a larger manifest. Expanded requests are rejected by older candidate
+parsers. No scope accepts arbitrary category names, paths, row lists, or counts.
 
-The paths originate from the macOS selector implementation. Windows has confirmed
-only category title and row 0 as of this candidate's development. The next rows
-are hypotheses, not prevalidated facts. The Mac label list is an observed-label
-allowlist, not a promise that a particular label occupies a particular row.
+For a full collection, one command with `-Scope profile_all_rows` starts all18
+authorized internal chunks automatically. It does not require18 commands or
+per-chunk confirmation. Final `completed` means every fixed target succeeded;
+any failure is reported as `failed`, never a silently complete partial result.
+The internal cooldowns can make the overall collection take roughly50 seconds,
+not one continuous18-second main-thread pause.
 
-## Bounds and identity
+Each category is visited in the table order, at most two rows per chunk; GK row12
+is a singleton. Each chunk obtains only category title and selected label/value
+leaves with a shared-prefix trie. It never enumerates other rows, skips a failure,
+substitutes a panel/path, or retries. Actual child counts and complete targets
+must validate even if a source-defined row exists in the allowlist.
 
-Per chunk: 2048 reserved operation units, 1000 ms soft total time, global depth 48,
-96 nodes, 64 simultaneously live roots, 512 total root allocations, at most 8 text
-items / 128 UTF-16 code units each / 1024 total. This plan requests five items.
-Cooperative traversal stops at 1792 units or 800 ms; any incomplete target group
-is rejected. Mandatory cleanup still runs and its time counts. A single native
-call cannot be preempted, so the soft limit is not a responsiveness guarantee.
-The finite request additionally caps the two chunks at 4096 reserved units and
-2000 ms cumulative execution time. Cooldown is not native execution time.
+Paths and label allowlists come from the Mac
+`current_page_attributes_projection.py` table. Label count limits this capability;
+it is NOT proof of native row counts, and whitelist ordering is not assumed to
+be row ordering. Windows has verified GK rows0–3 only before this extension.
+Mental/physical layouts and remaining rows remain hypotheses until measured.
 
-Every native boundary retains the existing fresh window/owner/thread/module
-checks. No identity/grant caching, extra native export, or relaxed GC lifetime is
-introduced. Every chunk creates its own backend/root scope and releases all UI
-handles before output; no native pointer or handle survives into the next chunk.
-The outer immutable manifest is checked at every existing guarded boundary.
+## Bounds and checks
 
-The caller asserts a stable profile and supplies a page epoch. That assertion is
-not native page verification: another player's profile may have the same category
-and labels. Outputs must retain `PageIdentityVerified: false`, keep each chunk's
-source/nonce/timestamps separate, and must not be merged into a verified player
-record. Actual UTC capture boundaries are not a promise of ongoing freshness.
+Per chunk: 2048 reserved units, 1000 ms soft time, depth48, nodes96, live roots64,
+allocated roots512, text items8, UTF-16 units128/item and1024 total. A two-row plan
+requests five items, a singleton three. Traversal cooperatively stops at1792 units
+or800 ms; incomplete groups are discarded. Mandatory cleanup always runs and its
+time counts. Native calls cannot be preempted; a one-second return is not promised.
 
-Each completed chunk must have the exact five expected paths, title `守门`, two
-distinct observed labels from the Mac goalkeeper allowlist, and canonical ASCII
-ratings 1–20. Only U+200B is removed for comparison. There is no trimming, NFKC,
-markup removal, guessed label, expected player value, or sibling fallback.
-Repeated labels across chunks, unexpected labels/paths, ownership/scene failures,
-expiry, replay, time/operation failure, or cleanup failure terminate the manifest.
+At least two monotonic seconds elapse after each chunk finishes before the next
+starts. Cooldown is not native execution time. Expiry remains120 seconds. Every
+native boundary retains fresh full window/owner/thread/module checks; outer and
+child admission pin the same HWND. No cached UI pointer or handle crosses chunks.
+GC return-to-root critical sections are unchanged. Output queue capacity32 is a
+bounded metadata queue, not an increase to native budgets.
 
-## Cost evidence and test status
+Every completed chunk must contain exact expected paths, the actual expected
+category title, distinct labels from that category's Mac allowlist, and canonical
+ASCII ratings1–20. Only U+200B is removed; no trim/NFKC/markup/value repair. Duplicate
+labels within a category across chunks stop the manifest. Missing/unknown/hidden
+rows, changed ownership, timeout, expiry, replay, or cleanup failure stop without
+skip/retry. There is no automatic next manifest.
 
-Owned fake-native fixtures assert 1305 reserved units, 67 visited nodes, 209 root
-allocations, peak 21 live roots, and 1375 fresh guard invocations per two-row chunk.
-An additional synthetic inherited-method lookup case exercises extra lookup
-cost. These are deterministic fixture assertions, not measured game latency.
+## Source and lifecycle contract
 
-The preceding real single-row experiment used 1034 reserved units versus its
-fixture's 961 and took about 526 ms. Adding that observed 73-unit difference to
-the two-row fixture gives a planning estimate of 1378 units, not a guarantee.
-Real method hierarchy and guard timing may differ; timeout must stop, not enlarge
-the budget. Four rows cannot fit the existing text/node/cooperative limits in one
-chunk, which is why this manifest uses two bounded chunks.
+Private output remains `windows-finite-rows-private/finite-rows-evidence.jsonl`.
+Each `finite_rows_chunk_result` event contains source PID/session/thread/build
+hashes, batch ID, asserted page epoch, chunk index, child nonce, manifest name,
+category/row range, declared caps, genuine capture UTC start/end, and costs.
+`result` is null unless collection, cleanup, final fresh guard, semantic validation
+and outer budget accounting all succeed. Each result retains its own provenance.
 
-Use a fresh private candidate directory for this manifest. A stale prior request
-is rejected terminally, not overwritten or retried; preparation does not delete
-evidence.
+`finite-rows-state.json` distinguishes `running`, `completed`, `cancelled`, and
+`failed`, reports batch/epoch/scope, last successful/failed chunk and actual totals.
+Dispose writes module status `stopped`. Completion stops the native timer; there
+is no hidden continued page/window scan. A downstream live adapter must enforce
+its own approved producer/session/process binding, expiry and capture-time TTL;
+file rereads never refresh an observation's timestamp.
 
-No enabling config or request is shipped. Runtime use requires the explicit
-private preparation/request workflow and reviewed CI artifacts. The current
-cloud environment lacks .NET and PowerShell: C# and helper tests require Windows
-CI before this candidate is used. No local compile/test pass is claimed here.
+A stable-profile/page-epoch assertion is not native player identity proof. The
+same category and labels can appear for another player. Keep identity unknown,
+mark partial results, and do not merge chunks into a verified player or atomic
+page snapshot. No hardcoded player name or observed real rating is used.
+
+## Offline cost evidence
+
+Owned fixtures cover all18 fixed plans with independent literal Mac topology:
+- GK/mental pair:1305 units,67 nodes,209 allocations,peak21,1375 guards.
+- Physical pair:1323 units,68 nodes,212 allocations,peak21,1394 guards.
+- GK singleton:961 units,49 nodes,153 allocations,peak21,1013 guards.
+- First six:7866 units; all eighteen:23218 units across chunks.
+
+The real preceding GK pair measured1378 units and about674–695 ms. Carrying its
+73-unit overhead forward is only a planning estimate; new categories may differ.
+Neither fixture zero-time nor aggregate estimates promise actual responsiveness.
+C#/PowerShell tests must run in CI; this cloud workspace has no SDK or PowerShell.

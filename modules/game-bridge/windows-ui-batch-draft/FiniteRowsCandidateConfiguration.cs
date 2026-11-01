@@ -4,7 +4,7 @@ namespace FootballAssistant.GameBridge;
 internal sealed record FiniteRowsConfigurationData(string PrivateRoot, ApprovedModule Module, string WindowClass, DateTimeOffset RecordedAt);
 internal sealed record FiniteRowsHostManifest(Guid BatchId, Guid PageEpoch, Guid FirstNonce, Guid SecondNonce,
     int Pid, string Session, string BridgeHash, string GameHash, string WindowClass,
-    DateTimeOffset RequestedAt, DateTimeOffset ExpiresAt, bool StableProfileAsserted);
+    DateTimeOffset RequestedAt, DateTimeOffset ExpiresAt, bool StableProfileAsserted, string Manifest = "goalkeeper_rows0_3");
 internal static class FiniteRowsCandidateConfiguration
 {
     internal const string ConfigName = "footballassistant.windows-finite-rows.json";
@@ -48,7 +48,7 @@ internal static class FiniteRowsCandidateConfiguration
         var r = Exact(value, "schema_version", "mode", "batch_id", "page_epoch", "first_nonce", "second_nonce",
             "pid", "session_id", "bridge_sha256", "game_sha256", "window_class", "stable_profile_asserted", "requested_at", "expires_at");
         Integer(r, "schema_version", 4, 4);
-        if (String(r, "mode", 32) != "goalkeeper_rows0_3" || String(r, "window_class", 126) != "UnityWndClass" ||
+        if (!FiniteRowsPolicy.ValidManifest(String(r, "mode", 32)) || String(r, "window_class", 126) != "UnityWndClass" ||
             r.GetProperty("stable_profile_asserted").ValueKind != JsonValueKind.True)
             throw new InvalidOperationException("Explicit fixed finite scope and operator assertion required.");
         var first = GuidField(r, "first_nonce"); var second = GuidField(r, "second_nonce");
@@ -57,13 +57,13 @@ internal static class FiniteRowsCandidateConfiguration
             throw new InvalidOperationException("Invalid finite nonce pair or lifetime.");
         return new(GuidField(r, "batch_id"), GuidField(r, "page_epoch"), first, second,
             Integer(r, "pid", 1, int.MaxValue), String(r, "session_id", 128), Hash(r, "bridge_sha256"), Hash(r, "game_sha256"),
-            "UnityWndClass", created, expires, true);
+            "UnityWndClass", created, expires, true, String(r, "mode", 32));
     }
     internal static FiniteRowsApproval? TryApproval(FiniteRowsHostManifest pending, SmokeContext current, DateTimeOffset now)
     {
         if (pending is null || current is null || pending.BatchId == Guid.Empty || pending.PageEpoch == Guid.Empty ||
             pending.FirstNonce == Guid.Empty || pending.SecondNonce == Guid.Empty || pending.FirstNonce == pending.SecondNonce ||
-            !pending.StableProfileAsserted || pending.Pid != current.Pid || pending.Session != current.Session ||
+            !pending.StableProfileAsserted || !FiniteRowsPolicy.ValidManifest(pending.Manifest) || pending.Pid != current.Pid || pending.Session != current.Session ||
             pending.BridgeHash != current.BridgeHash || pending.GameHash != current.GameHash ||
             pending.WindowClass != "UnityWndClass" || pending.WindowClass != current.ConfirmedWindowClass ||
             pending.RequestedAt > now || pending.ExpiresAt <= now || pending.ExpiresAt <= pending.RequestedAt ||
@@ -71,7 +71,7 @@ internal static class FiniteRowsCandidateConfiguration
             pending.Session is null || pending.Session.Length is < 1 or > 128 || string.IsNullOrWhiteSpace(pending.Session) ||
             !ValidHash(pending.BridgeHash) || !ValidHash(pending.GameHash)) return null;
         return new(current, pending.BatchId, pending.PageEpoch, pending.FirstNonce, pending.SecondNonce,
-            pending.RequestedAt, pending.ExpiresAt, true, true);
+            pending.RequestedAt, pending.ExpiresAt, true, true, pending.Manifest);
     }
     private static bool ValidHash(string? s) => s is { Length: 64 } && s.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private static string Hash(JsonElement r, string name)

@@ -20,7 +20,7 @@ internal sealed partial class WindowsLoadedModuleLease
                     (name, type) => Marshal.GetDelegateForFunctionPointer(exports[name], type));
             }
             WindowsThreadIdentity Identity() => MainThreadGuard.ReadWindowsScanIdentity(policy.Approval.Context.EntryThread);
-            return policy.Approval.FocusPath == TargetedDiscoveryCollector.FocusRoot
+            return policy.Approval.SelectionProfile != "single" || policy.Approval.FocusPath == TargetedDiscoveryCollector.FocusRoot
                 ? TargetedDiscoveryCollector.Run(policy, request, CreateBackend, Identity, () => DateTimeOffset.UtcNow, cancellationToken)
                 : DiscoveryCollector.Run(policy, request, CreateBackend, Identity, () => DateTimeOffset.UtcNow, cancellationToken);
         }

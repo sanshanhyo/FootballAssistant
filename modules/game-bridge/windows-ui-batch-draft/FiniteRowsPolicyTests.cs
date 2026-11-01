@@ -55,6 +55,43 @@ internal static class FiniteRowsPolicyTests
         var replacement=identity with{WindowCandidates=new[]{identity.WindowCandidates![0] with{Hwnd=57}}};
         Check(pinned.TryBegin(Request(pinned,1),replacement,now.AddMilliseconds(2100),2100) is null && pinned.Terminal,
             "freshly valid replacement HWND cannot replace manifest window between chunks");
+        Reject(Approval() with{Manifest="profile_custom"});
+        foreach(var manifestName in new[]{"profile_rows0_3","profile_all_rows"}) {
+            var extendedApproval=Approval() with{Manifest=manifestName};
+            var extended=new FiniteRowsPolicy(extendedApproval);
+            var count=manifestName=="profile_rows0_3"?6:18;
+            Check(extended.MaximumDeclaredChunks==count && extended.MaximumDeclaredOperations==count*2048 &&
+                extended.MaximumDeclaredMilliseconds==count*1000,"fixed per-manifest ceilings");
+            Check(extended.NonceAt(0)==extendedApproval.FirstNonce && extended.NonceAt(1)==extendedApproval.SecondNonce,
+                "first two approved nonces unchanged");
+            var same=new FiniteRowsPolicy(extendedApproval);
+            var nonces=Enumerable.Range(0,count).Select(extended.NonceAt).ToArray();
+            Check(nonces.Distinct().Count()==count && nonces.SequenceEqual(Enumerable.Range(0,count).Select(same.NonceAt)),
+                "derived nonces deterministic and distinct");
+            var replaced=new FiniteRowsPolicy(extendedApproval with{BatchId=Guid.NewGuid()});
+            Check(replaced.NonceAt(2)!=extended.NonceAt(2) && replaced.ApprovalSha256!=extended.ApprovalSha256,
+                "derived child authorization cannot move to replacement batch");
+            Check(new FiniteRowsPolicy(extendedApproval with{Manifest="goalkeeper_rows0_3"}).ApprovalSha256!=extended.ApprovalSha256,
+                "manifest scope included in immutable approval digest");
+            var expectedProfiles=AttributeRowSelection.ManifestProfiles(manifestName);
+            var otherProfiles=AttributeRowSelection.ManifestProfiles(manifestName);otherProfiles[0]="modified";
+            Check(expectedProfiles[0]=="goalkeeper_rows0_1","manifest arrays independently allocated");
+            var totalRows=0;
+            for(var index=0;index<count;index++) {
+                var start=index*3000d;
+                var req=new FiniteRowsRequest(4,extendedApproval.BatchId,extendedApproval.PageEpoch,index,extended.NonceAt(index),extended.ApprovalSha256);
+                var chunk=extended.TryBegin(req,identity,now.AddMilliseconds(start),start)!;
+                Check(chunk is not null && chunk.SelectionProfile==expectedProfiles[index] && chunk.MaximumOperations==2048 && chunk.MaximumMilliseconds==1000,
+                    "fixed profile order and unchanged per-chunk caps");
+                AttributeRowSelection.TryGet(chunk!.SelectionProfile,out var selection);
+                Check(chunk.RowStart==selection.RowStart && chunk.RowCount==selection.RowCount,"manifest supplies selected row interval");
+                totalRows+=chunk.RowCount;
+                Check(extended.Finish(chunk,2048,1000,true,now.AddMilliseconds(start+1000),start+1000),"complete fixed chunk");
+                Check(extended.Terminal==(index==count-1),"terminal only at fixed manifest end");
+            }
+            Check(totalRows==(count==18?35:12) && extended.TotalOperations==count*2048 && extended.TotalMilliseconds==count*1000,
+                "exact complete manifest rows and global bounded accounting");
+        }
         var cap=new FiniteRowsPolicy(Approval());var active=cap.TryBegin(Request(cap),identity,now,0)!;
         Check(!cap.CheckActive(active,now.AddSeconds(1),1000) && cap.Terminal,"soft elapsed gate checked every child boundary");
     }

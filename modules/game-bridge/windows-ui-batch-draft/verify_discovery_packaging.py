@@ -7,7 +7,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 COMPILES = {
     'DiscoveryCandidateEntrypoint.cs', 'DiscoveryCandidateHost.cs',
-    'DiscoveryCandidateConfiguration.cs', 'DiscoveryPolicy.cs', 'DiscoveryCollector.cs', 'TargetedDiscoveryCollector.cs',
+    'DiscoveryCandidateConfiguration.cs', 'DiscoveryPolicy.cs', 'DiscoveryCollector.cs', 'TargetedDiscoveryCollector.cs','AttributeRowSelection.cs',
     'BatchNativeBackend.cs', 'WindowsLoadedModuleLease.Discovery.cs',
     '../windows-ui-smoke-draft/WindowsSmokeReader.cs',
     '../windows-smoke-draft/WindowsSmokePolicy.cs',

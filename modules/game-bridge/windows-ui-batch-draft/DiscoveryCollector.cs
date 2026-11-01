@@ -55,7 +55,7 @@ internal static class DiscoveryCollector
                 budget.Check();
                 if ((!targetedRow && policy.Approval.SelectionProfile != "single") ||
                     targetedRow && (policy.Approval.PanelIndex != 0 ||
-                    policy.Approval.FocusPath != TargetedDiscoveryCollector.FocusRoot))
+                    policy.Approval.FocusPath != TargetedDiscoveryCollector.TargetFocus(policy.Approval.SelectionProfile)))
                     throw new UiSmokeStopped("target_scope_mismatch");
                 backend = createBackend();
                 if (backend.VerifiedModuleHash != policy.Approval.Context.GameHash)

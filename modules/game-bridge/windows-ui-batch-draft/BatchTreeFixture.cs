@@ -128,6 +128,36 @@ sealed class BatchTreeFixture : IDisposable
     }
     internal bool InheritedContainerMethods;
     internal int ParentLookups;
+    // Literal Mac selectors expanded from focus=panel0/0/6. Independent of production selections.
+    internal const string AttributeCommonRoot = "0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0";
+    internal static string CategoryFocus(string category) => AttributeCommonRoot + (category switch
+    { "goalkeeper" => "/0/0", "mental" => "/1/0", "physical" => "/2/0/0", _ => throw new ArgumentException() });
+    internal static string CategoryRow(string category,int row) => CategoryFocus(category) + "/2/0/0/0/" + row;
+    internal static string CategoryLabel(string category,int row) => CategoryRow(category,row) + "/0/0/0/0/0/0/0/0/0";
+    internal static string CategoryValue(string category,int row) => CategoryRow(category,row) + "/0/0/0/0/0/0/1/1/0/0/0/0/0/0";
+    internal static string CategoryTitle(string category) => category switch
+    { "goalkeeper" => "守门", "mental" => "精神", "physical" => "身体", _ => throw new ArgumentException() };
+    internal static string[] CategoryLabels(string category) => category switch
+    {
+        "goalkeeper" => new[] { "出击(倾向)", "传球", "大脚开球", "反应", "拦截传中", "拳击球(倾向)", "手控球", "手抛球", "停球", "一对一", "意外性", "指挥防守", "制空范围" },
+        "mental" => new[] { "才华", "防守站位", "工作投入", "集中", "决断", "领导力", "侵略性", "视野", "团队合作", "无球跑动", "意志力", "勇敢", "预判", "镇定" },
+        "physical" => new[] { "爆发力", "弹跳", "灵活", "耐力", "平衡", "强壮", "速度", "体质" },
+        _ => throw new ArgumentException()
+    };
+    internal void BuildAttributeCategory(string category)
+    {
+        Children[103]=new();
+        var focus=CategoryFocus(category);var labels=CategoryLabels(category);
+        EnsurePath(focus+"/0");SetNodeText(focus+"/0",CategoryTitle(category));
+        for(var row=0;row<labels.Length;row++)
+        {
+            EnsurePath(CategoryLabel(category,row));EnsurePath(CategoryValue(category,row));
+            SetNodeText(CategoryLabel(category,row),labels[row]);
+            SetNodeText(CategoryValue(category,row),(row%20+1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        // An extra available but unapproved row exists; not fetched even at category end.
+        EnsurePath(CategoryRow(category,labels.Length));
+    }
     private readonly List<nint> allocations = new();
     private readonly Dictionary<nint, nint> names = new();
     private readonly Dictionary<(nint, string, int), nint> methodIds = new();

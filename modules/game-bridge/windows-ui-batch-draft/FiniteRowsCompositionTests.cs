@@ -92,6 +92,76 @@ internal static class FiniteRowsCompositionTests
                 !outer.Finish(grant,result.NativeOperations,result.ElapsedMilliseconds,false,epoch,0) &&
                 outer.TotalOperations==result.NativeOperations && outer.Terminal,"revoked work is cleaned and charged, never retried");
         }
+        // Additional category composition only. The legacy two-chunk scenarios above
+        // remain unchanged; these loops do not execute the real host or its timer.
+        foreach(var manifest in new[]{"profile_rows0_3","profile_all_rows"})
+        foreach(var duplicateLastLabel in new[]{false,true})
+        {
+            var outer=new FiniteRowsPolicy(NewPolicy().Approval with {Manifest=manifest});
+            var count=manifest=="profile_rows0_3"?6:18;
+            Check(outer.MaximumDeclaredChunks==count && outer.MaximumDeclaredOperations==count*2048 &&
+                outer.MaximumDeclaredMilliseconds==count*1000,"per-manifest ceilings, not the maximum plan by default");
+            Check(Enumerable.Range(0,count).Select(outer.NonceAt).Distinct().Count()==count &&
+                outer.NonceAt(0)==outer.Approval.FirstNonce && outer.NonceAt(1)==outer.Approval.SecondNonce,
+                "each declared child has one distinct immutable nonce");
+            var monotonic=0.0;var published=0;var totalRoots=0;var nodes=0;var checks=0;
+            var seen=new HashSet<(string Category,string Label)>();
+            FiniteRowsRequest? lastRequest=null;
+            for(var index=0;index<count;index++)
+            {
+                if(index>0)
+                {
+                    Check(!outer.Terminal && outer.NextEligibleMonotonicMilliseconds==monotonic+2000,
+                        "category transitions do not skip the two-second cooldown");
+                    monotonic=outer.NextEligibleMonotonicMilliseconds;
+                }
+                var request=new FiniteRowsRequest(4,outer.Approval.BatchId,outer.Approval.PageEpoch,index,
+                    outer.NonceAt(index),outer.ApprovalSha256);lastRequest=request;
+                var grant=outer.TryBegin(request,identity,epoch.AddMilliseconds(monotonic),monotonic)!;
+                Check(grant is not null && AttributeRowSelection.TryGet(grant.SelectionProfile,out _),"declared category child admitted");
+                AttributeRowSelection.TryGet(grant.SelectionProfile,out var selection);
+                using var fixture=new BatchTreeFixture();fixture.BuildAttributeCategory(selection.Category);
+                var categoryLabels=BatchTreeFixture.CategoryLabels(selection.Category);
+                // Swap the pair's observed labels: validation must not assume that
+                // the whitelist's order is the native row order.
+                if(selection.RowCount==2)
+                {
+                    fixture.SetNodeText(BatchTreeFixture.CategoryLabel(selection.Category,selection.RowStart),categoryLabels[selection.RowStart+1]);
+                    fixture.SetNodeText(BatchTreeFixture.CategoryLabel(selection.Category,selection.RowStart+1),categoryLabels[selection.RowStart]);
+                }
+                if(duplicateLastLabel && index==count-1)
+                    fixture.SetNodeText(BatchTreeFixture.CategoryLabel(selection.Category,selection.RowStart),categoryLabels[0]);
+                var child=new DiscoveryPolicy(new(context,grant.Request.Nonce,0,selection.FocusRoot,
+                    outer.Approval.CreatedAt,outer.Approval.ExpiresAt,true,grant.SelectionProfile),
+                    additionalActive:()=>outer.CheckActive(grant,epoch.AddMilliseconds(monotonic),monotonic),requiredWindow:grant.Window);
+                monotonic+=500;
+                var result=TargetedDiscoveryCollector.Run(child,ChildRequest(child),
+                    ()=>new BatchNativeBackend(context.GameHash,fixture.Bind),()=>{checks++;return identity;},
+                    ()=>epoch.AddMilliseconds(monotonic),elapsedForTest:()=>500)!;
+                Check(result.Status=="raw_diagnostics" && result.Observations.Length==1+selection.RowCount*2 &&
+                    result.NativeOperations==(selection.RowCount==1?961:selection.Category=="physical"?1323:1305) &&
+                    result.PeakRoots==21 && !result.PageIdentityVerified,"native adapter returns only declared category targets");
+                Check(child.Terminal && fixture.LiveRoots==0 && fixture.RootCreates==fixture.RootFrees,
+                    "no category child roots cross the acknowledgment/cooldown boundary");
+                totalRoots+=fixture.RootCreates;nodes+=result.Nodes;
+                var valid=GroupedDiscoveryValidation.TryValidate(result,grant.SelectionProfile,out var labels);
+                Check(valid && labels.Length==selection.RowCount,"observed labels validate independent of row index mapping");
+                var distinct=labels.All(label=>!seen.Contains((selection.Category,label)));
+                var acknowledged=outer.Finish(grant,result.NativeOperations,result.ElapsedMilliseconds,valid&&distinct,
+                    epoch.AddMilliseconds(monotonic),monotonic);
+                Check(acknowledged==!(duplicateLastLabel && index==count-1),"late same-category duplicate terminates before any next chunk");
+                if(acknowledged)
+                {published++;foreach(var label in labels)seen.Add((selection.Category,label));}
+            }
+            Check(outer.Terminal && outer.ChunksConsumed==count && outer.TotalOperations==(count==6?7866:23218) &&
+                outer.TotalMilliseconds==count*500 && totalRoots==(count==6?1260:3718) && nodes==(count==6?404:1192) &&
+                checks==(count==6?8288:24464),"actual complete adapter costs charged for six/eighteen chunks including denied last output");
+            Check(published==count-(duplicateLastLabel?1:0) &&
+                seen.Count==(count==6?12:35)-(duplicateLastLabel?2:0),"only semantically acknowledged rows enter the category-qualified local ledger");
+            Check(outer.TryBegin(lastRequest!,identity,epoch.AddMilliseconds(monotonic),monotonic) is null,
+                "terminal declared manifest cannot replay even its own last nonce");
+            Console.WriteLine($"Composed {manifest}: chunks={count},units={outer.TotalOperations},roots={totalRoots},synthetic elapsed={outer.TotalMilliseconds}; no host timer/game executed.");
+        }
         Console.WriteLine("PASS finite+child native composition fixtures;2610 units/418 roots/two500ms synthetic intervals, no game/time claim.");
     }
 }

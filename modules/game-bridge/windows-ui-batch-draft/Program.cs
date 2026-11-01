@@ -16,3 +16,7 @@ FiniteRowsPolicyTests.Run();
 
 GroupedDiscoveryCollectorTests.Run();
 FiniteRowsCompositionTests.Run();
+
+AttributeCategoryTests.Run();
+
+FinitePrivateFileWriterTests.Run();

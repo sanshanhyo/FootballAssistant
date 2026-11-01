@@ -32,6 +32,18 @@ internal static class FiniteRowsCandidateConfigurationTests
             ("expires_at",at.AddSeconds(121).ToString("O")), ("requested_at","2026-01-01T00:00:00")
         })
         { var invalid = Input(); invalid[field] = value; Reject(() => Parse(invalid), "invalid " + field); }
+        foreach(var scope in new[]{"profile_rows0_3","profile_all_rows"}) {
+            var expanded=Input();expanded["mode"]=scope;
+            var parsed=Parse(expanded);var approved=FiniteRowsCandidateConfiguration.TryApproval(parsed,context,at)!;
+            Check(parsed.Manifest==scope && approved.Manifest==scope && approved.ModeEnabled,"request mode exactly binds immutable manifest");
+            Reject(()=>DiscoveryCandidateConfiguration.ParseRequest(JsonSerializer.Serialize(expanded)),"old single-shot consumer rejects new manifest");
+            Check(FiniteRowsCandidateConfiguration.TryApproval(parsed with{Manifest="profile_custom"},context,at) is null,
+                "direct record cannot introduce arbitrary manifest");
+            var sealedGate=new FiniteRowsSessionGate(context);
+            Check(sealedGate.TryTake(parsed,at) is not null && sealedGate.TryTake(parsed with{Manifest="goalkeeper_rows0_3"},at) is null,
+                "manifest replacement after admission rejected");
+        }
+        Check(manifest.Manifest=="goalkeeper_rows0_3","legacy request keeps exact old scope");
         var duplicateNonce = Input(); duplicateNonce["second_nonce"] = duplicateNonce["first_nonce"];
         Reject(() => Parse(duplicateNonce), "same nonce in both slots");
         var extra = Input(); extra["focus_path"] = "0/6"; Reject(() => Parse(extra), "no arbitrary focus/path override");

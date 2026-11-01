@@ -17,36 +17,30 @@ internal static class TargetedDiscoveryCollector
         => DiscoveryCollector.RunCore(policy, request, createBackend, freshIdentity, now,
             cancellation, elapsedForTest, targetedRow: true);
 
-    // Fresh bounded arrays, never retained across requests or supplied from the request.
+    // Fresh fixed-plan arrays. No caller-supplied paths or row indices.
+    internal static string TargetFocus(string profile) => profile == "single" ? FocusRoot :
+        AttributeRowSelection.TryGet(profile, out var selected) ? selected.FocusRoot :
+        throw new ArgumentException("Unknown fixed selection.");
     internal static int[][] CreateTargets(string profile = "single")
     {
+        var root = TargetFocus(profile);
         var paths = GetTargetPaths(profile);
-        if (paths.Any(path => !IsAllowedTargetPath(path))) throw new InvalidOperationException("Invalid fixed target depth.");
-        return paths.Select(path => path[(FocusRoot.Length + 1)..].Split('/')
+        if (paths.Any(path => !ValidTarget(path, root))) throw new InvalidOperationException("Invalid fixed target depth.");
+        return paths.Select(path => path[(root.Length + 1)..].Split('/')
             .Select(int.Parse).ToArray()).ToArray();
     }
     internal static bool ValidSelection(string profile, int panel, string focus) =>
-        profile == "single" || (profile is "goalkeeper_rows0_1" or "goalkeeper_rows2_3") &&
-        panel == 0 && focus == FocusRoot;
-
-    internal static string[] GetTargetPaths(string profile)
-    {
-        if (profile == "single") return new[] { TitlePath, LabelPath, ValuePath };
-        var first = profile switch { "goalkeeper_rows0_1" => 0, "goalkeeper_rows2_3" => 2,
-            _ => throw new ArgumentException("Unknown fixed selection.") };
-        var paths = new List<string>(5) { TitlePath };
-        for (var row = first; row < first + 2; row++)
-        {
-            var root = FocusRoot + "/2/0/0/0/" + row.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            paths.Add(root + "/0/0/0/0/0/0/0/0/0");
-            paths.Add(root + "/0/0/0/0/0/0/1/1/0/0/0/0/0/0");
-        }
-        return paths.ToArray();
-    }
+        profile == "single" || AttributeRowSelection.TryGet(profile, out var selected) &&
+        panel == 0 && focus == selected.FocusRoot;
+    internal static string[] GetTargetPaths(string profile) => profile == "single" ?
+        new[] { TitlePath, LabelPath, ValuePath } :
+        AttributeRowSelection.TryGet(profile, out var selected) ? selected.GetPaths() :
+        throw new ArgumentException("Unknown fixed selection.");
     // Pure validation hook: it cannot activate a custom target or perform native calls.
-    internal static bool IsAllowedTargetPath(string? path)
+    internal static bool IsAllowedTargetPath(string? path) => ValidTarget(path, FocusRoot);
+    private static bool ValidTarget(string? path, string root)
     {
-        if (path is null || path.Length > 191 || !path.StartsWith(FocusRoot + "/", StringComparison.Ordinal)) return false;
+        if (path is null || path.Length > 191 || !path.StartsWith(root + "/", StringComparison.Ordinal)) return false;
         var edges = path.Split('/');
         return edges.Length <= MaximumDepth && edges.All(part => part.Length is > 0 and <= 3 &&
             (part.Length == 1 || part[0] != '0') && part.All(c => c is >= '0' and <= '9') &&
