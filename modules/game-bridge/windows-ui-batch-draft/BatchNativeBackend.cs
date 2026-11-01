@@ -3,7 +3,8 @@ using System.Text;
 
 namespace FootballAssistant.GameBridge;
 
-// Separate OFFLINE batch draft. No host/lease factory activates this backend.
+// Scoped backend shared by offline batch fixtures and the separately opted-in discovery candidate.
+// The anchored batch collector remains unregistered; discovery has its own single-use policy.
 // A backend, its method cache, and every object token belong to ONE request only.
 internal sealed class BatchNativeBackend : IDisposable
 {

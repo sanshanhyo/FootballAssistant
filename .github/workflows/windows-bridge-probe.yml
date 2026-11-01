@@ -54,3 +54,34 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Check discovery build and artifact isolation (no game)
+        run: python modules/game-bridge/windows-ui-batch-draft/verify_discovery_packaging.py
+      - name: Parse discovery helper syntax without executing helpers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($path in @('modules/game-bridge/windows-ui-batch-draft/Prepare-DiscoveryCandidate.ps1', 'modules/game-bridge/windows-ui-batch-draft/Request-Discovery.ps1')) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $path), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { throw "Discovery helper syntax errors: $path" }
+          }
+      - name: Exercise discovery request helper with owned fake session (no game)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./modules/game-bridge/windows-ui-batch-draft/Test-DiscoveryRequestHelper.ps1
+      - name: Build separate opt-in discovery candidate (no game)
+        run: dotnet build modules/game-bridge/windows-ui-batch-draft/FootballAssistant.WindowsDiscoveryCandidate.csproj --configuration Release --output build/windows-discovery
+      - name: Upload disabled-by-default discovery binary and helpers (no configuration or request)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-windows-x64-DISCOVERY-OPT-IN-NO-CONFIG
+          path: |
+            build/windows-discovery/FootballAssistant.WindowsDiscoveryCandidate.dll
+            build/windows-discovery/FootballAssistant.WindowsDiscoveryCandidate.deps.json
+            modules/game-bridge/windows-ui-batch-draft/Prepare-DiscoveryCandidate.ps1
+            modules/game-bridge/windows-ui-batch-draft/Request-Discovery.ps1
+            modules/game-bridge/windows-ui-batch-draft/DISCOVERY.md
+            LICENSE
+          if-no-files-found: error
+          retention-days: 7

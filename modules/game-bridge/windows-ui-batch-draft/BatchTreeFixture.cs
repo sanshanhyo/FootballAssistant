@@ -10,7 +10,7 @@ sealed class BatchTreeFixture : IDisposable
     private readonly Dictionary<nint, (string Text, nint Chars)> textObjects = new();
     private int nextNode = 10000, nextText = 20000, panelOpens;
     internal int PanelOpens => panelOpens;
-    internal bool ChangePostAnchor, CycleBody;
+    internal bool ChangePostAnchor, CycleBody, FailFirstFree;
     internal string BodyPath { get; private set; } = "";
     internal const string Anchor1Path = "0/0/0/0/0/0/0/0/0/0/0/0/0/0";
     internal const string Anchor2Path = "1/0/0/0/0/0/0/0/0/0/0/0/0/0";
@@ -20,9 +20,8 @@ sealed class BatchTreeFixture : IDisposable
         var id = nextText++; var pointer = Marshal.StringToHGlobalUni(text); allocations.Add(pointer);
         textObjects[id] = (text, pointer); return id;
     }
-    private nint Chain(int depth)
+    private nint Chain(int depth, nint parent = 103)
     {
-        nint parent = 103;
         for (var i = 0; i < depth; i++)
         {
             nint child = nextNode++; Children[child] = new();
@@ -44,6 +43,26 @@ sealed class BatchTreeFixture : IDisposable
         }
         if (CycleBody) { Children[body].Clear(); Children[body].Add(body); }
         changedAnchor = TextObject("changed-page");
+    }
+    internal readonly HashSet<nint> HiddenNodes = new();
+    internal void BuildDiscovery(int bodyDepth, int fields = 4)
+    {
+        if (bodyDepth is < 2 or > 32 || fields is < 0 or > 32)
+            throw new ArgumentOutOfRangeException();
+        Children[103] = new();
+        var container = Chain(1);
+        for (var index = 0; index < 6; index++)
+        {
+            nint empty = nextNode++; Children[empty] = new(); Children[container].Add(empty);
+        }
+        var body = Chain(bodyDepth - 1, container);
+        BodyPath = "0/6" + string.Concat(Enumerable.Repeat("/0", bodyDepth - 2));
+        for (var index = 0; index < fields; index++)
+        {
+            nint leaf = nextNode++; Children[leaf] = new(); Children[body].Add(leaf);
+            nodeTexts[leaf] = TextObject("synthetic-field-" + index);
+        }
+        if (CycleBody) { Children[body].Clear(); Children[body].Add(body); }
     }
     private readonly List<nint> allocations = new();
     private readonly Dictionary<nint, nint> names = new();
@@ -72,7 +91,11 @@ sealed class BatchTreeFixture : IDisposable
     }
     public nint il2cpp_gchandle_get_target(nuint handle) { RootTargets++; return roots[handle]; }
     public void il2cpp_gchandle_free(nuint handle)
-    { if (!roots.Remove(handle)) throw new Exception("Unknown/double-freed fixture root."); RootFrees++; }
+    {
+        if (!roots.Remove(handle)) throw new Exception("Unknown/double-freed fixture root.");
+        RootFrees++;
+        if (FailFirstFree && RootFrees == 1) throw new InvalidOperationException("Synthetic uncertain cleanup outcome.");
+    }
 
     private nint Allocate(int bytes) { var value = Marshal.AllocHGlobal(bytes); allocations.Add(value); return value; }
     internal BatchTreeFixture()
@@ -131,7 +154,7 @@ sealed class BatchTreeFixture : IDisposable
         if (name == "GetSortedPlayerPanels") { panelOpens++; return 101; }
         if (name == "get_Count") { Marshal.WriteInt32(panelCountPayload, 1); return 205; }
         if (name == "get_visualTree") return 103;
-        if (name == "get_visible") return 202;
+        if (name == "get_visible") { Marshal.WriteByte(boolPayload, HiddenNodes.Contains(instance) ? (byte)0 : (byte)1); return 202; }
         if (name == "get_worldBound") return 203;
         if (name == "get_childCount") { Marshal.WriteInt32(countPayload, Children[instance].Count); return 201; }
         if (name == "get_text") return ChangePostAnchor && panelOpens >= 4 && instance == anchor1 ? changedAnchor : nodeTexts[instance];

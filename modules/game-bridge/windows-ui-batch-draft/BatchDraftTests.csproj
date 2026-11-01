@@ -4,6 +4,7 @@
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="../windows-ui-smoke-draft/WindowsSmokeReader.cs" />
+    <Compile Include="../windows-ui-smoke-draft/UiCandidateConfiguration.cs" />
     <Compile Include="../windows-ui-smoke-draft/WindowsLoadedModuleLease.Ui.cs" />
     <Compile Include="../windows-ui-smoke-draft/NativeUiAdapterFixture.cs" />
     <Compile Include="../windows-smoke-draft/WindowsSmokePolicy.cs" />

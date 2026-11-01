@@ -2,7 +2,9 @@
 
 This schema-2 prototype is separate from the one-shot candidate. Existing candidate
 projects, request parsers, terminal semantics and safety checks are unchanged. No host
-or timer calls this code. No screenshot value, player name, real anchor or runtime path
+or timer calls BatchPolicy/BatchCollector. The scoped native backend is also reused
+by the separately opted-in schema-3 discovery candidate; that mode cannot validate
+batch anchors or emit batch facts. No screenshot value, player name, real anchor or runtime path
 is hardcoded. Enabling an approval object in an offline fixture is not operator approval.
 
 ## Proposed ceilings, subject to cost review and explicit real-test approval
