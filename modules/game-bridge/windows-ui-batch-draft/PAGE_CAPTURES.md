@@ -215,3 +215,49 @@ The census can establish layout eligibility, not identify which top-level slot i
 semantically current. A zero-bounds slot suggests an inactive layout but does not
 prove a cached scene or authorize another slot. The frontier may still yield no
 eligible text. Neither outcome is promoted to page/team facts or tactical values.
+
+## Remaining observed paths: fixed six-chunk diagnostic
+
+`tactics_remaining_diagnostic` is one explicit finite operation, in this order:
+
+1. `tactics_leaf_eligibility7`: common root
+   `0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0` (25 edges),
+   selecting only these seven relative paths:
+   `0/0/0`, `0/0/1`, `0/0/2`, `1/0/0/0/0`, `1/0/0/0/1/0`,
+   `1/0/0/0/2/0`, `1/0/0/0/3/0`.
+2. `tactics_remaining45_1`: same common root + `1/1`.
+3. `tactics_remaining46_1`: same common root + `1/0/1`.
+4. `tactics_remaining46_2`: same common root + `1/0/2`.
+5. `tactics_remaining56_1`: same common root + `1/0/0/0/4/1`.
+6. `tactics_remaining56_2`: same common root + `1/0/0/0/4/2`.
+
+All appended suffixes have a separating `/`. These are fixed paths from prior
+numeric observations, not semantic identities or a generic continuation cursor.
+The five remaining roots freshly require their parent counts: depth26=>2,
+depth27=>3,depth30=>3. The own child count of the formerly partial56/1 is unknown
+and is read normally; it is never treated as zero. No top-level slots17/18 or
+previously exhausted35/1 branch are included.
+
+The first chunk uses a shared fixed trie:42 nodes including25 ancestors,17 subtree
+nodes,maxdepth31. It records visibility/type/bounds/getter state/returned length
+and child count for the seven targets. Internal trie nodes need only existing
+visibility/count reads. Zero/nonfinite bounds or a nontext target prevent the text
+getter but do not abort inspection of the other selected targets. No child below
+a selected target is obtained, even if its actual child count is nonzero. Missing
+required path/native failure still stops the batch and discards raw text. Normal
+complete-string,UTF16,visibility,bounds and fresh ownership checks are not relaxed.
+
+Complete selected-target inspection returns raw status with reason
+`approved_leaf_eligibility_complete`; it does NOT mean seven strings were read,
+that the parent subtree was exhausted, or that tactical fields were identified.
+A cooperative/visibility cutoff stays `bounded_raw_diagnostics`. Other five chunks
+use the existing bounded DFS. Every emitted string remains source-path-associated
+raw diagnostics under `source_kind=tactics_remaining_probe`, outside normal tactics.
+
+Maximum six chunks,total12288 reserved operations/6000ms summed soft capture time,
+at least2s cooldown. Each retains1000ms/2048 ceiling,800ms/1792 cooperative cutoff,
+node96/globaldepth48,first8DFS children,text8/128each/1024total,live64/allocated512
+roots. The selected-leaf chunk emits at most7strings. Actual fixture costs must be
+verified in CI; node arithmetic is not a measured latency claim. One native call
+cannot be forcibly interrupted at the soft deadline. All handles are cleaned each
+chunk; no retries,automatic alternate roots,window actions or crosschunk pointers.

@@ -182,8 +182,28 @@ sealed class BatchTreeFixture : IDisposable
         EnsurePath(root); if(census)EnsurePath("0/19");
         foreach(var suffix in suffixes)EnsurePath(root+"/"+suffix);
     }
+    internal const string EligibilityRoot = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0";
+    internal static readonly string[] EligibilitySuffixes = {"0/0/0","0/0/1","0/0/2","1/0/0/0/0","1/0/0/0/1/0","1/0/0/0/2/0","1/0/0/0/3/0"};
+    internal static string RemainingFocus(string profile) => EligibilityRoot + (profile switch {
+        "tactics_leaf_eligibility7" => "", "tactics_remaining45_1" => "/1/1",
+        "tactics_remaining46_1" => "/1/0/1", "tactics_remaining46_2" => "/1/0/2",
+        "tactics_remaining56_1" => "/1/0/0/0/4/1", "tactics_remaining56_2" => "/1/0/0/0/4/2", _ => throw new ArgumentException() });
+    internal void BuildRemaining(string profile, params string[] children)
+    {
+        Children[103]=new(); var focus=RemainingFocus(profile); EnsurePath(focus);
+        if(profile=="tactics_leaf_eligibility7") {
+            foreach(var suffix in EligibilitySuffixes){EnsurePath(focus+"/"+suffix);SetNodeText(focus+"/"+suffix,"TEST RAW LEAF");}
+            EnsurePath(focus+"/"+EligibilitySuffixes[0]+"/0"); // Available but explicitly outside the fixed leaf plan.
+        }
+        else {
+            var parent=focus[..focus.LastIndexOf('/')];
+            EnsurePath(parent+(profile=="tactics_remaining45_1"?"/1":"/2"));
+            foreach(var child in children)EnsurePath(focus+"/"+child);
+        }
+    }
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_root_census" => "0", "tactics_frontier35" => FrontierRoot,
+    { "tactics_leaf_eligibility7" or "tactics_remaining45_1" or "tactics_remaining46_1" or "tactics_remaining46_2" or "tactics_remaining56_1" or "tactics_remaining56_2" => RemainingFocus(profile),
+      "tactics_root_census" => "0", "tactics_frontier35" => FrontierRoot,
       "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
       "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,
        _ when profile.StartsWith("schedule_row",StringComparison.Ordinal) => SchedulePageRoot,

@@ -85,7 +85,13 @@ internal static class DiscoveryCollector
                 "tactics_sibling12" => 12, "tactics_sibling7" => 7, "tactics_sibling4" => 4, _ => -1 };
             var census = policy.Approval.SelectionProfile == "tactics_root_census";
             var frontier = policy.Approval.SelectionProfile == "tactics_frontier35";
-            var diagnostic = siblingDepth >= 0 || census || frontier;
+            var eligibility = policy.Approval.SelectionProfile == "tactics_leaf_eligibility7";
+            var remainingGate = policy.Approval.SelectionProfile switch {
+                "tactics_remaining45_1" => (Depth:26, Count:2),
+                "tactics_remaining46_1" or "tactics_remaining46_2" => (Depth:27, Count:3),
+                "tactics_remaining56_1" or "tactics_remaining56_2" => (Depth:30, Count:3),
+                _ => (Depth:-1, Count:-1) };
+            var diagnostic = siblingDepth >= 0 || census || frontier || eligibility || remainingGate.Depth >= 0;
             var sibling = siblingDepth >= 0;
             var topology = diagnostic ? new DiscoveryTopologyNode[MaximumNodes] : null;
             var topologyCount = 0;
@@ -123,7 +129,7 @@ internal static class DiscoveryCollector
                     { bounded = true; return true; }
                     return false;
                 }
-                void Visit(BatchObject node, int depth, string path, int parentRecord = -1, int childEdge = -1)
+                void Visit(BatchObject node, int depth, string path, int parentRecord = -1, int childEdge = -1, int[][]? eligibleTargets = null)
                 {
                     if (StopWork()) return;
                     Charge();
@@ -137,9 +143,11 @@ internal static class DiscoveryCollector
                     TraceNode();
                     visible = backend.Visible(node, budget) ? 1 : 0; stage = 2; TraceNode();
                     if (visible == 0) { if (diagnostic) bounded = true; return; }
-                    textElement = backend.IsTextElement(node, budget) ? 1 : 0; stage = 3; TraceNode();
-                    if (textElement == 1) { boundsEligible = backend.Bounds(node, budget).PositiveFinite ? 1 : 0; TraceNode(); }
-                    if (boundsEligible == 1)
+                    var inspectLeaf = eligibleTargets is null || eligibleTargets.Any(suffix => suffix.Length == 0);
+                    if (inspectLeaf) { textElement = backend.IsTextElement(node, budget) ? 1 : 0; stage = 3; TraceNode(); }
+                    if (textElement == 1 || eligibleTargets is not null && inspectLeaf)
+                    { boundsEligible = backend.Bounds(node, budget).PositiveFinite ? 1 : 0; TraceNode(); }
+                    if (textElement == 1 && boundsEligible == 1)
                     {
                         // Complete text only. No silently truncated name/anchor candidates.
                         textRead = 0; TraceNode();
@@ -151,17 +159,23 @@ internal static class DiscoveryCollector
                     var count = backend.ChildCount(node, budget);
                     childCount = count; stage = 4; TraceNode();
                     var maximumDepth = diagnostic ? TargetedDiscoveryCollector.MaximumDepth : MaximumDepth;
-                    if (count > 8 || (depth >= maximumDepth && count > 0)) bounded = true;
+                    if (eligibleTargets is null && (count > 8 || (depth >= maximumDepth && count > 0))) bounded = true;
                     if (depth >= maximumDepth) return;
                     // Single-pass child0-first DFS. Global depth32 (fixed probe48);
                     // scoped root stack plus transient boxes remains below live64.
                     // no sibling prefetch, pointer cursor or handle survives this request.
-                    for (var index = 0; index < Math.Min(count, 8); index++)
+                    var plannedIndices = eligibleTargets?.Where(suffix=>suffix.Length>0)
+                        .Select(suffix=>suffix[0]).Distinct().OrderBy(index=>index).ToArray();
+                    var indexCount = plannedIndices?.Length ?? Math.Min(count,8);
+                    for (var ordinal=0; ordinal<indexCount; ordinal++)
                     {
+                        var index = plannedIndices is null ? ordinal : plannedIndices[ordinal];
                         if (StopWork()) break;
+                        if(index>=count) throw new UiSmokeStopped("eligibility_child_unavailable");
                         using var child = backend.Child(node, index, budget);
                         if (child is null) throw new UiSmokeStopped("discovery_child_unavailable");
-                        Visit(child, depth + 1, Join(path, index), record, index);
+                        Visit(child, depth + 1, Join(path, index), record, index, eligibleTargets is null ? null :
+                            eligibleTargets.Where(suffix=>suffix.Length>0&&suffix[0]==index).Select(suffix=>suffix.Skip(1).ToArray()).ToArray());
                     }
                 }
                 void Census(BatchObject node, int depth)
@@ -252,6 +266,8 @@ internal static class DiscoveryCollector
                             throw new UiSmokeStopped("sibling_parent_shape_changed");
                         if (frontier && focusDepth == 21 && focusCount != 2)
                             throw new UiSmokeStopped("frontier_parent_shape_changed");
+                        if (remainingGate.Depth == focusDepth && focusCount != remainingGate.Count)
+                            throw new UiSmokeStopped("remaining_parent_shape_changed");
                         if (index >= focusCount) throw new UiSmokeStopped("discovery_focus_unavailable");
                         focusStage = 4; TraceFocus();
                         var child = backend.Child(current, index, budget);
@@ -262,7 +278,9 @@ internal static class DiscoveryCollector
                     }
                     focusStage = 5; // Exact approved focus resolved; later failure is outside focus traversal.
                     focusEdge = -1; focusIndex = -1; focusCount = -1;
-                    if (census) Census(current,edges.Length);
+                    if (eligibility) Visit(current,edges.Length,policy.Approval.FocusPath,
+                        eligibleTargets: TargetedDiscoveryCollector.CreateTargets(policy.Approval.SelectionProfile));
+                    else if (census) Census(current,edges.Length);
                     else if (targetedRow && !diagnostic)
                         VisitTargets(current, edges.Length, policy.Approval.FocusPath, TargetedDiscoveryCollector.CreateTargets(policy.Approval.SelectionProfile));
                     else Visit(current, edges.Length, policy.Approval.FocusPath);
@@ -271,7 +289,7 @@ internal static class DiscoveryCollector
                 success = true;
                 reason = targetedRow && !diagnostic ? (policy.Approval.SelectionProfile == "single" ?
                     "approved_row_targets_complete" : "approved_group_targets_complete") :
-                    bounded ? "bounded_raw_diagnostics" : "approved_prefix_exhausted";
+                    bounded ? "bounded_raw_diagnostics" : eligibility ? "approved_leaf_eligibility_complete" : "approved_prefix_exhausted";
             }
             catch (Exception error)
             {
@@ -299,7 +317,7 @@ internal static class DiscoveryCollector
             if (!success)
             {
                 observations = Array.Empty<DiscoveryText>();
-                if (reason is "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete" or "approved_group_targets_complete") reason = "discovery_accounting_rejected";
+                if (reason is "approved_leaf_eligibility_complete" or "bounded_raw_diagnostics" or "approved_prefix_exhausted" or "approved_row_targets_complete" or "approved_group_targets_complete") reason = "discovery_accounting_rejected";
             }
             return new(success ? "raw_diagnostics" : "terminal_failure", reason, observations,
                 budget.Operations, spent, nodes, roots, peak, bounded, request,

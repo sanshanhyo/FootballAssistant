@@ -397,5 +397,82 @@ internal static class PageDiscoveryTests
             if(!failed)Check(guards==result.NativeOperations+result.Nodes+3,"numeric diagnostics add no fresh checks or hidden native calls");
             Console.WriteLine($"Frontier {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; inherited owned fixture only.");
         }
+        foreach(var profile in new[]{"tactics_leaf_eligibility7","tactics_remaining45_1","tactics_remaining46_1","tactics_remaining46_2","tactics_remaining56_1","tactics_remaining56_2"})
+        foreach(var scenario in new[]{"complete","zero","nontext","blank","hidden","null","shape","work","hard","guard","cleanup"})
+        {
+            var eligibility=profile=="tactics_leaf_eligibility7";var focus=BatchTreeFixture.RemainingFocus(profile);
+            Check(FiniteCaptureSelection.TryGet(profile,out var selected)&&selected.Kind=="tactics_remaining_probe"&&selected.FocusRoot==focus,
+                "remaining profiles independently match exact fixed roots");
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};
+            fixture.BuildRemaining(profile,"0");
+            var paths=eligibility?BatchTreeFixture.EligibilitySuffixes.Select(suffix=>focus+"/"+suffix).ToArray():new[]{focus+"/0"};
+            if(eligibility)Check(selected.GetPaths().SequenceEqual(paths),"seven leaf plan equals independent literal suffixes");
+            else fixture.SetNodeText(paths[0],"TEST RAW LEAF");
+            var leaf=fixture.NodeAt(paths[0]);var root=fixture.NodeAt(focus);
+            var leafParent=fixture.NodeAt(paths[0][..paths[0].LastIndexOf('/')]);
+            var gate=fixture.NodeAt(focus[..focus.LastIndexOf('/')]);
+            if(scenario=="zero")fixture.ZeroBoundsNodes.Add(leaf);
+            if(scenario=="nontext")fixture.SetNodeText(paths[0],null);
+            if(scenario=="blank")fixture.SetNodeText(paths[0],"   ");
+            if(scenario=="hidden")fixture.HiddenNodes.Add(leaf);
+            if(scenario=="null")fixture.NullChildEdges.Add((leafParent,int.Parse(paths[0].Split('/').Last())));
+            if(scenario=="shape"){
+                if(eligibility)fixture.Children[leafParent].Clear();
+                else fixture.Children[gate].Add(fixture.NodeAt("0/0"));
+            }
+            if(scenario=="cleanup")fixture.FailFirstFree=true;
+            var policy=Policy(profile);var guards=0;
+            var result=Capture(policy,fixture,elapsed:()=>scenario=="work"&&fixture.TextReads.Count>0?801:
+                scenario=="hard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?1001:0,
+                fresh:()=>{guards++;return scenario=="guard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?
+                    identity with{WindowScanStatus="failed"}:identity;});
+            var failed=scenario is "null" or "shape" or "hard" or "guard" or "cleanup";
+            Check(result.Status==(failed?"terminal_failure":"raw_diagnostics"),"remaining scenario status: "+profile+"/"+scenario);
+            Check(PageDiscoveryValidation.TryValidate(result,profile)==!failed &&
+                !PageDiscoveryValidation.TryValidate(result,"tactics_current"),"host admits only raw remaining diagnostics, never normal tactics");
+            if(eligibility&&!failed)
+            {
+                Check(!PageDiscoveryValidation.TryValidate(result with { Reason="approved_prefix_exhausted" },profile) &&
+                    !PageDiscoveryValidation.TryValidate(result with
+                    { Observations=new[]{new DiscoveryText(focus+"/7","UNSELECTED LEAF")} },profile),
+                    "selected-leaf completion is not subtree exhaustion and unselected paths cannot be published");
+            }
+            Check(result.Topology is not null && result.Topology.Length<=96 && result.FocusEdges is not null,"bounded existing-read topology");
+            if(failed)Check(result.Observations.Length==0,"remaining hard failures discard every provisional text");
+            if(!eligibility&&scenario=="shape")Check(result.Reason=="remaining_parent_shape_changed"&&
+                !fixture.ChildEdges.Any(edge=>edge.Parent==gate),"known parent count gate before obtaining selected child");
+            if(scenario=="complete")
+            {
+                Check(result.Observations.Select(o=>o.Path).SequenceEqual(paths)&&!result.TraversalBounded,"raw observations limited to requested leaves/subtree");
+                if(eligibility)Check(result.Reason=="approved_leaf_eligibility_complete"&&result.Topology!.Any(node=>node.TextElement==1&&node.ChildCount==1)&&result.Nodes==42&&result.Topology!.Length==17&&result.Topology.Max(node=>node.GlobalDepth)==31,
+                    "fixed seven-leaf trie42 nodes including25 ancestors,17 subtree nodes,maxdepth31");
+                else Check(result.Topology![0].ChildCount==1&&result.Observations.Length==1,
+                    "remaining56/1 and every other root read actual nonzero childCount, never assumed empty");
+            }
+            if(scenario is "zero" or "nontext" or "blank")
+                Check(result.Observations.Length==(eligibility?6:0),"ineligible single leaf does not abort other fixed leaves");
+            if(scenario=="zero")Check(!fixture.TextReads.Contains(leaf)&&result.Topology!.Any(node=>node.BoundsEligible==0&&node.TextReadCompleted==-1),
+                "zero bounds recorded, getter not attempted");
+            if(scenario=="nontext"&&eligibility)Check(result.Topology!.Any(node=>node.TextElement==0&&node.BoundsEligible==1&&node.TextReadCompleted==-1),
+                "nontext leaf has deliberate bounds evidence but no getter");
+            if(scenario=="blank")Check(result.Topology!.Any(node=>node.TextReadCompleted==1&&node.TextLength==3),"blank text completion/length retained numerically");
+            if(scenario is "hidden" or "work")Check(result.TraversalBounded,"uninspected leaf or work stop is explicitly partial");
+            if(eligibility)
+            {
+                Check(fixture.TextReads.All(pointer=>paths.Select(fixture.NodeAt).Contains(pointer)),"no text getter on unselected path");
+                foreach(var path in paths) {
+                    // First leaf deliberately has a child; none may be obtained under this fixed plan.
+                    if(scenario!="shape")Check(!fixture.ChildEdges.Any(edge=>edge.Parent==fixture.NodeAt(path)),"fixed trie never descends below selected leaves");
+                }
+                Check(result.Topology!.Where(node=>node.TextElement==-1).All(node=>node.BoundsEligible==-1),"internal trie type/bounds remain unknown, no added reads");
+            }
+            else if(scenario!="shape")Check(fixture.ChildEdges.Where(edge=>edge.Parent==gate).All(edge=>edge.Index==int.Parse(focus.Split('/').Last())),
+                "only approved remaining sibling obtained");
+            Clean(fixture,policy,result);
+            if(!failed)Check(guards==result.NativeOperations+result.Nodes+3,"fresh guard accounting unchanged");
+            Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"remaining scope cannot replay");
+            Console.WriteLine($"Remaining {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; owned inherited fixture only.");
+        }
     }
 }

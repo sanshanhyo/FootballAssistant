@@ -9,7 +9,7 @@ internal static class PageDiscoveryValidation
 {
     internal static bool TryValidate(DiscoveryResult? result,string profile)
     {
-        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe"))
+        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe" or "tactics_remaining_probe"))
             return ValidateProbe(result,probe);
         if(!FiniteCaptureSelection.TryGet(profile,out var selection) || selection.Kind=="attributes" || result is null ||
             result.Status!="raw_diagnostics" || result.Reason!="approved_group_targets_complete" ||
@@ -34,14 +34,17 @@ internal static class PageDiscoveryValidation
     // A raw bounded inventory is NOT tactical-field validation or page identity.
     private static bool ValidateProbe(DiscoveryResult? result,FiniteCaptureSelection selection)
     {
+        var completeReason=selection.Profile=="tactics_leaf_eligibility7"?"approved_leaf_eligibility_complete":"approved_prefix_exhausted";
         if(result is null || result.Status!="raw_diagnostics" || result.SelectionProfile!=selection.Profile ||
             result.PageIdentityVerified || result.PanelIndex!=0 || result.FocusPath!=selection.FocusRoot ||
-            result.Reason!=(result.TraversalBounded?"bounded_raw_diagnostics":"approved_prefix_exhausted") ||
+            result.Reason!=(result.TraversalBounded?"bounded_raw_diagnostics":completeReason) ||
             result.NativeOperations is <0 or >2048 || result.Nodes is <1 or >96 ||
             result.TotalRoots is <0 or >512 || result.PeakRoots is <0 or >64 ||
             !double.IsFinite(result.ElapsedMilliseconds) || result.ElapsedMilliseconds is <0 or >1000 ||
             result.Observations is null || result.Observations.Length>8) return false;
         if(selection.Profile=="tactics_root_census" && result.Observations.Length!=0) return false;
+        if(selection.Profile=="tactics_leaf_eligibility7" && (result.Observations.Length>7 ||
+            result.Observations.Any(item=>item is null || !selection.GetPaths().Contains(item.Path,StringComparer.Ordinal)))) return false;
         var paths=new HashSet<string>(StringComparer.Ordinal);var characters=0;
         foreach(var item in result.Observations)
         {

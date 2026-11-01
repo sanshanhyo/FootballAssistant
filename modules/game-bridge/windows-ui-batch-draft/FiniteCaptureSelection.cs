@@ -25,6 +25,7 @@ internal sealed class FiniteCaptureSelection
     internal const string TacticsSibling7Root = "0/4/0/0/0/0/0/1";
     internal const string TacticsSibling4Root = "0/4/0/0/1";
     internal const string TacticsFrontier35Root = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/1";
+    internal const string TacticsEligibilityRoot = "0/4/0/0/0/0/0/0/0/0/0/0/1/0/2/0/0/0/1/0/0/0/0/0/0";
     internal const string NextMatchRoot = "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2";
     internal const string ScheduleRoot = "0/4/0/0/0/0/0/1/0/0/0/0/0/0/1/0/5";
     private static readonly Dictionary<string, FiniteCaptureSelection> Pages = Build();
@@ -40,6 +41,12 @@ internal sealed class FiniteCaptureSelection
         pages.Add("tactics_sibling4",new("tactics_sibling4","tactics_sibling_probe",TacticsSibling4Root,-1,0,Array.Empty<string>()));
         pages.Add("tactics_root_census",new("tactics_root_census","tactics_frontier_probe","0",-1,0,Array.Empty<string>()));
         pages.Add("tactics_frontier35",new("tactics_frontier35","tactics_frontier_probe",TacticsFrontier35Root,-1,0,Array.Empty<string>()));
+        pages.Add("tactics_leaf_eligibility7",new("tactics_leaf_eligibility7","tactics_remaining_probe",TacticsEligibilityRoot,-1,0,
+            new[]{"0/0/0","0/0/1","0/0/2","1/0/0/0/0","1/0/0/0/1/0","1/0/0/0/2/0","1/0/0/0/3/0"}
+                .Select(suffix=>TacticsEligibilityRoot+"/"+suffix).ToArray()));
+        foreach(var (profile,suffix) in new[]{("tactics_remaining45_1","1/1"),("tactics_remaining46_1","1/0/1"),
+            ("tactics_remaining46_2","1/0/2"),("tactics_remaining56_1","1/0/0/0/4/1"),("tactics_remaining56_2","1/0/0/0/4/2")})
+            pages.Add(profile,new(profile,"tactics_remaining_probe",TacticsEligibilityRoot+"/"+suffix,-1,0,Array.Empty<string>()));
         pages.Add("next_match_card",new("next_match_card","next_match",NextMatchRoot,-1,0,new[] { "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/0/0", "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/1/0/1/0/0", "0/6/0/0/0/0/0/0/0/0/0/0/1/0/0/0/0/0/1/0/0/0/2/0/0/0/0/0/1/0/1/1/0/0/0/0" }));
         for(var row=0;row<10;row++)
         {
@@ -65,6 +72,8 @@ internal sealed class FiniteCaptureSelection
         "tactics_alignment_candidate" => new[] {"tactics_alignment_candidate"},
         "tactics_sibling_inventory" => new[] {"tactics_sibling12","tactics_sibling7","tactics_sibling4"},
         "tactics_layout_diagnostic" => new[] {"tactics_root_census","tactics_frontier35"},
+        "tactics_remaining_diagnostic" => new[] {"tactics_leaf_eligibility7","tactics_remaining45_1","tactics_remaining46_1",
+            "tactics_remaining46_2","tactics_remaining56_1","tactics_remaining56_2"},
         "next_match_card" => new[] {"next_match_card"},
         "schedule_rows0_9" => Enumerable.Range(0,10).Select(row=>"schedule_row"+row.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray(),
         _ => AttributeRowSelection.ManifestProfiles(manifest)
