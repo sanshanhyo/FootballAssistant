@@ -30,6 +30,7 @@ UI_INSTRUCTIONS = """
 此映射只覆盖输出行，不代表完整赛程；row_index 不是比赛或球队 ID。两位年份世纪与开球时间未知，不能补成 ISO 日期或声称完整拥挤程度/精确休息天数。
 当提供 next_match_projection 时，只能引用date_display、opponent_display、competition_display三个字段，称为“你这页的下一场”，并以“如果说的是它”给建议。它是当前查看俱乐部的卡片，不确认用户执教球队，不是完整赛程；不得补主客场、开球时间、体能或伤情。
 当提供 tactics_projection 时，只可引用 formation_display、style_display、mentality_display 三个显示字段，称为“实验性 UI 战术显示”。阵型描述不证明球员、位置职责、首发或指令；这些均未知而非为空。只给基于这三项的条件式建议，不补造未读取字段。
+Windows finite UI 证据中的 category_display 和 rows 仅为同一两行采样块内已配对显示；可以复述标签与数值，但不得归属于球员、跨块合并或给个体建议。
 页面名称未知；不能仅凭路径、相邻文本或标签数值顺序建立实体身份或属性关联。
 自然区分“UI 采样文本”“有条件的建议/推断”和缺少的信息，不必固定三段标题；简短引用已提供的来源、采样时间和 partial 限制。赛程模式未提供来源路径、采样时间及身份元数据时不得补造，只标注实验性 UI 与部分信息。
 允许根据有证据的文本给出有条件建议，不得声称完整读取当前球队、未打开页面或后台字段。
@@ -40,6 +41,9 @@ UI_INSTRUCTIONS = """
 
 
 def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_attributes=False, _preview_ui_changes=False):
+    from football_assistant_data.windows_finite_observations import ADAPTER_ID as WINDOWS_ADAPTER, prepare_windows_advice
+    if isinstance(snapshot, dict) and (snapshot.get('observation') or {}).get('source', {}).get('adapter_id') == WINDOWS_ADAPTER and not _preview_ui_changes:
+        return prepare_windows_advice(capability, snapshot, now=now)
     if capability not in CAPABILITIES:
         raise ValueError('unsupported business capability')
     result = dict(status='blocked', mode='ui_evidence', source='ui', partial=True,
@@ -164,6 +168,9 @@ def prepare_ui_advice(capability, snapshot, *, now=None, _preview_current_page_a
 
 def prepare_current_page_attributes(snapshot, *, now=None):
     """Authenticated reader route's local preview; never an Agent/model input."""
+    from football_assistant_data.windows_finite_observations import ADAPTER_ID as WINDOWS_ADAPTER, prepare_windows_attributes
+    if isinstance(snapshot, dict) and (snapshot.get('observation') or {}).get('source', {}).get('adapter_id') == WINDOWS_ADAPTER:
+        return prepare_windows_attributes(snapshot, now=now)
     prepared = prepare_ui_advice('player_info', snapshot, now=now, _preview_current_page_attributes=True)
     projection = prepared['current_page_attributes']
     return dict(status=projection['status'] if projection else 'unavailable',

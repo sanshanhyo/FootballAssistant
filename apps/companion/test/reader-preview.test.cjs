@@ -164,3 +164,36 @@ test('next-match preview keeps the strict three-display shape and leaves team an
   }
   assert.equal(previewCard(spec, { ...response, schedule_projection: { ...response.schedule_projection, managed_team: 'invented' } }).status, 'unknown');
 });
+
+test('Windows finite summary retains timed historical rows until approved expiry, never marks them current', () => {
+  const spec = PREVIEWS.find(item => item.id === 'current-page-attributes');
+  const now = Date.now();
+  const data = envelope(spec);
+  Object.assign(data.provenance, { platform: 'windows-x64', adapter_id: 'footballassistant.windows-finite-ui', captured_at: new Date(now-40_000).toISOString(), expires_at: new Date(now+30_000).toISOString() });
+  Object.assign(data[spec.key], { retention: 'approved_finite_capture_summary', snapshot_atomic: false, progress: { rows_received: 35, complete: true } });
+  Object.assign(data[spec.key].groups[0].rows[0], { capture_freshness: 'stale', field_provenance: { capture_started_at: new Date(now-70_000).toISOString(), chunk_index: 0 } });
+  const card = previewCard(spec, data, now);
+  assert.equal(card.status, 'available');
+  assert.equal(card.metadata.freshness, 'capture_summary');
+  assert.equal(card.metadata.snapshotAtomic, false);
+  assert.equal(card.fields[1].captureFreshness, 'stale');
+  assert.equal(previewCard(spec, data, now+31_000).status, 'stale');
+  assert.deepEqual(previewCard(spec, data, now+31_000).fields, []);
+  delete data.provenance.platform;
+  assert.equal(previewCard(spec, data, now).status, 'stale');
+});
+
+test('UI advice reply labels Windows finite retained evidence capture_summary, keeps Mac current', async () => {
+  for (const [platform, adapterId, expected] of [
+    ['windows-x64', 'footballassistant.windows-finite-ui', 'capture_summary'],
+    ['macos-arm64', 'footballassistant.runtime-ui-tree', 'current'],
+  ]) {
+    const client = new RealReaderClient({ request: async endpoint => {
+      assert.equal(endpoint, '/v1/agent/ui-advice');
+      return { status: 'generated', reply: 'fixture', provenance: { platform, adapter_id: adapterId },
+        evidence: [{ rows: [{ capture_freshness: 'stale' }] }] };
+    } });
+    const reply = await client.reply({ message: '属性', capability: 'player_info', adviceMode: 'ui_evidence' });
+    assert.equal(reply.metadata.freshness, expected);
+  }
+});

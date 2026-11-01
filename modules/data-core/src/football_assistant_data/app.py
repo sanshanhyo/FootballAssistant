@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 import secrets
 import socket
@@ -132,6 +133,22 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.windows_discovery_generation = 0
         from .ui_capture_control import UiCaptureController
         app.state.ui_capture_control = UiCaptureController(settings.bridge_private_root)
+        finite_task = None
+        finite_source = None
+        finite_stopping = False
+        if settings.windows_finite_registration is not None:
+            from .windows_finite_observations import WindowsFiniteSource
+            finite_source = WindowsFiniteSource(observations, settings.bridge_private_root, settings.windows_finite_registration)
+            async def poll_finite():
+                while not finite_stopping and not finite_source.closed:
+                    try:
+                        await asyncio.to_thread(finite_source.poll)
+                    except Exception:
+                        finite_source.invalidate('finite_observer_failed')
+                        break
+                    await asyncio.sleep(0.5)
+            finite_task = asyncio.create_task(poll_finite())
+        app.state.windows_finite_source = finite_source
         companion = None
         if enable_agent:
             companion = CompanionStore(settings.data_dir / "companion.sqlite")
@@ -141,6 +158,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         try:
             yield
         finally:
+            if finite_task is not None:
+                finite_stopping = True
+                await finite_task  # Let a bounded file read finish before closing SQLite.
+                finite_source.invalidate('backend_shutdown')
             app.state.business_snapshots.invalidate()
             app.state.windows_discovery = empty_snapshot()
             observations.close()
@@ -292,6 +313,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.post("/v1/observations",dependencies=[Depends(authorized)])
     async def observation(body: dict):
+        from .windows_finite_observations import ADAPTER_ID as WINDOWS_FINITE_ADAPTER
+        if isinstance(body.get('source'), dict) and body['source'].get('adapter_id') == WINDOWS_FINITE_ADAPTER:
+            raise HTTPException(422, detail={'code': 'local_producer_only'})
         try:
             validate_observation(body)
         except ValueError as error:
@@ -314,6 +338,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.post("/v1/monitoring/heartbeat",dependencies=[Depends(authorized)])
     async def heartbeat(body: HeartbeatRequest):
+        from .windows_finite_observations import ADAPTER_ID as WINDOWS_FINITE_ADAPTER
+        stream = app.state.observations.fields(body.stream_id).get('source_status', {})
+        if stream.get('adapter_id') == WINDOWS_FINITE_ADAPTER:
+            raise HTTPException(422, detail={'code': 'local_producer_only'})
         try:return app.state.observations.heartbeat(body.stream_id,body.state,body.detail)
         except KeyError:raise HTTPException(404,detail={"code":"stream_not_found","message":"Source stream does not exist"}) from None
 

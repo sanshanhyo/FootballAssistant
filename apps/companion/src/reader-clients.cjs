@@ -124,13 +124,17 @@ function previewCard(spec, envelope = {}, now = Date.now()) {
   const title = nextMatch ? '下一场卡片 · 仅当前页面' : spec.title;
   const captured = Date.parse(envelope.provenance?.captured_at);
   const age = now - captured;
+  const finiteSummary = spec.id === 'current-page-attributes' && envelope.provenance?.platform === 'windows-x64' && envelope.provenance?.adapter_id === 'footballassistant.windows-finite-ui' && projection?.retention === 'approved_finite_capture_summary' && projection?.snapshot_atomic === false;
+  const expiry = Date.parse(envelope.provenance?.expires_at);
+  const ageLimit = finiteSummary ? 120_000 : 15_000;
+  const summaryExpired = finiteSummary && (!Number.isFinite(expiry) || now > expiry);
   const reasons = Array.isArray(envelope.reasons) ? envelope.reasons : [];
-  const stale = reasons.includes('stale_ui_snapshot') || (Number.isFinite(age) && age > 15_000);
-  const available = !stale && age >= 0 && age <= 15_000 && envelope.source === 'ui' && envelope.synthetic !== true && projection?.synthetic !== true &&
+  const stale = reasons.includes('stale_ui_snapshot') || (Number.isFinite(age) && age > ageLimit) || summaryExpired;
+  const available = !stale && age >= 0 && age <= ageLimit && envelope.source === 'ui' && envelope.synthetic !== true && projection?.synthetic !== true &&
     envelope.production_ready === false && envelope.status === expectedStatus && projection?.status === expectedStatus && (!nextMatch || (envelope.schedule_complete === false && projection.identity === null && projection.managed_team === null));
   const status = stale ? 'stale' : available ? 'available' : 'unknown';
   const fields = [];
-  const add = (label, value) => { if (fields.length < 100 && (typeof value === 'string' || typeof value === 'number')) fields.push({ label, value: String(value).slice(0, 400), status: 'observed' }); };
+  const add = (label, value, capture = {}) => { if (fields.length < 100 && (typeof value === 'string' || typeof value === 'number')) fields.push({ label, value: String(value).slice(0, 400), status: 'observed', ...capture }); };
   if (available) {
     if (nextMatch) {
       for (const [key, label] of [['date_display', '日期显示'], ['opponent_display', '对手显示'], ['competition_display', '赛事显示']]) add(label, projection[key]);
@@ -142,13 +146,13 @@ function previewCard(spec, envelope = {}, now = Date.now()) {
     if (spec.id === 'tactics') for (const [key, label] of [['formation_display','阵型显示'], ['style_display','风格显示'], ['mentality_display','心态显示']]) add(label, projection[key]);
     if (spec.id === 'current-page-attributes') {
       fields.push({ label: '球员身份（不可归属某球员）', value: null, status: 'unknown' });
-      for (const group of (Array.isArray(projection.groups) ? projection.groups : []).slice(0, 5)) for (const row of (Array.isArray(group.rows) ? group.rows : []).slice(0, 50)) add(`${String(group.category_display).slice(0, 60)} · ${String(row.label_display).slice(0, 60)}`, row.value);
+      for (const group of (Array.isArray(projection.groups) ? projection.groups : []).slice(0, 5)) for (const row of (Array.isArray(group.rows) ? group.rows : []).slice(0, 50)) add(`${String(group.category_display).slice(0, 60)} · ${String(row.label_display).slice(0, 60)}`, row.value, finiteSummary ? { captureFreshness: row.capture_freshness, capturedAt: row.field_provenance?.capture_started_at, captureFinishedAt: row.field_provenance?.capture_finished_at, chunkIndex: row.field_provenance?.chunk_index } : {});
     }
   }
   return { id: spec.id, title, status, fields, identity: null, ...(nextMatch ? { kind: 'next_match', scheduleComplete: false } : {}), metadata: {
     source: 'ui', sourceLabel: title, sessionId: envelope.provenance?.session_id ?? null,
     sampledAt: envelope.provenance?.captured_at ?? null, partial: true, synthetic: false,
-    freshness: status === 'available' ? 'current' : status, limitations: [
+    freshness: status === 'available' ? (finiteSummary ? 'capture_summary' : 'current') : status, ...(finiteSummary ? { snapshotAtomic: false, captureProgress: projection.progress, expiresAt: envelope.provenance.expires_at } : {}), limitations: [
       '仅本机 UI 预览，不代表后台全量事实；不会自动调用模型。',
       ...(nextMatch ? ['仅俱乐部概况中下一场卡片的三项显示；所属球队身份未知，不绑定你的球队。', '主客场、开球时间与完整赛程未知，不能据此计算赛程密度。'] : []),
       ...(spec.id === 'current-page-attributes' ? ['身份未知，不绑定任何球员，不用于个体建议。'] : []),
@@ -239,7 +243,7 @@ class RealReaderClient {
         source: 'ui', sourceLabel: 'Alpha · UI 采样建议（非后台全量数据）',
         sessionId: provenance?.session_id ?? null, snapshotId: provenance?.event_id ?? null,
         sampledAt: provenance?.captured_at ?? null, partial: true, synthetic: false,
-        freshness: result.status === 'generated' ? 'current' : 'unknown',
+        freshness: result.status === 'generated' ? (provenance?.platform === 'windows-x64' && provenance?.adapter_id === 'footballassistant.windows-finite-ui' ? 'capture_summary' : 'current') : 'unknown',
         page: result.page, provenance, limitations: [...(result.limitations || []), ...(result.reasons || [])],
         readiness: { production_ready: false, mode: 'ui_evidence' },
       } };
