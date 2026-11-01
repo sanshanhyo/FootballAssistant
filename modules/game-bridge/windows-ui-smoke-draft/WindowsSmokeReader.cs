@@ -8,21 +8,55 @@ internal readonly record struct UiSmokeBounds(float X, float Y, float Width, flo
     internal bool PositiveFinite => float.IsFinite(X) && float.IsFinite(Y) && float.IsFinite(Width) &&
         float.IsFinite(Height) && Width > 0 && Height > 0;
 }
-internal sealed record UiResolveResult(bool Success, string StopReason, double ElapsedMs, string StoppedStage, int NativeOperations);
+internal sealed record UiResolveResult(bool Success, string StopReason, double ElapsedMs, string StoppedStage, int NativeOperations, UiSmokeDiagnostics? Diagnostics = null);
 internal sealed record UiSmokeResult(string? Text, string StopReason, int Nodes, int NativeOperations,
-    double ElapsedMs, string StoppedStage, bool RootResolved, bool TextGetterSucceeded, string? ErrorType = null);
+    double ElapsedMs, string StoppedStage, bool RootResolved, bool TextGetterSucceeded, string? ErrorType = null, UiSmokeDiagnostics? Diagnostics = null);
 internal sealed class UiSmokeStopped : Exception { internal UiSmokeStopped(string reason) : base(reason) { } }
 
-// A future native adapter MUST call BeforeNative before EACH export/invoke/memory access,
-// including resolution. Wrapping a multi-call Resolve method once is not sufficient.
+// Fixed allowlisted labels and numeric aggregates only: never object identities, text or paths.
+// Stage time includes guard time; do not add the two totals. MaxMs is a contiguous stage
+// interval, NOT an individual getter duration. Prechecks are not native invocation counts.
+internal sealed record UiSmokeStageDiagnostics(string Stage, int Intervals, double TotalMs, double MaxMs,
+    int PrechecksCompleted, int PrechecksFailed, int GuardCalls, int GuardFailures, double GuardTotalMs, double GuardMaxMs);
+internal sealed record UiSmokeDiagnostics(int SchemaVersion, double ElapsedMs, UiSmokeStageDiagnostics[] Stages);
+
+// Every export/invoke/memory access retains its existing fresh gate and reservation.
 internal sealed class UiSmokeBudget
 {
+    private static readonly string[] StageNames = { "before_resolution", "resolve_first_panel", "first_panel_root",
+        "resolve_ui_classes", "resolve_ui_methods", "visible", "world_bounds", "text_type", "text_getter",
+        "child_count", "child_index", "unknown" };
+    private struct StageCounters
+    {
+        internal int Intervals, PrechecksCompleted, PrechecksFailed, GuardCalls, GuardFailures;
+        internal double TotalMs, MaxMs, GuardTotalMs, GuardMaxMs;
+    }
+    private readonly StageCounters[] counters = new StageCounters[12];
     private readonly Func<double> elapsedMilliseconds;
     private readonly Action verifyGrantAndWindow;
     private readonly double maximumMilliseconds;
     private readonly int maximumOperations;
+    private int stageIndex;
+    private double stageStarted; // Stopwatch starts before budget construction; account for setup too.
     internal int Operations { get; private set; }
-    internal string Stage { get; set; } = "before_resolution";
+    internal string Stage
+    {
+        get => StageNames[stageIndex];
+        set
+        {
+            var next = Array.IndexOf(StageNames, value);
+            if (next < 0) next = StageNames.Length - 1;
+            if (next == stageIndex) return;
+            var now = elapsedMilliseconds();
+            AddInterval(ref counters[stageIndex], now - stageStarted);
+            stageStarted = now; stageIndex = next;
+        }
+    }
+    private static void AddInterval(ref StageCounters counter, double elapsed)
+    {
+        counter.Intervals++; counter.TotalMs += elapsed;
+        counter.MaxMs = Math.Max(counter.MaxMs, elapsed);
+    }
     internal double ElapsedMs => elapsedMilliseconds();
     internal UiSmokeBudget(Func<double> elapsedMilliseconds, Action verifyGrantAndWindow,
         double maximumMilliseconds = 100, int maximumOperations = 384)
@@ -30,11 +64,42 @@ internal sealed class UiSmokeBudget
       this.maximumMilliseconds = maximumMilliseconds; this.maximumOperations = maximumOperations; }
     internal void Check()
     {
-        if (elapsedMilliseconds() > maximumMilliseconds) throw new UiSmokeStopped("time_budget");
-        if (Operations >= maximumOperations) throw new UiSmokeStopped("native_call_budget");
-        verifyGrantAndWindow();
+        ref var counter = ref counters[stageIndex];
+        try
+        {
+            if (elapsedMilliseconds() > maximumMilliseconds) throw new UiSmokeStopped("time_budget");
+            if (Operations >= maximumOperations) throw new UiSmokeStopped("native_call_budget");
+            var start = elapsedMilliseconds();
+            counter.GuardCalls++;
+            try { verifyGrantAndWindow(); }
+            catch { counter.GuardFailures++; throw; }
+            finally
+            {
+                var elapsed = elapsedMilliseconds() - start;
+                counter.GuardTotalMs += elapsed;
+                counter.GuardMaxMs = Math.Max(counter.GuardMaxMs, elapsed);
+            }
+            counter.PrechecksCompleted++;
+        }
+        catch { counter.PrechecksFailed++; throw; }
     }
     internal void BeforeNative() { Check(); Operations++; }
+
+    // Called only at completion, never between an unrooted return and gcNew. Copy fixed
+    // counters so repeated snapshots do not double-count. Serialization stays off callback.
+    internal UiSmokeDiagnostics Snapshot()
+    {
+        var now = elapsedMilliseconds();
+        var stages = new UiSmokeStageDiagnostics[StageNames.Length];
+        for (var index = 0; index < stages.Length; index++)
+        {
+            var c = counters[index];
+            if (index == stageIndex) AddInterval(ref c, now - stageStarted);
+            stages[index] = new(StageNames[index], c.Intervals, c.TotalMs, c.MaxMs,
+                c.PrechecksCompleted, c.PrechecksFailed, c.GuardCalls, c.GuardFailures, c.GuardTotalMs, c.GuardMaxMs);
+        }
+        return new(1, now, stages);
+    }
 }
 
 internal interface IWindowsUiSmokeBackend : IDisposable
@@ -84,8 +149,12 @@ internal static class WindowsSmokeReader
         var bounded = false;
         var rootResolved = false;
         var textGetterSucceeded = false;
-        UiSmokeResult Finish(string? text, string reason, string? errorType = null) => new(text, reason, nodes,
-            budget.Operations, budget.ElapsedMs, budget.Stage, rootResolved, textGetterSucceeded, errorType);
+        UiSmokeResult Finish(string? text, string reason, string? errorType = null)
+        {
+            var diagnostics = budget.Snapshot();
+            return new(text, reason, nodes, budget.Operations, diagnostics.ElapsedMs, budget.Stage,
+                rootResolved, textGetterSucceeded, errorType, diagnostics);
+        }
         try
         {
             budget.Check();

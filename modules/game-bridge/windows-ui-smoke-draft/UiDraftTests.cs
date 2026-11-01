@@ -2,8 +2,66 @@ using FootballAssistant.GameBridge;
 static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 UiSmokeResult Read(FakeBackend backend, Action? guard = null, Func<double>? elapsed = null) =>
     WindowsSmokeReader.ReadOne(backend, guard ?? (() => { }), elapsed ?? (() => 0));
+// Deterministic diagnostic accounting; no native calls, real wall-clock assertions or data capture.
+var diagnosticClock = 0.0;
+var failGuard = false;
+var diagnosticBudget = new UiSmokeBudget(() => diagnosticClock, () =>
+{
+    diagnosticClock += failGuard ? 4 : 2;
+    if (failGuard) throw new UiSmokeStopped("fixture_guard_failure");
+});
+diagnosticBudget.Check(); // setup [0, 2], completed guard 2ms
+diagnosticClock = 5;
+diagnosticBudget.Stage = "first_panel_root";
+diagnosticBudget.BeforeNative(); // first-panel [5, 7], completed guard 2ms
+diagnosticClock = 10;
+diagnosticBudget.Stage = "visible";
+failGuard = true;
+try { diagnosticBudget.BeforeNative(); } catch (UiSmokeStopped) { }
+var diagnostic = diagnosticBudget.Snapshot();
+var setupTiming = diagnostic.Stages.Single(x => x.Stage == "before_resolution");
+var panelTiming = diagnostic.Stages.Single(x => x.Stage == "first_panel_root");
+var visibleTiming = diagnostic.Stages.Single(x => x.Stage == "visible");
+Check(diagnostic.SchemaVersion == 1 && diagnostic.Stages.Length == 12 && diagnostic.ElapsedMs == 14 &&
+    diagnostic.Stages.Sum(x => x.TotalMs) == 14, "fixed stage totals cover elapsed resolution and traversal without gaps");
+Check(setupTiming.TotalMs == 5 && panelTiming.TotalMs == 5 && visibleTiming.TotalMs == 4 && visibleTiming.MaxMs == 4,
+    "contiguous stage timing includes work between prechecks");
+Check(diagnostic.Stages.Sum(x => x.GuardTotalMs) == 8 && visibleTiming.GuardMaxMs == 4 &&
+    visibleTiming.GuardCalls == 1 && visibleTiming.GuardFailures == 1 && visibleTiming.PrechecksFailed == 1 &&
+    diagnostic.Stages.Sum(x => x.PrechecksCompleted) == 2 && diagnosticBudget.Operations == 1,
+    "failed guard duration counted but failed reservation not charged as completed");
+Check(diagnosticBudget.Snapshot().Stages.Sum(x => x.TotalMs) == 14, "snapshots never double-count final interval");
+diagnosticClock = 101;
+try { diagnosticBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "time_budget", "original stop reason retained"); }
+var deadlineTiming = diagnosticBudget.Snapshot().Stages.Single(x => x.Stage == "visible");
+Check(deadlineTiming.PrechecksFailed == 2 && deadlineTiming.GuardCalls == 1 && diagnosticBudget.Operations == 1,
+    "failed deadline precheck is distinct from a guard call and reserves nothing");
+diagnosticClock = 102;
+diagnosticBudget.Stage = "fixture-secret-text-or-path";
+var boundedJson = System.Text.Json.JsonSerializer.Serialize(diagnosticBudget.Snapshot());
+Check(!boundedJson.Contains("fixture-secret-text-or-path") && boundedJson.Length < 6000 &&
+    diagnosticBudget.Stage == "unknown", "diagnostics contain only fixed labels and bounded numeric aggregates");
+var clockReads = 0;
+var overheadBudget = new UiSmokeBudget(() => ++clockReads, () => { }, 3);
+overheadBudget.BeforeNative();
+try { overheadBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "time_budget", "instrumentation does not subtract elapsed cost"); }
+Check(overheadBudget.Operations == 1, "diagnostic timestamp reads consume the same elapsed budget");
+var deniedGuardCalls = 0;
+var callLimitBudget = new UiSmokeBudget(() => 0, () => deniedGuardCalls++, maximumOperations: 0);
+try { callLimitBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "native_call_budget", "call-budget stop unchanged"); }
+var callLimitTiming = callLimitBudget.Snapshot().Stages[0];
+Check(callLimitTiming.PrechecksFailed == 1 && callLimitTiming.GuardCalls == 0 && deniedGuardCalls == 0 &&
+    callLimitBudget.Operations == 0, "call-limit precheck failure invokes neither guard nor native work");
+var repeatedClock = 0.0;
+var repeatedBudget = new UiSmokeBudget(() => repeatedClock, () => { });
+repeatedBudget.Stage = "visible"; repeatedClock = 3; repeatedBudget.Stage = "text_type";
+repeatedClock = 5; repeatedBudget.Stage = "visible"; repeatedClock = 9;
+var repeated = repeatedBudget.Snapshot().Stages.Single(x => x.Stage == "visible");
+Check(repeated.Intervals == 2 && repeated.TotalMs == 7 && repeated.MaxMs == 4,
+    "repeated stage total and longest contiguous interval are distinct");
 var backend = new FakeBackend();
 var one = Read(backend);
+Check(one.Diagnostics is { Stages.Length: 12 } && one.Diagnostics.ElapsedMs == one.ElapsedMs, "capture result carries bounded diagnostics at the same endpoint");
 Check(one.Text == "fixture text" && one.Nodes == 2 && backend.ChildReads == 1, "lazy first eligible text, no eager sibling reads");
 Check(backend.BoundsReads == 1, "non-text root skips bounds; eligible text still checks bounds");
 backend = new FakeBackend { TextBoundsPositive = false };

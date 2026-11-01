@@ -25,17 +25,22 @@ internal sealed partial class WindowsLoadedModuleLease
                 if (!policy.CheckStartedResolve(grant, MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId()), DateTimeOffset.UtcNow))
                     throw new UiSmokeStopped("grant_or_window_changed");
             }, 250, 2048);
+            UiResolveResult Finish(bool succeeded, string reason)
+            {
+                var diagnostics = budget.Snapshot();
+                return new(succeeded, reason, diagnostics.ElapsedMs, budget.Stage, budget.Operations, diagnostics);
+            }
             try
             {
                 if (!policy.TryBeginCall(grant, MainThreadGuard.ReadWindowsIdentity(MainThreadGuard.CurrentWindowsThreadId()), DateTimeOffset.UtcNow))
-                    return new(false, "grant_revalidation_failed", watch.Elapsed.TotalMilliseconds, budget.Stage, budget.Operations);
+                    return Finish(false, "grant_revalidation_failed");
                 uiBackend = new NativeUiBackend(this);
                 uiBackend.PrepareTypesAndMethods(budget); // No panels/getters/object traversal.
                 success = true; uiSession = policy.Session;
-                return new(true, "resolved", watch.Elapsed.TotalMilliseconds, budget.Stage, budget.Operations);
+                return Finish(true, "resolved");
             }
-            catch (UiSmokeStopped error) { return new(false, error.Message, watch.Elapsed.TotalMilliseconds, budget.Stage, budget.Operations); }
-            catch (Exception error) { return new(false, "backend_failure:" + error.GetType().Name, watch.Elapsed.TotalMilliseconds, budget.Stage, budget.Operations); }
+            catch (UiSmokeStopped error) { return Finish(false, error.Message); }
+            catch (Exception error) { return Finish(false, "backend_failure:" + error.GetType().Name); }
             finally
             {
                 policy.CompleteResolve(grant, success);
