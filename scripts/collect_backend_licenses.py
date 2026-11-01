@@ -125,6 +125,11 @@ def collect(analysis, destination):
     coverage = []
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "manifest.json").unlink(missing_ok=True)  # Failed rebuild cannot retain a passing receipt.
+    # A contaminated build environment can restore jsonschema's GPL extra even
+    # after the lock changes. Fail on the actual input, including missing RECORD.
+    if any(name == "rfc3987" or Path(source).name == "rfc3987.py"
+           for name, source, _ in toc):
+        raise ValueError("rfc3987 is not approved for this build; use a clean format-nongpl environment")
 
     def add(name, version, inputs, **extra):
         folder = re.sub(r"[^a-zA-Z0-9_.-]", "_", name + "-" + version)
@@ -156,12 +161,8 @@ def collect(analysis, destination):
         license_files = [p for p in notices if re.match(r"^(licen[cs]e|copying)([._-]|$)", p.name, re.I)]
         extra = {"license_expression": dist.metadata.get("License-Expression"),
                  "bundled_files": sorted(str(f).replace('\\', '/') for f in used)}
-        if name == "rfc3987" and not license_files:
-            # This single-file GPL module carries its copyright/license header.
-            # Preserve its complete corresponding source, not only its bytecode.
-            notices = [Path(dist.locate_file("rfc3987.py")), ROOT / "LICENSE"]
-            license_files = notices
-            extra["license_expression"] = "GPL-3.0-or-later"
+        if re.sub(r"[-_.]+", "-", name).lower() == "rfc3987":
+            raise ValueError("rfc3987 is not approved for this build; use a clean format-nongpl environment")
         if name == "logfire-api" and not license_files:
             notices = [ROOT / "packaging/licenses" / f"logfire-api-{version}-LICENSE"]
             license_files = notices
@@ -200,8 +201,9 @@ def collect(analysis, destination):
     if unknown:
         raise ValueError(f"Unresolved bundled Python/data provenance; audit coverage.json: {unknown}")
 
-    add("FootballAssistant", "project", [ROOT / "LICENSE"],
-        scope="Project code; third-party assets retain their own licenses")
+    add("FootballAssistant", "project", [ROOT / "LICENSE", ROOT / "LICENSE-SCOPE.md"],
+        license_expression="MIT",
+        scope="Own source code and documentation only; see LICENSE-SCOPE.md for exclusions")
     candidates = [Path(sysconfig.get_path("stdlib")) / "LICENSE.txt",
                   Path(sys.base_prefix) / "LICENSE.txt", Path(sys.base_prefix) / "LICENSE"]
     runtime_license = next((p for p in candidates if p.is_file()), None)
