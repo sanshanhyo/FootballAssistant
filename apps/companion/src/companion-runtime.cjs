@@ -2,6 +2,7 @@
 const { asksImportedDiagnostic } = require('./windows-discovery.cjs');
 
 const { UiChangeTracker } = require('./ui-changes.cjs');
+const { matchView, matchCard, MatchChangeTracker } = require('./match-reader.cjs');
 const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -27,6 +28,7 @@ class CompanionRuntime extends EventEmitter {
     this.realClient = options.realClient || new DisconnectedReaderClient();
     this.captureRequest = null; this.captureController = null;
     this.uiChanges = new UiChangeTracker();
+    this.matchChanges = new MatchChangeTracker();
     this.readerPreviews = []; this.previewController = null; this.previewTimer = null; this.previewExpiryTimer = null;
     this.realConnection = null; this.connectionController = null;
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
@@ -142,13 +144,15 @@ class CompanionRuntime extends EventEmitter {
         if (this.captureRequest.status !== 'ready') { this.readerPreviews = []; this.changed(); return this.state(); }
         // Fetch previews only AFTER applied + fresh-scope confirmation, never from a pre-switch parallel response.
       }
-      const [cards, change] = await Promise.all([
+      const [cards, change, match] = await Promise.all([
         this.realClient.previews({ signal: controller.signal }),
         typeof this.realClient.uiChangePreview === 'function' && this.proactivity > 0
           ? this.realClient.uiChangePreview({ signal: controller.signal }).catch(() => null) : null,
+        typeof this.realClient.match === 'function' ? this.realClient.match({ signal: controller.signal }).catch(() => null) : null,
       ]);
       if (!controller.signal.aborted && !this.closed && epoch === this.epoch) {
-        this.readerPreviews = cards;
+        const view = matchView(match);
+        this.readerPreviews = view ? [matchCard(view), ...cards] : cards;
         // Service reachability is independent of supported page projections and model configuration.
         if (cards.some(card => card.transport === 'connected')) {
           this.connectionController?.abort();
@@ -165,6 +169,9 @@ class CompanionRuntime extends EventEmitter {
         }
         const notice = this.uiChanges.observe(change, { enabled: this.proactivity > 0 });
         if (notice) this.addMessage({ ...notice, id: randomUUID(), role: 'assistant', origin: 'proactive',
+          createdAt: new Date().toISOString(), sessionId: this.sessionId, epoch: this.epoch });
+        const matchNotice = this.matchChanges.observe(view, this.proactivity > 0);
+        if (matchNotice) this.addMessage({ ...matchNotice, id: randomUUID(), role: 'assistant', origin: 'proactive',
           createdAt: new Date().toISOString(), sessionId: this.sessionId, epoch: this.epoch });
         this.changed();
       }
@@ -185,7 +192,7 @@ class CompanionRuntime extends EventEmitter {
   refreshConnection() {
     this.captureController?.abort(); this.captureController = null; this.captureRequest = null;
     this.previewController?.abort(); this.previewController = null;
-    clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.readerPreviews = []; this.uiChanges.reset();
+    clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.readerPreviews = []; this.uiChanges.reset(); this.matchChanges.reset();
     this.refreshReaderPreviews();
     this.connectionController?.abort();
     if (this.mode !== 'real' || typeof this.realClient.reply !== 'function') return;

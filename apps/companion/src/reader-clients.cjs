@@ -1,4 +1,5 @@
 'use strict';
+const { matchView, matchCard } = require('./match-reader.cjs');
 const { validateImport, asksImportedDiagnostic, diagnosticReply } = require('./windows-discovery.cjs');
 
 const MOCK_LIMITATIONS = Object.freeze([
@@ -173,6 +174,9 @@ class RealReaderClient {
     const envelope = await this.request('/v1/reader/business/status', undefined, { signal });
     return { connection: 'connected', metadata: businessMetadata(envelope), capabilities: this.capabilities(envelope), readiness: envelope };
   }
+  async match({ signal } = {}) {
+    return this.request('/v1/reader/match', undefined, { signal });
+  }
   async snapshot({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/snapshot', undefined, { signal });
     const meta = businessMetadata(envelope);
@@ -236,6 +240,14 @@ class RealReaderClient {
   async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
+    if (/(比分|比赛情况|比赛怎么样|比赛进展|score)/i.test(message)) {
+      const view = matchView(await this.match({ signal }));
+      if (!view) return { text: '当前没有可用的新鲜比赛快照。', conversationId, cards: [],
+        metadata: { source: 'native_match_hook', synthetic: false, freshness: 'unknown', partial: true, limitations: ['比赛数据不可用或已过期。'] } };
+      const card = matchCard(view);
+      return { text: `当前比分：${view.home} ${view.h} : ${view.a} ${view.away}。`, conversationId,
+        metadata: card.metadata, cards: [card] };
+    }
     if (capability && adviceMode === 'ui_evidence') {
       const result = await this.request('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability }, { signal });
       const provenance = result.provenance;

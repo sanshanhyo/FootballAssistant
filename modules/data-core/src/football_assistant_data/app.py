@@ -187,6 +187,14 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     async def health():
         return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
 
+    @app.get("/v1/reader/match", dependencies=[Depends(authorized)])
+    def match_snapshot():
+        from .match_snapshot import read_match_snapshot
+        configured = os.environ.get("FOOTBALL_ASSISTANT_MATCH_FILE")
+        if not configured or not Path(configured).is_absolute():
+            return {"status": "unavailable", "reason": "match_file_not_configured", "snapshot": None}
+        return read_match_snapshot(Path(configured))
+
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
