@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 from .windows_discovery_projection import project_position_display
+from .windows_goalkeeper_row_projection import project_goalkeeper_row
 
 MAX_IMPORT_BYTES = 32768
 IMPORT_ROUTE = "/v1/reader/windows-discovery/import"
@@ -29,15 +30,19 @@ def parse_import(raw: bytes, imported_at: str):
                              parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid_json_number")))
     except (UnicodeError, json.JSONDecodeError, RecursionError):
         raise ValueError("invalid_json") from None
-    if not isinstance(payload, dict) or set(payload) not in (
-            {"capture", "expected_source"}, {"capture", "expected_source", "operator_context"}):
+    if not isinstance(payload, dict) or not {"capture", "expected_source"} <= set(payload) or not set(payload) <= {
+            "capture", "expected_source", "operator_context", "projection_mode"}:
         raise ValueError("invalid_import_fields")
     source = payload["expected_source"]
     if not isinstance(source, dict) or set(source) != {"pid", "entry_tid", "session_id", "bridge_sha256", "game_sha256"}:
         raise ValueError("invalid_source")
     if "operator_context" in payload and not isinstance(payload["operator_context"], str):
         raise ValueError("invalid_operator_context")
-    projection = project_position_display(payload["capture"], expected_source=source,
+    # Omission preserves the existing position-only contract; never infer mode from an event.
+    if "projection_mode" in payload and payload["projection_mode"] != "goalkeeper_row0":
+        raise ValueError("unsupported_projection_mode")
+    project = project_goalkeeper_row if "projection_mode" in payload else project_position_display
+    projection = project(payload["capture"], expected_source=source,
                                          operator_context=payload.get("operator_context"))
     if projection["status"] != "partial_display_state":
         raise ValueError(projection["reason"])

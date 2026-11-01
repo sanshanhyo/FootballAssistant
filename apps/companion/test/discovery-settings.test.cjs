@@ -102,3 +102,60 @@ test('failed invalid-import cleanup warns old server snapshot may remain, never 
     assert.equal(clears, 1); assert.equal(posts, 0); assert.match(f.get('discovery-status').textContent, /先前的导入可能仍然存在/);
   }
 });
+
+const ROW_CONTAINER = '0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0';
+const ROW_ROOT = ROW_CONTAINER + '/2/0/0/0/0';
+const ROW_PATHS = { category_title_path: ROW_CONTAINER + '/0', label_path: ROW_ROOT + '/0/0/0/0/0/0/0/0/0', value_path: ROW_ROOT + '/0/0/0/0/0/0/1/1/0/0/0/0/0/0' };
+function rowEnvelope() {
+  const result = envelope('unused'); const p = result.projection;
+  p.projection_mode = 'goalkeeper_row0';
+  p.fields = { displayed_attribute: { category_display: '守门', label_display: '反应', value_display: '17', value: 17, row_index: 0 } };
+  p.source = { panel_index: 0, focus_path: ROW_CONTAINER, nonce: '11111111-1111-1111-1111-111111111111' };
+  p.field_provenance = { displayed_attribute: { ...ROW_PATHS, row_root: ROW_ROOT, container_path: ROW_CONTAINER,
+    association: 'fixed_same_row_same_event', semantic_identity_verified: false, panel_index: 0, nonce: p.source.nonce } };
+  return result;
+}
+test('selector defaults to legacy position; explicit row mode preserves raw JSON and adds only mode', async () => {
+  let request; const f = ui({ windowsDiscoveryImport: async input => { request = input; return ok(rowEnvelope()); } });
+  assert.equal(f.get('discovery-mode').value, 'position');
+  assert.equal(parseInput('{"x":1,"x":2}', '{}'), '{"capture":{"x":1,"x":2},"expected_source":{}}');
+  assert.throws(() => parseInput('{}', '{}', 'guessed_row'));
+  f.get('discovery-mode').value = 'goalkeeper_row0'; f.get('discovery-capture').value = '{"x":1,"x":2}'; f.get('discovery-source').value = '{}';
+  await f.click('discovery-import');
+  assert.equal(request, '{"capture":{"x":1,"x":2},"expected_source":{},"projection_mode":"goalkeeper_row0"}');
+  assert.match(f.output(), /守门/); assert.match(f.output(), /反应/); assert.match(f.output(), /17/);
+  for (const path of Object.values(ROW_PATHS)) assert.ok(f.output().includes(path));
+  assert.match(f.output(), /未验证 \/ 未知/);
+});
+test('one-row display rejects missing/mixed mode, unknown identity flags and wrong fixed paths', async () => {
+  const mutations = [
+    p => { delete p.projection_mode; }, p => { p.projection_mode = 'other'; },
+    p => { p.fields.displayed_position = 'MIXED'; }, p => { p.field_provenance.displayed_position = {}; },
+    p => { p.page_identity_verified = true; }, p => { p.source_freshness = 'current'; },
+    p => { p.field_provenance.displayed_attribute.label_path += '/0'; },
+    p => { p.field_provenance.displayed_attribute.category_title_path = ROW_ROOT + '/0'; },
+    p => { p.field_provenance.displayed_attribute.value_path = ROW_PATHS.label_path; },
+    p => { p.field_provenance.displayed_attribute.row_root = ROW_CONTAINER; },
+    p => { p.field_provenance.displayed_attribute.container_path = ROW_ROOT; },
+    p => { p.field_provenance.displayed_attribute.association = 'other_event'; },
+    p => { p.field_provenance.displayed_attribute.semantic_identity_verified = true; },
+    p => { p.field_provenance.displayed_attribute.nonce = '22222222-2222-2222-2222-222222222222'; },
+    p => { p.source.panel_index = 1; }, p => { p.source.focus_path = '0/6'; },
+    p => { p.fields.displayed_attribute.label_display = '猜测名称'; },
+    p => { p.fields.displayed_attribute.category_display = '技术'; },
+    p => { p.fields.displayed_attribute.value_display = '017'; },
+    p => { p.fields.displayed_attribute.value_display = '18'; },
+    p => { p.fields.displayed_attribute.value = '17'; },
+    p => { p.fields.displayed_attribute.row_index = 1; },
+  ];
+  for (const mutate of mutations) {
+    const value = rowEnvelope(); mutate(value.projection);
+    const f = ui({ windowsDiscoveryGet: async () => ok(value) }); await f.click('discovery-refresh');
+    assert.equal(f.output(), '');
+  }
+});
+test('row display uses observed whitelisted label, never infers it from row zero', async () => {
+  const value = rowEnvelope(); value.projection.fields.displayed_attribute.label_display = '手控球';
+  const f = ui({ windowsDiscoveryGet: async () => ok(value) }); await f.click('discovery-refresh');
+  assert.match(f.output(), /手控球/); assert.doesNotMatch(f.output(), /反应|出击/);
+});

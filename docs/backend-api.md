@@ -317,3 +317,34 @@ It starts a temporary local reader-only HTTP service and uses the actual control
 Node transport and pet reader client: import invented TEST evidence, read the
 labelled position, reject duplicate raw JSON and clear previous state, reimport,
 then DELETE. No FM, Electron, private real evidence or model provider is invoked.
+
+#### Explicit goalkeeper-row0 display mode
+
+A separate optional import discriminator, `projection_mode: "goalkeeper_row0"`,
+selects the targeted-row rule. Omission retains the existing position rule; there
+is no auto-detection or fallback between modes. Settings expose an explicit selector
+with position still the default. The targeted mode requires one completed raw event
+with reason `approved_row_targets_complete`, the fixed category root, and exactly
+its three same-event category-title/row0-label/row0-value paths. The category title
+must display `守门`; the observed attribute label must belong to the existing Mac
+13-label goalkeeper whitelist; its value must be canonical1–20. Only U+200B is
+removed; whitespace changes, markup, leading zeros, ranges and missing pairs reject.
+The whitelist does not imply that row0 has any particular label.
+
+The successful projection is still `partial_display_state`, now explicitly marked
+`projection_mode=goalkeeper_row0`, with `fields.displayed_attribute` containing
+category/label/value display strings, the integer and row_index0. Provenance retains
+all three exact paths plus category/row roots and the event nonce. No player name,
+entity ID, cross-event row join, advice permission or freshness is inferred. The
+position parser is unchanged and rejects row events unless the separate mode is
+explicitly selected. Invalid row imports clear the prior snapshot as before.
+
+Settings and the deterministic pet diagnostic reply show only that one row and its
+three source paths; mixed/unsupported mode responses are not rendered. This prepares
+an end-to-end display path for an authorized native test; synthetic passing tests
+are NOT evidence that Windows has returned this row. Real label/value validity still
+requires the separate game observation. Tests use an invented rating17, never a
+private player's screenshot value. The existing local HTTP→Node smoke exercises
+both position and row mode, invalid21 rejection/clearing, and keeps all normal
+reader/business capabilities unchanged. This remains manual, non-live import until
+a separately reviewed timestamped/session-fenced live producer is implemented.

@@ -102,3 +102,48 @@ test('invalid renderer text clears server state once; failed clear explicitly wa
   const failed = new RealReaderClient({ request: async () => { throw Error('unauthorized'); } });
   await assert.rejects(failed.importWindowsDiscoveryText(null), /可能仍保留上次导入/);
 });
+
+const rowFocus = '0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0';
+const rowRoot = rowFocus + '/2/0/0/0/0';
+function rowEnvelope() {
+  const result = envelope(), p = result.projection;
+  p.projection_mode = 'goalkeeper_row0';
+  p.fields = { displayed_attribute: { category_display: '守门', label_display: '反应', value_display: '17', value: 17, row_index: 0 } };
+  p.field_provenance = { displayed_attribute: { category_title_path: rowFocus + '/0', label_path: rowRoot + '/0/0/0/0/0/0/0/0/0', value_path: rowRoot + '/0/0/0/0/0/0/1/1/0/0/0/0/0/0', row_root: rowRoot, container_path: rowFocus, association: 'fixed_same_row_same_event', semantic_identity_verified: false, panel_index: 0, nonce: '11111111-1111-4111-8111-111111111111' } };
+  p.source = { nonce: p.field_provenance.displayed_attribute.nonce, panel_index: 0, focus_path: rowFocus };
+  return result;
+}
+test('explicit row display keeps category/observed label/value and exact three paths, no position/player inference', async () => {
+  const calls = []; const client = new RealReaderClient({ request: async endpoint => { calls.push(endpoint); return rowEnvelope(); } });
+  const result = await client.reply({ message: '查看导入诊断', conversationId: 'row-test' });
+  assert.deepEqual(calls, ['/v1/reader/windows-discovery']);
+  assert.match(result.text, /守门 · 反应 17/); assert.match(result.text, /身份未验证，时效未知/);
+  assert.doesNotMatch(result.text, /位置显示/); assert.equal(result.cards[0].identity, null);
+  assert.equal(result.metadata.freshness, 'unknown'); assert.equal(result.metadata.synthetic, null);
+  assert.equal(result.cards[0].fields.length, 7);
+  assert.deepEqual(result.cards[0].fields.slice(3, 6).map(f => f.value), ['category_title_path', 'label_path', 'value_path'].map(key => rowEnvelope().projection.field_provenance.displayed_attribute[key]));
+});
+test('incomplete/mixed/wrong-mode rows never fall back to position or synthesize labels', () => {
+  const mutations = [
+    p => { delete p.projection_mode; }, p => { p.projection_mode = 'position'; },
+    p => { p.fields.displayed_position = 'MUST NOT RENDER'; }, p => { p.field_provenance.displayed_position = envelope().projection.field_provenance.displayed_position; },
+    p => { delete p.field_provenance.displayed_attribute.label_path; }, p => { p.field_provenance.displayed_attribute.value_path += '/0'; },
+    p => { p.fields.displayed_attribute.label_display = 'UNKNOWN-ATTRIBUTE'; }, p => { p.fields.displayed_attribute.category_display = '技术'; },
+    p => { p.fields.displayed_attribute.row_index = 1; }, p => { p.fields.displayed_attribute.value_display = '017'; },
+    p => { p.fields.displayed_attribute.value_display = '18'; }, p => { p.fields.displayed_attribute.value = true; },
+    p => { p.fields.displayed_attribute.value = 21; p.fields.displayed_attribute.value_display = '21'; },
+    p => { p.source.nonce = '22222222-2222-4222-8222-222222222222'; }, p => { p.source.panel_index = 1; },
+    p => { p.source_identity_unverified = false; }, p => { p.page_identity_verified = true; },
+    p => { p.source_freshness = 'current'; }, p => { p.entity_id = 'TEST-player'; },
+  ];
+  for (const mutate of mutations) { const e = rowEnvelope(); mutate(e.projection); const r = diagnosticReply(e, 'c'); assert.deepEqual(r.cards, []); assert.doesNotMatch(r.text, /反应 17|MUST NOT RENDER/); }
+  const position = envelope(); position.projection.projection_mode = 'goalkeeper_row0';
+  assert.deepEqual(diagnosticReply(position, 'c').cards, []);
+  assert.match(diagnosticReply(envelope(), 'c').text, /TEST-POSITION/);
+});
+test('programmatic import mode is explicit row-only; default position object unchanged', () => {
+  const original = { capture: {}, expected_source: {} };
+  assert.deepEqual(validateImport(original), original);
+  assert.equal(validateImport({ ...original, projection_mode: 'goalkeeper_row0' }).projection_mode, 'goalkeeper_row0');
+  for (const mode of ['position', '', 'goalkeeper_row1', null, 0]) assert.throws(() => validateImport({ ...original, projection_mode: mode }));
+});

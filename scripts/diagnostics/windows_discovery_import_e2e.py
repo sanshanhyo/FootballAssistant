@@ -68,12 +68,28 @@ const controlled = (endpoint, body, options) => { calls.push(endpoint); return r
   const after = await controlled('/v1/reader/business/status');
   assert.equal(after.production_ready, false);
   assert.ok(!calls.some(p => p.startsWith('/v1/agent/') || p === '/v1/chat' || p.includes('capture-profile')));
+  const row = await reader.importWindowsDiscoveryText(JSON.stringify(input.rowBundle));
+  assert.equal(row.projection.projection_mode, 'goalkeeper_row0');
+  assert.equal(row.projection.fields.displayed_attribute.value, 17);
+  const rowReply = await reader.reply({message:'查看导入诊断', conversationId:null});
+  assert.match(rowReply.text, /出击\(倾向\)/);
+  assert.match(rowReply.text, /17/);
+  assert.equal(rowReply.metadata.freshness, 'unknown');
+  assert.equal(rowReply.metadata.synthetic, null);
+  assert.equal(rowReply.metadata.sampledAt, null);
+  for (const ref of input.rowPaths) assert.ok(JSON.stringify(rowReply).includes(ref));
+  assert.ok(!calls.some(p => p.startsWith('/v1/agent/') || p === '/v1/chat' || p.includes('capture-profile')));
+  const badRow = structuredClone(input.rowBundle);
+  badRow.capture.result.Observations[2].Text = '21';
+  await assert.rejects(reader.importWindowsDiscoveryText(JSON.stringify(badRow)));
+  assert.equal((await reader.windowsDiscovery()).status, 'unavailable');
+  await reader.importWindowsDiscoveryText(JSON.stringify(input.rowBundle));
   await controlled('/v1/reader/windows-discovery', undefined, {method:'DELETE'});
   const cleared = await controlled('/v1/reader/windows-discovery');
   assert.equal(cleared.status, 'unavailable');
   const empty = await reader.reply({message:'查看导入诊断', conversationId:null});
   assert.ok(!empty.text.includes('TEST-POSITION'));
-  console.log('PASS synthetic HTTP import → pet diagnostic reply → clear; no model/game calls, no business identity promotion.');
+  console.log('PASS synthetic position + targeted row HTTP import → pet diagnostic reply → invalid-clear; no model/game calls or player identity.');
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """
 
@@ -92,6 +108,23 @@ def bundle():
                                Observations=[dict(Path=container+"/0", Text="位\u200b置"),
                                              dict(Path=container+"/1/0/0", Text="TEST-\u200bPOSITION")]))
     return dict(capture=capture, expected_source=source, operator_context="TEST operator context, not player identity"), container
+
+
+def row_bundle():
+    # Generic published display label with invented value17: never a real player's fixture.
+    fixture, _ = bundle()
+    category = "0/6/0/0/0/0/0/0/0/1/0/0/0/0/0/0/0/2/0/0/0/0/0/0/0"
+    row = category + "/2/0/0/0/0"
+    paths = [category + "/0", row + "/0/0/0/0/0/0/0/0/0", row + "/0/0/0/0/0/0/1/1/0/0/0/0/0/0"]
+    fixture["projection_mode"] = "goalkeeper_row0"
+    fixture["operator_context"] = "TEST synthetic row observation, not player identity"
+    capture = fixture["capture"]
+    capture["nonce"] = "33333333-3333-4333-8333-333333333333"
+    capture["result"].update(Reason="approved_row_targets_complete", FocusPath=category)
+    capture["result"]["Request"]["Nonce"] = capture["nonce"]
+    capture["result"]["Observations"] = [dict(Path=path, Text=text) for path, text in
+        zip(paths, ["守\u200b门", "出击(倾\u200b向)", "1\u200b7"])]
+    return fixture, paths
 
 
 def main():
@@ -114,8 +147,9 @@ def main():
                 if not server.started:
                     raise RuntimeError("Temporary reader-only backend did not start; no success claim.")
                 fixture, container = bundle()
+                row, paths = row_bundle()
                 payload = dict(root=str(ROOT), runtime=str(settings.runtime_file), bundle=fixture,
-                               labelPath=container+"/0", valuePath=container+"/1/0/0")
+                               labelPath=container+"/0", valuePath=container+"/1/0/0", rowBundle=row, rowPaths=paths)
                 subprocess.run(["node", "-e", NODE_PROOF], input=json.dumps(payload), text=True,
                                check=True, timeout=30, cwd=ROOT)
             finally:

@@ -56,6 +56,8 @@
         <section class="card" aria-labelledby="discovery-title">
           <div class="card-heading"><h2 id="discovery-title">Windows 手动诊断导入</h2><span class="badge">局部显示 · 非业务数据</span></div>
           <p class="muted">只粘贴一次已授权采集的 Discovery JSON 与对应 expected_source JSON。不会读取文件路径、监听游戏、重新采集或调用模型。导入时间不是采集时间；球员身份与内容新鲜度始终未知。每次点击导入都会替换旧诊断；新输入无效时也会清除旧导入，连接失败时会明确提示。</p>
+          <label for="discovery-mode">导入显示类型</label><select id="discovery-mode"><option value="position" selected>位置显示（默认）</option><option value="goalkeeper_row0">守门分类第 0 行（单行实验显示）</option></select>
+          <p class="muted">单行实验只展示同次采集的分类、标签和值，不按行号推断属性，不代表已验证的 Windows 球员属性。</p>
           <label for="discovery-capture">单条 Discovery 采集 JSON</label><textarea id="discovery-capture" rows="5" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴单条 capture JSON 对象"></textarea>
           <label for="discovery-source">预期来源 expected_source JSON</label><textarea id="discovery-source" rows="3" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴与本次采集对应的 expected_source JSON 对象"></textarea>
           <div class="row-actions"><button id="discovery-import" class="primary-button">校验并导入这一次</button><button id="discovery-refresh" class="secondary-button">查看已导入诊断</button><button id="discovery-clear" class="text-button danger">清除导入</button></div>
