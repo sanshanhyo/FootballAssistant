@@ -32,7 +32,7 @@ Check(diagnostic.Stages.Sum(x => x.GuardTotalMs) == 8 && visibleTiming.GuardMaxM
     "failed guard duration counted but failed reservation not charged as completed");
 Check(diagnosticBudget.Snapshot().Stages.Sum(x => x.TotalMs) == 14, "snapshots never double-count final interval");
 diagnosticClock = 101;
-try { diagnosticBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "time_budget", "original stop reason retained"); }
+try { diagnosticBudget.BeforeNative(); } catch (UiSmokeStopped diagnosticStopped) { Check(diagnosticStopped.Message == "time_budget", "original stop reason retained"); }
 var deadlineTiming = diagnosticBudget.Snapshot().Stages.Single(x => x.Stage == "visible");
 Check(deadlineTiming.PrechecksFailed == 2 && deadlineTiming.GuardCalls == 1 && diagnosticBudget.Operations == 1,
     "failed deadline precheck is distinct from a guard call and reserves nothing");
@@ -44,11 +44,11 @@ Check(!boundedJson.Contains("fixture-secret-text-or-path") && boundedJson.Length
 var clockReads = 0;
 var overheadBudget = new UiSmokeBudget(() => ++clockReads, () => { }, 3);
 overheadBudget.BeforeNative();
-try { overheadBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "time_budget", "instrumentation does not subtract elapsed cost"); }
+try { overheadBudget.BeforeNative(); } catch (UiSmokeStopped diagnosticStopped) { Check(diagnosticStopped.Message == "time_budget", "instrumentation does not subtract elapsed cost"); }
 Check(overheadBudget.Operations == 1, "diagnostic timestamp reads consume the same elapsed budget");
 var deniedGuardCalls = 0;
 var callLimitBudget = new UiSmokeBudget(() => 0, () => deniedGuardCalls++, maximumOperations: 0);
-try { callLimitBudget.BeforeNative(); } catch (UiSmokeStopped stopped) { Check(stopped.Message == "native_call_budget", "call-budget stop unchanged"); }
+try { callLimitBudget.BeforeNative(); } catch (UiSmokeStopped diagnosticStopped) { Check(diagnosticStopped.Message == "native_call_budget", "call-budget stop unchanged"); }
 var callLimitTiming = callLimitBudget.Snapshot().Stages[0];
 Check(callLimitTiming.PrechecksFailed == 1 && callLimitTiming.GuardCalls == 0 && deniedGuardCalls == 0 &&
     callLimitBudget.Operations == 0, "call-limit precheck failure invokes neither guard nor native work");
