@@ -336,8 +336,8 @@ foreach (var panelCount in new[] { -1, 0, 1025 })
         fixture.PanelIndices.Count == 0, "only validated panel counts are recorded; zero differs from unknown/invalid");
 }
 // Depth is root-relative (root = 0). The previous depth9 omission is now reachable,
-// depth12 itself remains eligible, and children below depth12 are still pruned.
-foreach (var textDepth in new[] { 9, 12 })
+// depth16 itself remains eligible, and children below depth16 are still pruned.
+foreach (var textDepth in new[] { 9, 12, 16 })
 {
     using var fixture = new NativeUiAdapterFixture { TextDepth = textDepth };
     using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), fixture.Bind);
@@ -347,7 +347,7 @@ foreach (var textDepth in new[] { 9, 12 })
     Check(outcome.Text == "fixture-native-path" && outcome.StopReason == "one_text" &&
         outcome.Nodes == textDepth + 1 && outcome.Coverage!.Nodes[textDepth].Depth == textDepth &&
         outcome.Coverage.Nodes.Take(outcome.Nodes).All(n => n.DepthPruned == 0),
-        "depth9 and inclusive depth12 text are reachable under the new depth limit");
+        "depth9 and inclusive depth16 text are reachable under the new depth limit");
     Check(outcome.NativeOperations <= 384 && fixture.RootCreates <= 64 &&
         fixture.Invocations.Count(n => n == "get_text") == 1 && fixture.PanelIndices.SequenceEqual(new[] { 0 }) &&
         guards == outcome.Diagnostics!.Stages.Sum(stage => stage.GuardCalls),
@@ -356,16 +356,16 @@ foreach (var textDepth in new[] { 9, 12 })
     Check(fixture.LiveRoots == 0 && fixture.RootFrees == fixture.RootCreates,
         "deeper traversal frees all temporary roots");
 }
-using (var tooDeep = new NativeUiAdapterFixture { TextDepth = 13 })
+using (var tooDeep = new NativeUiAdapterFixture { TextDepth = 17 })
 {
     using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), tooDeep.Bind);
     WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
     var outcome = WindowsSmokeReader.ReadOne(b, () => { }, () => 0);
-    Check(outcome.Text is null && outcome.StopReason == "bounded_no_text" && outcome.Nodes == 13 &&
-        outcome.Coverage!.Nodes[12] is { Depth: 12, TextType: 2, ChildCountBucket: 1, DepthPruned: 1 } &&
-        outcome.Coverage.Nodes.Take(12).All(n => n.DepthPruned == 0) &&
+    Check(outcome.Text is null && outcome.StopReason == "bounded_no_text" && outcome.Nodes == 17 &&
+        outcome.Coverage!.Nodes[16] is { Depth: 16, TextType: 2, ChildCountBucket: 1, DepthPruned: 1 } &&
+        outcome.Coverage.Nodes.Take(16).All(n => n.DepthPruned == 0) &&
         outcome.NativeOperations <= 384 && tooDeep.RootCreates <= 64 &&
-        !tooDeep.Invocations.Contains("get_text"), "depth13 text remains unreachable at the inclusive depth12 boundary");
+        !tooDeep.Invocations.Contains("get_text"), "depth17 text remains unreachable at the inclusive depth16 boundary");
 }
 var ninthChild = new FakeBackend { Children = 9, OnlyTextChildIndex = 8 };
 var tooWide = Read(ninthChild);
@@ -452,7 +452,7 @@ using (var unavailable = new NativeUiAdapterFixture { PanelCount = 2 })
         "unavailable panel consumes the only capture; even a new nonce cannot retry panel0");
 }
 // Explicit focus is canonical, immutable and terminal; default remains the old traversal.
-foreach (var invalid in new[] { "/", "/0", "0/", "00", "01", "-1", "+1", "1.0", "1e0", " 1", "1 ", "512", "0//1", "０", string.Join("/", Enumerable.Repeat("0", 13)) })
+foreach (var invalid in new[] { "/", "/0", "0/", "00", "01", "-1", "+1", "1.0", "1e0", " 1", "1 ", "512", "0//1", "０", string.Join("/", Enumerable.Repeat("0", 17)) })
 {
     Check(!UiSmokeFocusPath.Valid(invalid), "malformed/out-of-range/too-deep focus rejects");
     var f = new FakeBackend();
@@ -525,20 +525,20 @@ Check(WindowsSmokeReader.ReadOne(focusBudget, () => { }, () => 200, focusPath: "
 var focusTime = new FakeBackend();
 Check(WindowsSmokeReader.ReadOne(focusTime, () => { }, () => 250.001, focusPath: "0").StopReason == "time_budget" &&
     focusTime.Calls == 0, "focus retains shared250ms soft deadline");
-foreach (var depth in new[] { 12, 13 })
+foreach (var depth in new[] { 16, 17 })
 {
     using var f = new NativeUiAdapterFixture { TextDepth = depth };
     using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), f.Bind);
     WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
     var guards = 0;
     var outcome = WindowsSmokeReader.ReadOne(b, () => guards++, () => 0,
-        focusPath: string.Join("/", Enumerable.Repeat("0", 12)));
-    Check(outcome.Nodes == 13 && outcome.Coverage!.Nodes[12] is { Depth: 12, ParentSlot: 11, ChildIndex: 0, FocusAncestor: 0 } &&
-        outcome.Coverage.Nodes.Take(12).All(n => n.FocusAncestor == 1 && n.TextType == 0),
-        "ancestors count toward global depth/nodes; target starts at depth12, not0");
-    Check(depth == 12 ? outcome.Text == "fixture-native-path" : outcome.Text is null &&
-        outcome.StopReason == "bounded_no_text" && outcome.Coverage!.Nodes[12].DepthPruned == 1,
-        "depth12 target eligible but depth13 descendant remains pruned after focus");
+        focusPath: string.Join("/", Enumerable.Repeat("0", 16)));
+    Check(outcome.Nodes == 17 && outcome.Coverage!.Nodes[16] is { Depth: 16, ParentSlot: 15, ChildIndex: 0, FocusAncestor: 0 } &&
+        outcome.Coverage.Nodes.Take(16).All(n => n.FocusAncestor == 1 && n.TextType == 0),
+        "ancestors count toward global depth/nodes; target starts at depth16, not0");
+    Check(depth == 16 ? outcome.Text == "fixture-native-path" : outcome.Text is null &&
+        outcome.StopReason == "bounded_no_text" && outcome.Coverage!.Nodes[16].DepthPruned == 1,
+        "depth16 target eligible but depth17 descendant remains pruned after focus");
     Check(outcome.NativeOperations <= 384 && f.RootCreates <= 64 &&
         f.PanelIndices.SequenceEqual(new[] { 0 }) && guards == outcome.Diagnostics!.Stages.Sum(stage => stage.GuardCalls),
         "focus uses original protected adapter with sharedcaps and fresh guards");
@@ -579,6 +579,47 @@ Check(defaultEdges.NativeOperations == 9 && defaultEdges.Coverage!.Nodes[0] is {
     defaultEdges.Coverage.Nodes[1] is { ParentSlot: 0, ChildIndex: 0, FocusAncestor: 0 },
     "empty focus preserves old calls while recording existing DFS edges");
 
+// Exact14-edge structure from the recorded Mac selector, synthetic text/objects only.
+// This verifies adapter cost and index routing, NOT the existence of that path on Windows.
+const string recordedMacNameFocus = "0/3/0/0/0/0/2/0/1/0/0/0/2/0";
+var recordedEdges = recordedMacNameFocus.Split('/').Select(int.Parse).ToArray();
+Check(recordedEdges.Length == 14 && UiSmokeFocusPath.Valid(recordedMacNameFocus),
+    "recorded Mac relative name path has exactly14 edges");
+foreach (var failure in new[] { 0, 1, 2 })
+{
+    using var f = new NativeUiAdapterFixture { TextDepth = 14, FocusEdges = recordedEdges,
+        HiddenDepth = failure == 1 ? 9 : -1, MissingChildDepth = failure == 2 ? 6 : -1 };
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), f.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var guards = 0;
+    var outcome = WindowsSmokeReader.ReadOne(b, () => guards++, () => 0, panelIndex: 0, focusPath: recordedMacNameFocus);
+    if (failure == 0)
+    {
+        Check(outcome.Text == "fixture-native-path" && outcome.StopReason == "one_text" &&
+            outcome.Nodes == 15 && outcome.Coverage!.Nodes[14] is { Depth: 14, ParentSlot: 13, FocusAncestor: 0 } &&
+            outcome.Coverage.Nodes.Take(14).All(n => n.FocusAncestor == 1) &&
+            f.ChildIndices.SequenceEqual(recordedEdges) && f.PanelIndices.SequenceEqual(new[] { 0 }) &&
+            f.Invocations.Count(x => x == "get_text") == 1, "exact14-edge profile fixture reaches only intended leaf");
+        // Source-derived exact reservation accounting: root21 + ancestors(14*18+3 lookup) + leaf26.
+        Check(outcome.NativeOperations == 302 && f.RootCreates == 49 && guards == 332 &&
+            outcome.NativeOperations <= 384 && f.RootCreates <= 64, "exact profile path fits unchanged operation/root caps");
+        Console.WriteLine($"Profile14 fixture: reserved={outcome.NativeOperations}, nodes={outcome.Nodes}, roots={f.RootCreates}, guards={guards}; fake exports only, not game timing.");
+    }
+    else
+    {
+        var expectedEdges = failure == 1 ? 9 : 6;
+        Check(outcome.StopReason == (failure == 1 ? "focus_ancestor_hidden" : "focus_child_unavailable") &&
+            outcome.Text is null && outcome.Coverage!.FocusResolved == 0 &&
+            outcome.Nodes == expectedEdges + 1 && f.ChildIndices.SequenceEqual(recordedEdges.Take(expectedEdges)) &&
+            !f.Invocations.Contains("get_text"), "profile hidden/out-of-range ancestor stops without fallback");
+    }
+    b.Dispose();
+    Check(f.LiveRoots == 0 && f.RootFrees == f.RootCreates, "profile success/failure frees every root");
+}
+Check(UiSmokeFocusPath.Valid(string.Join("/", Enumerable.Repeat("511", 16))) &&
+    !UiSmokeFocusPath.Valid(string.Join("/", Enumerable.Repeat("0", 17))),
+    "focus accepts16 maximum-width indices but rejects17 edges");
+
 // Strict stage request parsing, without launching a host or using a game module.
 var parserRoot = Path.Combine(Path.GetTempPath(), "football-ui-request-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(parserRoot);
@@ -595,6 +636,15 @@ try
         Check(UiCandidateConfiguration.ReadRequest(path).Stage == stage, "only explicit supported stage parses");
         Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 0, "legacy omitted panel_index defaults to0");
         Check(UiCandidateConfiguration.ReadRequest(path).FocusPath == "", "omitted focus is backwards-compatible empty path");
+        if (stage == SmokeStage.UiText)
+        {
+            File.WriteAllText(path, json[..^1] + ",\"focus_path\":\"" + string.Join("/", Enumerable.Repeat("511", 16)) + "\"}");
+            Check(UiCandidateConfiguration.ReadRequest(path).FocusPath.Split('/').Length == 16, "JSON focus accepts16 edges");
+            File.WriteAllText(path, json[..^1] + ",\"focus_path\":\"" + string.Join("/", Enumerable.Repeat("0", 17)) + "\"}");
+            var tooDeepFocus = false;
+            try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { tooDeepFocus = true; }
+            Check(tooDeepFocus, "JSON focus rejects17 edges");
+        }
         foreach (var token in new[] { "null", "0", "true", "\"00\"", "\"512\"", "\"0/\"" })
         {
             File.WriteAllText(path, json[..^1] + ",\"focus_path\":" + token + "}");
@@ -685,3 +735,4 @@ sealed class FocusTreeBackend : IWindowsUiSmokeBackend
     public int ChildCount(nint element, UiSmokeBudget budget) { budget.BeforeNative(); return 2; }
     public nint Child(nint element, int index, UiSmokeBudget budget) { budget.BeforeNative(); return element * 2 + index; }
 }
+

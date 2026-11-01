@@ -9,8 +9,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($PSBoundParameters.ContainsKey('FocusPath') -and $Stage -ne 'ui_text') { throw 'Explicit -FocusPath is supported only for ui_text.' }
-if ($FocusPath.Length -gt 47 -or ($FocusPath -ne '' -and
-    $FocusPath -cnotmatch '\A(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])(?:/(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])){0,11}\z')) { throw 'Canonical focus path of at most12 child indices0..511 required.' }
+if ($FocusPath.Length -gt 63 -or ($FocusPath -ne '' -and
+    $FocusPath -cnotmatch '\A(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])(?:/(?:0|[1-9][0-9]?|[1-4][0-9]{2}|50[0-9]|51[01])){0,15}\z')) { throw 'Canonical focus path of at most16 child indices0..511 required.' }
 if ($PSBoundParameters.ContainsKey('PanelIndex') -and $Stage -ne 'ui_text') { throw 'Explicit -PanelIndex is supported only for ui_text.' }
 if (-not $StableCurrentSessionPageConfirmed) { throw 'Current-session stable-page confirmation required.' }
 if (-not ($CandidateDirectory -match '^[A-Za-z]:[\\/]')) { throw 'Absolute private candidate directory required.' }
@@ -65,6 +65,7 @@ Write-Output "Wrote one 30-second $Stage request for PID $($session.pid), sessio
 if ($Stage -eq 'ui_text') {
     Write-Output 'Focus selects only the explicitly authorized child path, with actual child-count/ancestor-visibility checks, no sibling prefetch or fallback; ancestors share all budgets. No real path is authorized by this helper.'
     Write-Output "Requested panel index: $PanelIndex. One panel only; unavailable index is terminal, with no fallback."
-    Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 12, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
+    Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 16, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
 }
+
 

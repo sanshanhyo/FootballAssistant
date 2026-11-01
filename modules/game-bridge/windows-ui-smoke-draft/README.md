@@ -27,7 +27,7 @@ been read by this candidate; fake tests do not establish game success.
 5. Reconfirm the stable page and explicitly request `-Stage ui_text`. Omitted `-PanelIndex`
    preserves panel 0. Only after a particular index is authorized, add `-PanelIndex N`
    (canonical integer 0..31) to request exactly that one panel. One capture is allowed:
-   250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth12,
+   250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth16,
    8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
    retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
 
@@ -44,9 +44,27 @@ Cleanup is mandatory outside the sampling cap: up to64 root frees, before module
 `no_eligible_text`, `bounded_no_text`, budget and `backend_failure` are distinct; none means
 that the game contains no data. Only a nonempty returned text is an actual field result.
 
-## Authorized one-shot panel4 / depth12 capture experiment
+## Authorized one-shot recorded Mac name-path experiment
 
-The latest authorized experiment changes only the candidate capture depth limit from
+Only the global capture depth limit and maximum focus-edge count change from12 to16.
+For the specifically authorized player-profile test, the source-recorded Mac selector
+is `panel0/0/3/0/0/0/0/2/0/1/0/0/0/2/0`: panel0 plus14 child edges, so the relative
+focus is `0/3/0/0/0/0/2/0/1/0/0/0/2/0`. This comes from
+`modules/data-core/src/football_assistant_data/display_profile.py`'s name selector;
+that rule is pinned to historical Mac build27.0.0+2486695, not verified Windows layout.
+If the current path is absent/hidden, stop; do not substitute another path or retry.
+
+The250ms soft cap,384 reserved units,node32,subtree first8 children,root64,one panel,
+one text and128 UTF-16 units are unchanged. Ancestors still consume those shared limits;
+depth is global, never reset at the focus target. No new type checks/native APIs are added.
+The fake-native exact14-edge test asserts302 reserved units,49 roots,15 nodes and332
+fresh guard calls after explicit warm-up. These are synthetic fixture counts, not measured
+game timing or a guarantee about Windows inheritance/method lookup costs; CI must pass
+the exact assertions before the real test. No extra allowance is granted if it does not fit.
+
+### Earlier panel4 / depth12 capture experiment
+
+That earlier authorized experiment changed only the candidate capture depth limit from
 8 to 12 (root depth is 0; depth12 is eligible, depth13 is pruned). It selects exactly
 panel index4 through the existing immutable one-shot request/grant, with no fallback
 or iteration over other panels. For this test, invoke the helper with explicit `-Stage ui_text -PanelIndex 4`;
@@ -155,7 +173,7 @@ observer, packet, network publisher or broad runtime reflection in this adapter.
 
 Both staged operations start their stopwatch BEFORE their work. Every native export/invoke/
 memory read in the adapter calls BeforeNative (not once around a multi-call method).
-It caps one panel, 32 nodes, depth 12, 8 children/node, one text of 128 code units; lazy DFS
+It caps one panel, 32 nodes, depth 16, 8 children/node, one text of 128 code units; lazy DFS
 obtains one child at a time rather than eagerly fetching all siblings. Capture
 budget is 250ms soft elapsed / 384 reserved native boundary units, explicitly a conservative experiment,
 not proof that cold resolution will fit. Results record elapsed, stopped stage, operation/
@@ -265,7 +283,7 @@ that planned index, not proof that its item/root was successfully obtained.
 Neither multiple panels nor diagnostic incompleteness authorizes a fallback/retry.
 
 `NodesRecorded` marks the populated prefix of the fixed 32-slot `Nodes` array. Unused
-slots have `Depth = -1`; populated depths are 0..12. Numeric states are:
+slots have `Depth = -1`; populated depths are 0..16. Numeric states are:
 
 - `Visibility` and `TextType`: 0 not started, 1 incomplete, 2 false, 3 true.
 - `ChildCountState`: 0 not started, 1 incomplete, 2 completed.
@@ -278,7 +296,7 @@ included. All limits and terminal one-shot behavior stay unchanged. Timing still
 diagnostic work up to its existing endpoint; no overhead is subtracted from the budget.
 
 Offline fixtures cover a derived-text class with asymmetric assignability, text solely in
-a second panel, reachable depth9/depth12 text, depth13 and child-index8 omissions, validated-zero versus unknown panel
+a second panel, reachable depth9/depth12/depth16 text, depth17 and child-index8 omissions, validated-zero versus unknown panel
 counts, partial checks, and unchanged reservation/fresh-guard counts. CI additionally runs
 `test_assignability_mutation.py` after normal tests: it swaps the arguments in a temporary
 source copy and requires failure at the derived-text assertion, not an unrelated build
@@ -317,15 +335,16 @@ multi-panel search, rotation, index increment, fallback or repeat is implemented
 
 
 
-## Explicit focused-subtree infrastructure (no real path selected)
+## Explicit focused-subtree infrastructure
 
 This capability does **not** authorize a new game read, guessed path, automatic retry,
 or an expanded scan. Obtain evidence and explicit authorization for the exact panel/path
-before a real test. No path has been selected by this revision.
+before a real test. The single authorized recorded name-path experiment above does not
+authorize any other path, fallback or repeated capture.
 
 Optional request `focus_path` is an immutable canonical string of child indices relative
 to the separately bound `panel_index`: empty means the original panel-root traversal;
-otherwise at most12 slash-separated ASCII decimal indices0..511, no leading zeroes,
+otherwise at most16 slash-separated ASCII decimal indices0..511, no leading zeroes,
 signs, spaces, empty segments or panel token. Nonempty focus is ui_text-only.
 The helper accepts `-FocusPath` only for ui_text (even an explicit empty argument);
 omission writes no new field. Earlier strict readers reject explicit new fields rather
@@ -339,8 +358,8 @@ Actual child count must contain the index; negative counts still fail closed. Th
 no new arbitrary upper child-count limit or relaxation of a pre-existing one.
 
 Ancestors consume the same32 nodes, 250ms soft time, 384 reserved units and64 roots.
-Depth remains global from the panel root: a12-edge focus starts its target at depth12,
-so no descendant at depth13 is fetched. Ancestor text is intentionally not read: focus
+Depth remains global from the panel root: a16-edge focus starts its target at depth16,
+so no descendant at depth17 is fetched. Ancestor text is intentionally not read: focus
 selects the subtree, not the ancestors' text. Hidden ancestors stop; there is no fallback.
 The target uses the unchanged text type/bounds/getter rules. Empty focus preserves the
 original native call/guard sequence and traversal order.
@@ -351,7 +370,7 @@ children, even when DFS returns to siblings. `FocusAncestor=1` identifies explic
 descent ancestors, whose TextType stays0 (not checked). Their child-count bucket still
 describes the existing read, but ChildrenTruncated stays0 because no sibling enumeration
 was attempted. Standard subtree nodes retain the original width/depth pruning flags.
-`RequestedFocusDepth` is0 for empty,1..12 for valid focus,-1 for invalid direct-core
+`RequestedFocusDepth` is0 for empty,1..16 for valid focus,-1 for invalid direct-core
 input. `FocusResolved=1` means the nonempty path reached a nonnull target, not that the
 target was visible or text; empty/unresolved focus reports0. `RootResolved` still means
 the panel root was obtained. Partial checks remain incomplete; no text, names, addresses
@@ -363,5 +382,6 @@ grant is consumed include focus_ancestor_hidden, focus_child_unavailable and
 focus_root_unavailable; budget/backend failures remain possible. Those runtime outcomes
 are terminal and never restore the capture attempt.
 Tests cover strict parsing, immutable grant/replay/replacement, child511/count512,
-hidden/out-of-range ancestors, globaldepth12, node32, partial states, default call counts,
+hidden/out-of-range ancestors, globaldepth16, node32, partial states, default call counts,
 numeric DFS edges and native-fixture cleanup on both success and failure.
+

@@ -16,10 +16,10 @@ internal static class UiSmokeFocusPath
 {
     internal static bool Valid(string? path)
     {
-        if (path is null || path.Length > 47) return false; // 12 * 3 digits + 11 separators.
+        if (path is null || path.Length > 63) return false; // 16 * 3 digits + 15 separators.
         if (path.Length == 0) return true;
         var parts = path.Split('/');
-        if (parts.Length > 12) return false;
+        if (parts.Length > 16) return false;
         foreach (var part in parts)
         {
             if (part.Length is < 1 or > 3 || (part.Length > 1 && part[0] == '0') ||
@@ -167,4 +167,5 @@ internal sealed class WindowsSmokePolicy
         }
     }
 }
+
 

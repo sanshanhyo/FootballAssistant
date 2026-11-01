@@ -15,6 +15,12 @@ sealed class NativeUiAdapterFixture : IDisposable
     public int PanelCount = 1, PanelCountUnboxes;
     public readonly List<int> PanelIndices = new();
     public int TextDepth = 1;
+    // Optional exact synthetic branch, with actual per-ancestor counts and index validation.
+    // Uses only owned fixture objects; the shape does not claim Windows runtime equivalence.
+    public int[]? FocusEdges;
+    public int HiddenDepth = -1, MissingChildDepth = -1;
+    public readonly List<int> ChildIndices = new();
+    private static int ElementDepth(nint value) => value == 103 ? 0 : value >= 300 && value < 400 ? (int)value - 300 : -1;
     private readonly Dictionary<nuint, nint> roots = new();
     private nuint nextHandle = IntPtr.Size == 8 ? unchecked((nuint)0x100000001UL) : 1;
     public int RootCreates, RootTargets, RootFrees;
@@ -82,6 +88,27 @@ sealed class NativeUiAdapterFixture : IDisposable
         var name = methodNames[method]; Invocations.Add(name);
         exception = GetterThrows ? 999 : 0;
         if (name == "get_Count") Marshal.WriteInt32(panelCountPayload, PanelCount);
+        if (name == "get_visible") Marshal.WriteByte(boolPayload,
+            (byte)(ElementDepth(instance) == HiddenDepth && HiddenDepth >= 0 ? 0 : 1));
+        if (name == "get_childCount" && FocusEdges is not null)
+        {
+            var depth = ElementDepth(instance);
+            if (depth < 0) throw new Exception("Unexpected focused fixture object.");
+            var count = depth < FocusEdges.Length ? FocusEdges[depth] + (depth == MissingChildDepth ? 0 : 1) : 0;
+            Marshal.WriteInt32(countPayload, count);
+        }
+        if (name == "get_Item" && instance != 101)
+        {
+            var index = Marshal.ReadInt32(Marshal.ReadIntPtr(args));
+            ChildIndices.Add(index);
+            if (FocusEdges is not null)
+            {
+                var depth = ElementDepth(instance);
+                if (depth < 0 || depth >= FocusEdges.Length || index != FocusEdges[depth])
+                    throw new Exception("Unexpected focused fixture edge; no sibling reads permitted.");
+                return 301 + depth;
+            }
+        }
         if (name == "get_Item" && instance == 101)
         {
             var index = Marshal.ReadInt32(Marshal.ReadIntPtr(args));
@@ -98,3 +125,4 @@ sealed class NativeUiAdapterFixture : IDisposable
     }
     public void Dispose() { foreach (var allocation in allocations) Marshal.FreeHGlobal(allocation); }
 }
+
