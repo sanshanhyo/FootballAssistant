@@ -201,8 +201,9 @@ internal sealed partial class WindowsLoadedModuleLease
             prepared = true;
         }
         private bool prepared;
-        public nint ResolveFirstPanelRoot(UiSmokeBudget budget)
+        public nint ResolvePanelRoot(int panelIndex, UiSmokeBudget budget)
         {
+            if (panelIndex is < 0 or > 31) throw new ArgumentOutOfRangeException(nameof(panelIndex));
             if (!prepared) throw new InvalidOperationException("Explicit resolve-only warm-up required before capture.");
             budget.Stage = "first_panel_root";
             var panels = Call(runtimeUtility, 0, "GetSortedPlayerPanels", 0, 0, budget);
@@ -211,7 +212,8 @@ internal sealed partial class WindowsLoadedModuleLease
             if (panelCount < 0 || panelCount > 1024) throw new InvalidOperationException("Invalid panel count.");
             budget.Coverage?.RecordPanels(panelCount);
             if (panelCount == 0) return 0;
-            var panel = Item(panels, 0, budget);
+            if (panelIndex >= panelCount) throw new UiSmokeStopped("panel_index_unavailable");
+            var panel = Item(panels, panelIndex, budget);
             return panel == 0 ? 0 : Get(panel, "get_visualTree", budget);
         }
 

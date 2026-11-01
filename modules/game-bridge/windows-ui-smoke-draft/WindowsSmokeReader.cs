@@ -27,19 +27,21 @@ internal sealed record UiSmokeDiagnostics(int SchemaVersion, double ElapsedMs, U
 internal readonly record struct UiNodeCoverage(int Depth, int Visibility, int TextType,
     int ChildCountState, int ChildCountBucket, int DepthPruned, int ChildrenTruncated);
 internal sealed record UiSmokeCoverage(int SchemaVersion, int PanelCount, int SelectedPanelIndex,
-    int NodesRecorded, UiNodeCoverage[] Nodes);
+    int NodesRecorded, UiNodeCoverage[] Nodes, int RequestedPanelIndex = 0);
 internal sealed class UiCoverageCollector
 {
     private readonly UiNodeCoverage[] nodes = new UiNodeCoverage[32];
     private int panelCount = -1, selectedPanelIndex = -1, nodesRecorded;
-    internal UiCoverageCollector()
+    private readonly int requestedPanelIndex;
+    internal UiCoverageCollector(int panelIndex = 0)
     {
+        requestedPanelIndex = panelIndex;
         for (var i = 0; i < nodes.Length; i++) nodes[i] = new(-1, 0, 0, 0, -1, 0, 0);
     }
     // Called only AFTER the adapter has read and validated the existing count getter.
     // -1 means unknown/not read; 0 is reserved for an actual validated empty list.
     internal void RecordPanels(int count)
-    { panelCount = count; selectedPanelIndex = count > 0 ? 0 : -1; }
+    { panelCount = count; selectedPanelIndex = requestedPanelIndex >= 0 && requestedPanelIndex < count ? requestedPanelIndex : -1; }
     internal void BeginNode(int slot, int depth)
     { nodes[slot] = new(depth, 1, 0, 0, -1, 0, 0); nodesRecorded++; }
     internal void Visible(int slot, bool value) => nodes[slot] = nodes[slot] with { Visibility = value ? 3 : 2 };
@@ -49,7 +51,7 @@ internal sealed class UiCoverageCollector
     internal void Children(int slot, int count, int depth) => nodes[slot] = nodes[slot] with
     { ChildCountState = 2, ChildCountBucket = Math.Min(count, 9), DepthPruned = depth >= 8 && count > 0 ? 1 : 0,
       ChildrenTruncated = count > 8 ? 1 : 0 };
-    internal UiSmokeCoverage Snapshot() => new(1, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray());
+    internal UiSmokeCoverage Snapshot() => new(1, panelCount, selectedPanelIndex, nodesRecorded, nodes.ToArray(), requestedPanelIndex);
 }
 
 // Every export/invoke/memory access retains its existing fresh gate and reservation.
@@ -139,7 +141,7 @@ internal interface IWindowsUiSmokeBackend : IDisposable
 {
     // Production implementation must be constructed only from the verified existing module lease.
     string VerifiedModuleHash { get; }
-    nint ResolveFirstPanelRoot(UiSmokeBudget budget);
+    nint ResolvePanelRoot(int panelIndex, UiSmokeBudget budget);
     bool Visible(nint element, UiSmokeBudget budget);
     UiSmokeBounds Bounds(nint element, UiSmokeBudget budget);
     bool IsTextElement(nint element, UiSmokeBudget budget);
@@ -167,17 +169,17 @@ internal static class WindowsSmokeReader
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!policy.CheckStartedUi(grant, freshIdentity(), now())) throw new UiSmokeStopped("grant_or_window_changed");
-            }, elapsedForTest);
+            }, elapsedForTest, grant.PanelIndex);
         }
         finally { policy.CompleteUi(grant); }
     }
 
     // Core separated for traversal fixtures; it cannot authorize a native backend by itself.
     internal static UiSmokeResult ReadOne(IWindowsUiSmokeBackend backend, Action verifyGrantAndWindow,
-        Func<double>? elapsedForTest = null)
+        Func<double>? elapsedForTest = null, int panelIndex = 0)
     {
         var watch = Stopwatch.StartNew(); // Includes all class/getter/panel resolution.
-        var coverage = new UiCoverageCollector(); // Allocate all 32 slots before obtaining any runtime object.
+        var coverage = new UiCoverageCollector(panelIndex); // Allocate all 32 slots before obtaining any runtime object.
         var budget = new UiSmokeBudget(elapsedForTest ?? (() => watch.Elapsed.TotalMilliseconds), verifyGrantAndWindow,
             coverage: coverage);
         var nodes = 0;
@@ -192,9 +194,10 @@ internal static class WindowsSmokeReader
         }
         try
         {
+            if (panelIndex is < 0 or > 31) return Finish(null, "panel_index_invalid");
             budget.Check();
-            budget.Stage = "resolve_first_panel";
-            var root = backend.ResolveFirstPanelRoot(budget);
+            budget.Stage = "resolve_first_panel"; // Legacy diagnostic label; request may select another index.
+            var root = backend.ResolvePanelRoot(panelIndex, budget);
             if (root == 0) return Finish(null, "root_unavailable");
             rootResolved = true;
             // Lazy DFS obtains one child at a time, not an eager list of 512 child objects.

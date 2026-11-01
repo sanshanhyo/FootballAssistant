@@ -349,6 +349,85 @@ var tooWide = Read(ninthChild);
 Check(tooWide.Text is null && tooWide.StopReason == "bounded_no_text" && ninthChild.ChildReads == 8 &&
     ninthChild.TextReads == 0 && tooWide.Coverage!.Nodes[0] is { ChildCountBucket: 9, ChildrenTruncated: 1 },
     "text at child index8 stays unreachable with unchanged first8-child limit");
+// Selection remains an immutable one-shot grant property, never mutable configuration.
+WindowsSmokePolicy ReadyPanelPolicy()
+{
+    var p = new WindowsSmokePolicy(context);
+    var m = p.TryConsume(Request(SmokeStage.Metadata), identity, now)!;
+    Check(p.TryBeginCall(m, identity, now), "panel fixture metadata starts"); p.CompleteMetadata(m, true);
+    var r = p.TryConsume(Request(SmokeStage.UiResolve), identity, now)!;
+    Check(p.TryBeginCall(r, identity, now), "panel fixture resolve starts"); p.CompleteResolve(r, true);
+    return p;
+}
+foreach (var badIndex in new[] { -1, 32, int.MaxValue })
+{
+    var p = ReadyPanelPolicy(); var b = new FakeBackend();
+    Check(WindowsSmokeReader.TryReadAuthorized(p, Request(SmokeStage.UiText) with { PanelIndex = badIndex }, b,
+        () => identity, () => now, elapsedForTest: () => 0) is null && !p.UiAttempted && b.Calls == 0,
+        "invalid requested index rejected before grant consumption and backend work");
+    Check(WindowsSmokeReader.ReadOne(b, () => { }, () => 0, badIndex).StopReason == "panel_index_invalid" && b.Calls == 0,
+        "core also rejects invalid index without touching backend");
+}
+var nonCapturePolicy = new WindowsSmokePolicy(context);
+Check(nonCapturePolicy.TryConsume(Request(SmokeStage.Metadata) with { PanelIndex = 1 }, identity, now) is null &&
+    !nonCapturePolicy.MetadataAttempted, "metadata cannot carry nondefault selection");
+var panelMetadata = nonCapturePolicy.TryConsume(Request(SmokeStage.Metadata), identity, now)!;
+Check(nonCapturePolicy.TryBeginCall(panelMetadata, identity, now), "noncapture fixture metadata starts");
+nonCapturePolicy.CompleteMetadata(panelMetadata, true);
+Check(nonCapturePolicy.TryConsume(Request(SmokeStage.UiResolve) with { PanelIndex = 1 }, identity, now) is null &&
+    !nonCapturePolicy.ResolveAttempted, "resolve cannot carry nondefault selection");
+var boundPolicy = ReadyPanelPolicy();
+var indexedRequest = Request(SmokeStage.UiText) with { PanelIndex = 1 };
+var indexedGrant = boundPolicy.TryConsume(indexedRequest, identity, now)!;
+Check(indexedGrant.PanelIndex == 1 && !boundPolicy.TryBeginCall(indexedGrant with { PanelIndex = 0 }, identity, now) &&
+    boundPolicy.TryBeginCall(indexedGrant, identity, now), "forged grant cannot substitute another panel index");
+Check(!boundPolicy.CheckStartedUi(indexedGrant with { PanelIndex = 0 }, identity, now) &&
+    boundPolicy.CheckStartedUi(indexedGrant, identity, now), "active-grant revalidation binds the same index");
+Check(boundPolicy.TryConsume(indexedRequest with { PanelIndex = 0 }, identity, now) is null,
+    "replaying a consumed nonce with another index is rejected");
+boundPolicy.CompleteUi(indexedGrant);
+foreach (var stale in new[] { indexedRequest with { Session = "stale" }, indexedRequest with { ExpiresAt = now },
+    indexedRequest with { BridgeHash = new string('c', 64) } })
+{
+    var b = new FakeBackend();
+    Check(WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(), stale, b, () => identity, () => now,
+        elapsedForTest: () => 0) is null && b.Calls == 0, "panel selection cannot escape stale/session/hash authorization");
+}
+var replacedRequest = Request(SmokeStage.UiText) with { PanelIndex = 1 };
+var replacementReads = 0;
+var replacementBackend = new FakeBackend();
+var replacementResult = WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(), replacedRequest, replacementBackend,
+    () => { if (++replacementReads == 2) replacedRequest = replacedRequest with { PanelIndex = 0 }; return identity; },
+    () => now, elapsedForTest: () => 0);
+Check(replacementBackend.ResolvedPanelIndex == 1 && replacementResult?.Coverage?.RequestedPanelIndex == 1 &&
+    replacedRequest.PanelIndex == 0, "request replacement after consumption cannot redirect immutable grant selection");
+foreach (var index in new[] { 1, 31 })
+{
+    using var f = new NativeUiAdapterFixture { PanelCount = index + 1, TextOnlyInSecondPanel = true };
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), f.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var selected = WindowsSmokeReader.TryReadAuthorized(ReadyPanelPolicy(), Request(SmokeStage.UiText) with { PanelIndex = index },
+        b, () => identity, () => now, elapsedForTest: () => 0);
+    Check(selected?.Text == "fixture-native-path" && selected.Coverage is { } c && c.PanelCount == index + 1 &&
+        c.SelectedPanelIndex == index && c.RequestedPanelIndex == index && f.PanelIndices.SequenceEqual(new[] { index }) &&
+        f.Invocations.Count(x => x == "get_Count") == 1 && f.Invocations.Count(x => x == "get_text") == 1,
+        "explicit index chooses exactly one panel and one text; no iteration or extra count calls");
+}
+using (var unavailable = new NativeUiAdapterFixture { PanelCount = 2 })
+{
+    using var b = WindowsLoadedModuleLease.CreateUiTestBackend(new string('b', 64), unavailable.Bind);
+    WindowsLoadedModuleLease.PrepareUiTestBackend(b, new UiSmokeBudget(() => 0, () => { }, 250, 2048));
+    var p = ReadyPanelPolicy();
+    var selected = WindowsSmokeReader.TryReadAuthorized(p, Request(SmokeStage.UiText) with { PanelIndex = 2 },
+        b, () => identity, () => now, elapsedForTest: () => 0);
+    Check(selected?.StopReason == "panel_index_unavailable" && !selected.RootResolved &&
+        selected.Coverage is { PanelCount: 2, SelectedPanelIndex: -1, RequestedPanelIndex: 2 } && unavailable.PanelIndices.Count == 0,
+        "runtime out-of-range index stops after count, before Item, without fallback");
+    var calls = unavailable.Invocations.Count;
+    Check(WindowsSmokeReader.TryReadAuthorized(p, Request(SmokeStage.UiText), b, () => identity, () => now,
+        elapsedForTest: () => 0) is null && unavailable.Invocations.Count == calls,
+        "unavailable panel consumes the only capture; even a new nonce cannot retry panel0");
+}
 // Strict stage request parsing, without launching a host or using a game module.
 var parserRoot = Path.Combine(Path.GetTempPath(), "football-ui-request-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(parserRoot);
@@ -363,6 +442,29 @@ try
         var json = System.Text.Json.JsonSerializer.Serialize(fixture);
         File.WriteAllText(path, json);
         Check(UiCandidateConfiguration.ReadRequest(path).Stage == stage, "only explicit supported stage parses");
+        Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 0, "legacy omitted panel_index defaults to0");
+        File.WriteAllText(path, json[..^1] + ",\"panel_index\":0}");
+        Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 0, "explicit default index remains valid");
+        foreach (var token in new[] { "-1", "32", "2147483648", "1.0", "1e0", "-0", "\"1\"", "true", "null" })
+        {
+            File.WriteAllText(path, json[..^1] + ",\"panel_index\":" + token + "}");
+            var rejectedIndex = false;
+            try { UiCandidateConfiguration.ReadRequest(path); }
+            catch (Exception error) when (error is InvalidOperationException or System.Text.Json.JsonException) { rejectedIndex = true; }
+            Check(rejectedIndex, "panel_index rejects noncanonical/noninteger/out-of-range tokens");
+        }
+        File.WriteAllText(path, json[..^1] + ",\"panel_index\":1}");
+        if (stage == SmokeStage.UiText) Check(UiCandidateConfiguration.ReadRequest(path).PanelIndex == 1, "explicit capture panel parses");
+        else
+        {
+            var rejectedStageIndex = false;
+            try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { rejectedStageIndex = true; }
+            Check(rejectedStageIndex, "noncapture stage rejects nondefault panel selection");
+        }
+        File.WriteAllText(path, json[..^1] + ",\"panel_index\":0,\"panel_index\":1}");
+        var duplicatePanelRejected = false;
+        try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { duplicatePanelRejected = true; }
+        Check(duplicatePanelRejected, "duplicate panel_index is rejected rather than last-value-wins");
         File.WriteAllText(path, json.Replace("stable_current_session_page", "past_main_menu"));
         var parserRejected = false;
         try { UiCandidateConfiguration.ReadRequest(path); } catch (InvalidOperationException) { parserRejected = true; }
@@ -381,11 +483,11 @@ sealed class FakeBackend : IWindowsUiSmokeBackend
     public string VerifiedModuleHash => new('b', 64);
     public void Dispose() { }
     public bool RootVisible = true, RootBoundsPositive = true, TextBoundsPositive = true, RootIsText, ExcessiveText, NoText, EmptyText;
-    public int OnlyTextChildIndex = -1;
+    public int OnlyTextChildIndex = -1, ResolvedPanelIndex = -1;
     public int ResolutionCalls = 1, Calls, ChildReads, BoundsReads, TypeReads, TextReads, Children = 8;
     private void Touch(UiSmokeBudget budget) { budget.BeforeNative(); Calls++; }
-    public nint ResolveFirstPanelRoot(UiSmokeBudget budget)
-    { for (var i = 0; i < ResolutionCalls; i++) Touch(budget); return 1; }
+    public nint ResolvePanelRoot(int panelIndex, UiSmokeBudget budget)
+    { ResolvedPanelIndex = panelIndex; for (var i = 0; i < ResolutionCalls; i++) Touch(budget); return 1; }
     public bool Visible(nint element, UiSmokeBudget budget) { Touch(budget); return element != 1 || RootVisible; }
     public UiSmokeBounds Bounds(nint element, UiSmokeBudget budget)
     { Touch(budget); BoundsReads++; return new(0, 0, (element == 1 ? RootBoundsPositive : TextBoundsPositive) ? 10 : 0, 10); }

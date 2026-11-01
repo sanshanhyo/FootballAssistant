@@ -24,7 +24,9 @@ been read by this candidate; fake tests do not establish game success.
    250ms soft elapsed from resolution start. No panel getter, runtime invoke, UI objects,
    roots, observer or registry in this phase. Successful methods cache only in this held
    module lease and session. Inspect the terminal result before proceeding.
-5. Reconfirm the stable page and explicitly request `-Stage ui_text`. One capture is allowed:
+5. Reconfirm the stable page and explicitly request `-Stage ui_text`. Omitted `-PanelIndex`
+   preserves panel 0. Only after a particular index is authorized, add `-PanelIndex N`
+   (canonical integer 0..31) to request exactly that one panel. One capture is allowed:
    250ms soft elapsed, 384 reserved native boundary units, one panel, 32 nodes, depth8,
    8 children/node and at most one text of128 UTF-16 units. No automatic stage advance,
    retry, refresh or repeated collection. A failure/budget/empty outcome is terminal.
@@ -120,7 +122,7 @@ Exact managed targets/getters to verify from runtime metadata, no Mac offsets:
 1. Image `UnityEngine.UIElementsModule.dll`, namespace `UnityEngine.UIElements`.
 2. Types `UIElementsRuntimeUtility`, `VisualElement` and `TextElement`.
 3. Static `UIElementsRuntimeUtility.GetSortedPlayerPanels()`; returned list `get_Count()`;
-   only `get_Item(0)` on that list; panel `get_visualTree()`.
+   only `get_Item(panelIndex)` for the authorized index on that list; panel `get_visualTree()`.
 4. Element `get_visible()` and `get_worldBound()`; positive finite Rect required to emit
    that node's text. Hidden ancestors prune subtrees; invalid parent bounds do NOT prove
    children are hidden. Bool, Int32 and Rect boxed payload shapes need validation before
@@ -243,8 +245,9 @@ NOT a real IL2CPP GC stress run. Independent candidate remains undeployed pendin
 fresh guard checks. Storage for 32 node slots is allocated before obtaining runtime objects.
 `PanelCount` is copied only after the existing count getter/unbox/read passes its 0..1024
 validation. `-1` means unknown/not read/invalid, **not** an empty list; `0` means an actual
-validated empty list. `SelectedPanelIndex` is `-1` until a nonempty list is validated, then
-`0`: this means index 0 was selected, not that its root was successfully obtained.
+validated empty list. `RequestedPanelIndex` is the immutable authorized request index (default 0).
+`SelectedPanelIndex` stays `-1` until the validated list contains that index, then records
+that planned index, not proof that its item/root was successfully obtained.
 Neither multiple panels nor diagnostic incompleteness authorizes a fallback/retry.
 
 `NodesRecorded` marks the populated prefix of the fixed 32-slot `Nodes` array. Unused
@@ -266,3 +269,34 @@ counts, partial checks, and unchanged reservation/fresh-guard counts. CI additio
 `test_assignability_mutation.py` after normal tests: it swaps the arguments in a temporary
 source copy and requires failure at the derived-text assertion, not an unrelated build
 error. This is a fake-export test, not evidence about the current game's panel contents.
+
+
+## Explicit single-panel selection
+
+The request schema accepts an optional `panel_index`, a canonical JSON integer 0..31.
+Omission defaults to 0; fractions, exponent notation, strings, negatives, out-of-range
+values and duplicate fields are rejected. Nonzero selection is invalid for metadata or
+resolve requests. The helper permits explicit `-PanelIndex` only with `-Stage ui_text`,
+and emits the field only when that argument was supplied. No environment/config panel
+override is consulted.
+
+The immutable request index is copied into `SmokeGrant`; grant identity/equality and
+ongoing revalidation bind it. Capture uses the consumed grant, not a later request-file
+poll. Replacing the request or replaying its nonce cannot redirect or repeat capture.
+The adapter reads the panel count once, validates it, then checks index < count before
+fetching exactly one item. A missing requested index produces `panel_index_unavailable`
+(or `root_unavailable` for an empty list), consumes the only capture, and never falls
+back to another index. All budgets, native gates, GC handling and traversal limits stay
+unchanged. This feature does not authorize a run or any additional session/restart.
+
+Default requests remain compatible with the earlier schema-1 reader because the helper
+omits the new field. Explicit selection requires the updated candidate: an old strict
+reader rejects the added field rather than silently treating it as panel 0. Legacy
+`resolve_first_panel` / `first_panel_root` timing labels are retained for existing
+consumers; use Coverage.RequestedPanelIndex / SelectedPanelIndex to identify selection.
+
+Panel indices refer to the runtime's current sorted list, not stable semantic names.
+Rendering/creation order does not identify the main menu, active page or meaningful
+business content, and may change between sessions or requests. Selecting an index does
+not prove that panel is currently on screen, foreground, or relevant. No automatic
+multi-panel search, rotation, index increment, fallback or repeat is implemented.

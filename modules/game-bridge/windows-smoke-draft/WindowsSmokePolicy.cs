@@ -7,8 +7,8 @@ internal enum SmokeStage { Metadata, UiResolve, UiText }
 internal sealed record SmokeContext(int Pid, string Session, string BridgeHash, string GameHash,
     string ConfirmedWindowClass, uint EntryThread);
 internal sealed record SmokeRequest(Guid Nonce, int Pid, string Session, string BridgeHash, string GameHash,
-    string ConfirmedWindowClass, SmokeStage Stage, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
-internal sealed record SmokeGrant(Guid Nonce, SmokeStage Stage, long Window, DateTimeOffset ExpiresAt);
+    string ConfirmedWindowClass, SmokeStage Stage, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, int PanelIndex = 0);
+internal sealed record SmokeGrant(Guid Nonce, SmokeStage Stage, long Window, DateTimeOffset ExpiresAt, int PanelIndex = 0);
 
 internal sealed class WindowsSmokePolicy
 {
@@ -52,6 +52,7 @@ internal sealed class WindowsSmokePolicy
     {
         lock (gate)
         {
+            if (request.PanelIndex is < 0 or > 31 || (request.Stage != SmokeStage.UiText && request.PanelIndex != 0)) return null;
             if (request.Nonce == Guid.Empty || consumed.Count >= 64 || consumed.Contains(request.Nonce) ||
                 request.Pid != context.Pid || request.Session != context.Session || request.BridgeHash != context.BridgeHash ||
                 request.GameHash != context.GameHash || request.ConfirmedWindowClass != context.ConfirmedWindowClass ||
@@ -64,7 +65,7 @@ internal sealed class WindowsSmokePolicy
             var window = SelectWindow(freshIdentity);
             if (window is null) return null;
             consumed.Add(request.Nonce); // Always before any external call. Failure never restores an attempt.
-            var grant = new SmokeGrant(request.Nonce, request.Stage, window.Value, request.ExpiresAt);
+            var grant = new SmokeGrant(request.Nonce, request.Stage, window.Value, request.ExpiresAt, request.PanelIndex);
             armed.Add(grant.Nonce, grant);
             if (request.Stage == SmokeStage.Metadata) { metadataAttempted = true; pendingMetadata = grant; }
             else if (request.Stage == SmokeStage.UiResolve) { resolveAttempted = true; pendingResolve = grant; }

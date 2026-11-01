@@ -3,9 +3,11 @@
 param(
     [Parameter(Mandatory=$true)][string]$CandidateDirectory,
     [Parameter(Mandatory=$true)][ValidateSet('metadata','ui_resolve','ui_text')][string]$Stage,
-    [Parameter(Mandatory=$true)][switch]$StableCurrentSessionPageConfirmed
+    [Parameter(Mandatory=$true)][switch]$StableCurrentSessionPageConfirmed,
+    [ValidatePattern('\A(0|[1-9]|[12][0-9]|3[01])\z')][string]$PanelIndex = '0'
 )
 $ErrorActionPreference = 'Stop'
+if ($PSBoundParameters.ContainsKey('PanelIndex') -and $Stage -ne 'ui_text') { throw 'Explicit -PanelIndex is supported only for ui_text.' }
 if (-not $StableCurrentSessionPageConfirmed) { throw 'Current-session stable-page confirmation required.' }
 if (-not ($CandidateDirectory -match '^[A-Za-z]:[\\/]')) { throw 'Absolute private candidate directory required.' }
 $root = Join-Path $CandidateDirectory 'windows-ui-private'
@@ -47,6 +49,7 @@ $request = [ordered]@{
     window_class = $session.window_class; checkpoint = 'stable_current_session_page'
     requested_at = $now.ToString('O'); expires_at = $now.AddSeconds(30).ToString('O')
 }
+if ($PSBoundParameters.ContainsKey('PanelIndex')) { $request['panel_index'] = [int]$PanelIndex }
 $path = Join-Path $root 'ui-stage-request.json'
 foreach ($p in @($path, ($path + '.tmp'))) {
     if ([IO.File]::Exists($p) -and (([IO.File]::GetAttributes($p) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { throw 'Reparse request refused.' }
@@ -55,5 +58,6 @@ foreach ($p in @($path, ($path + '.tmp'))) {
 Move-Item -LiteralPath ($path + '.tmp') -Destination $path -Force
 Write-Output "Wrote one 30-second $Stage request for PID $($session.pid), session $($session.session_id). No subsequent stage is automatic."
 if ($Stage -eq 'ui_text') {
+    Write-Output "Requested panel index: $PanelIndex. One panel only; unavailable index is terminal, with no fallback."
     Write-Output 'Capture limits: 250ms soft elapsed, 384 reserved boundary units, one panel, 32 nodes, depth 8, 8 children/node, one text up to128 UTF-16 units; no retry. Text is a UI component value, not proof of screen visibility or business meaning.'
 }
