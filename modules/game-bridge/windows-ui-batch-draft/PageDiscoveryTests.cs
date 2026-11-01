@@ -550,5 +550,59 @@ internal static class PageDiscoveryTests
                 "old eligibility profile still skips all invalid bounds; no implicit opt-in");
             Clean(fixture,policy,result);
         }
+        Check(FiniteCaptureSelection.ManifestProfiles("tactics_active_inventory").SequenceEqual(new[]{"tactics_active17","tactics_active18"}),"exact two-chunk order only");
+        foreach(var profile in new[]{"tactics_active17","tactics_active18"})
+        foreach(var scenario in new[]{"complete","parent19","parent21","root0","root2","zero","hidden","null","width","depth","textcap","work","operations","hard","guard","cleanup"})
+        {
+            var focus=BatchTreeFixture.ActiveFocus(profile);var selectedIndex=profile=="tactics_active17"?17:18;
+            Check(FiniteCaptureSelection.TryGet(profile,out var selection)&&selection.Kind=="tactics_active_probe"&&selection.FocusRoot==focus,
+                "active plans exactly0/17 and0/18");
+            using var fixture=new BatchTreeFixture {InheritedContainerMethods=true};
+            var suffixes=scenario=="width"?new[]{"8"}:scenario=="depth"?new[]{string.Join("/",Enumerable.Repeat("0",46))}:
+                scenario=="textcap"?Enumerable.Range(0,8).Select(i=>i.ToString()).ToArray():
+                scenario=="operations"?Enumerable.Range(0,8).SelectMany(i=>Enumerable.Range(0,8).SelectMany(j=>Enumerable.Range(0,8).Select(k=>$"{i}/{j}/{k}"))).ToArray():Array.Empty<string>();
+            fixture.BuildActive(profile,suffixes);
+            var parent=fixture.NodeAt("0");var root=fixture.NodeAt(focus);var child=fixture.NodeAt(focus+"/0");
+            if(scenario is "complete" or "zero" or "work" or "hard" or "guard")fixture.SetNodeText(focus+"/0","TEST ACTIVE RAW");
+            if(scenario=="parent19")fixture.Children[parent].RemoveAt(19);
+            if(scenario=="parent21")fixture.Children[parent].Add(fixture.NodeAt("0/0"));
+            if(scenario=="root0"){fixture.Children[root].Clear();fixture.SetNodeText(focus,"SHOULD NOT READ");}
+            if(scenario=="root2"){fixture.Children[root].Add(fixture.NodeAt("0/0"));fixture.SetNodeText(focus,"SHOULD NOT READ");}
+            if(scenario=="zero")fixture.ZeroBoundsNodes.Add(child);
+            if(scenario=="hidden")fixture.HiddenNodes.Add(child);
+            if(scenario=="null")fixture.NullChildEdges.Add((root,0));
+            if(scenario=="textcap")foreach(var suffix in suffixes)fixture.SetNodeText(focus+"/0/"+suffix,"TEST ACTIVE "+suffix);
+            if(scenario=="cleanup")fixture.FailFirstFree=true;
+            var policy=Policy(profile);var guards=0;
+            var result=Capture(policy,fixture,elapsed:()=>scenario=="work"&&fixture.TextReads.Count>0?801:
+                scenario=="hard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?1001:0,
+                fresh:()=>{guards++;return scenario=="guard"&&fixture.RootCreates>0&&fixture.LiveRoots==0?identity with{WindowScanStatus="failed"}:identity;});
+            var failed=scenario is "parent19" or "parent21" or "root0" or "root2" or "null" or "hard" or "guard" or "cleanup";
+            Check(result.Status==(failed?"terminal_failure":"raw_diagnostics")&&result.DiagnosticTexts.Length==0,"active profiles never enable ineligible text channel");
+            if(failed)Check(result.Observations.Length==0,"active failures discard every text");
+            if(scenario is "parent19" or "parent21")Check(result.Reason=="active_parent_shape_changed"&&
+                !fixture.ChildEdges.Any(edge=>edge.Parent==parent)&&fixture.TextReads.Count==0,"fresh parent count20 before selected child17/18");
+            if(scenario is "root0" or "root2")Check(result.Reason=="active_container_shape_changed"&&
+                !fixture.ChildEdges.Any(edge=>edge.Parent==root)&&fixture.TextReads.Count==0&&result.Topology![0].TextElement==-1&&
+                result.Topology[0].ChildCount==(scenario=="root0"?0:2),"selected count1 gate before even text-root getter or descendant");
+            if(scenario=="complete")Check(result.Observations.Length==1&&result.Observations[0].Path==focus+"/0"&&
+                result.Nodes==4&&fixture.Invocations.Count(name=>name=="get_childCount")==4&&result.Topology is {Length:2}&&result.Topology[0].ChildCount==1&&!result.TraversalBounded&&
+                PageDiscoveryValidation.TryValidate(result,profile),"normal eligible raw capture validates only own active scope");
+            Check(PageDiscoveryValidation.TryValidate(result,profile)==!failed,"active host boundary accepts only successful raw diagnostics");
+            if(!failed)Check(!PageDiscoveryValidation.TryValidate(result,profile=="tactics_active17"?"tactics_active18":"tactics_active17"),"no cross-profile rebinding");
+            if(scenario=="zero")Check(result.Observations.Length==0&&fixture.TextReads.Count==0&&result.Topology!.Last().BoundsEligible==0,"bad bounds still blocks getter");
+            if(scenario is "hidden" or "width" or "depth" or "textcap" or "work" or "operations")Check(result.TraversalBounded,"bounded active traversal: "+scenario);
+            if(scenario=="width")Check(!fixture.ChildEdges.Contains((child,8)),"ordinary DFS still first8 only");
+            if(scenario=="depth")Check(result.Topology!.Max(node=>node.GlobalDepth)==48,"active globaldepth48 unchanged");
+            if(scenario=="textcap")Check(result.Observations.Length==8,"active textcap8 unchanged");
+            if(scenario=="operations")Check(result.NativeOperations>=1792&&result.NativeOperations<2048&&result.Nodes<96,"cooperative operation stop before hard limit");
+            Check(fixture.ChildEdges.Where(edge=>edge.Parent==parent).All(edge=>edge.Index==selectedIndex),"no other root obtained");
+            Check(fixture.TextReads.All(pointer=>pointer==child||suffixes.Any(suffix=>fixture.NodeAt(focus+"/0/"+suffix)==pointer)),"no unrelated text getters");
+            Clean(fixture,policy,result);
+            if(!failed)Check(guards==result.NativeOperations+result.Nodes+3,"root count reuse adds no extra fresh checks");
+            Check(TargetedDiscoveryCollector.Run(policy,new(3,policy.Approval.Nonce,policy.ApprovalSha256),
+                ()=>throw new Exception("replay"),()=>identity,()=>at,elapsedForTest:()=>0) is null,"no active request replay");
+            Console.WriteLine($"Active {profile}/{scenario}: units={result.NativeOperations},nodes={result.Nodes},roots={result.TotalRoots},peak={result.PeakRoots},guards={guards}; inherited owned fixture only.");
+        }
     }
 }

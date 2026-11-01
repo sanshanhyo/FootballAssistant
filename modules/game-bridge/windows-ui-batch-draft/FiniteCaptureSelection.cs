@@ -39,6 +39,8 @@ internal sealed class FiniteCaptureSelection
         pages.Add("tactics_sibling12",new("tactics_sibling12","tactics_sibling_probe",TacticsSibling12Root,-1,0,Array.Empty<string>()));
         pages.Add("tactics_sibling7",new("tactics_sibling7","tactics_sibling_probe",TacticsSibling7Root,-1,0,Array.Empty<string>()));
         pages.Add("tactics_sibling4",new("tactics_sibling4","tactics_sibling_probe",TacticsSibling4Root,-1,0,Array.Empty<string>()));
+        pages.Add("tactics_active17",new("tactics_active17","tactics_active_probe","0/17",-1,0,Array.Empty<string>()));
+        pages.Add("tactics_active18",new("tactics_active18","tactics_active_probe","0/18",-1,0,Array.Empty<string>()));
         pages.Add("tactics_root_census",new("tactics_root_census","tactics_frontier_probe","0",-1,0,Array.Empty<string>()));
         pages.Add("tactics_frontier35",new("tactics_frontier35","tactics_frontier_probe",TacticsFrontier35Root,-1,0,Array.Empty<string>()));
         pages.Add("tactics_leaf_eligibility7",new("tactics_leaf_eligibility7","tactics_remaining_probe",TacticsEligibilityRoot,-1,0,
@@ -73,6 +75,7 @@ internal sealed class FiniteCaptureSelection
         "tactics_current" => new[] {"tactics_current"},
         "tactics_alignment_candidate" => new[] {"tactics_alignment_candidate"},
         "tactics_sibling_inventory" => new[] {"tactics_sibling12","tactics_sibling7","tactics_sibling4"},
+        "tactics_active_inventory" => new[] {"tactics_active17","tactics_active18"},
         "tactics_layout_diagnostic" => new[] {"tactics_root_census","tactics_frontier35"},
         "tactics_remaining_diagnostic" => new[] {"tactics_leaf_eligibility7","tactics_remaining45_1","tactics_remaining46_1",
             "tactics_remaining46_2","tactics_remaining56_1","tactics_remaining56_2"},

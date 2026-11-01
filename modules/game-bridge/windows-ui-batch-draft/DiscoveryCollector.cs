@@ -92,6 +92,7 @@ internal static class DiscoveryCollector
                 "tactics_sibling12" => 12, "tactics_sibling7" => 7, "tactics_sibling4" => 4, _ => -1 };
             var census = policy.Approval.SelectionProfile == "tactics_root_census";
             var frontier = policy.Approval.SelectionProfile == "tactics_frontier35";
+            var active = policy.Approval.SelectionProfile is "tactics_active17" or "tactics_active18";
             var ineligible = policy.Approval.SelectionProfile == "tactics_ineligible_text7";
             var eligibility = ineligible || policy.Approval.SelectionProfile == "tactics_leaf_eligibility7";
             var remainingGate = policy.Approval.SelectionProfile switch {
@@ -99,7 +100,7 @@ internal static class DiscoveryCollector
                 "tactics_remaining46_1" or "tactics_remaining46_2" => (Depth:27, Count:3),
                 "tactics_remaining56_1" or "tactics_remaining56_2" => (Depth:30, Count:3),
                 _ => (Depth:-1, Count:-1) };
-            var diagnostic = siblingDepth >= 0 || census || frontier || eligibility || remainingGate.Depth >= 0;
+            var diagnostic = active || siblingDepth >= 0 || census || frontier || eligibility || remainingGate.Depth >= 0;
             var sibling = siblingDepth >= 0;
             var topology = diagnostic ? new DiscoveryTopologyNode[MaximumNodes] : null;
             var topologyCount = 0;
@@ -152,6 +153,13 @@ internal static class DiscoveryCollector
                     TraceNode();
                     visible = backend.Visible(node, budget) ? 1 : 0; stage = 2; TraceNode();
                     if (visible == 0) { if (diagnostic) bounded = true; return; }
+                    var selectedCount = -1;
+                    if (active && parentRecord == -1)
+                    {
+                        selectedCount = backend.ChildCount(node,budget);
+                        childCount = selectedCount; stage = 4; TraceNode();
+                        if (selectedCount != 1) throw new UiSmokeStopped("active_container_shape_changed");
+                    }
                     var inspectLeaf = eligibleTargets is null || eligibleTargets.Any(suffix => suffix.Length == 0);
                     if (inspectLeaf) { textElement = backend.IsTextElement(node, budget) ? 1 : 0; stage = 3; TraceNode(); }
                     if (textElement == 1 || eligibleTargets is not null && inspectLeaf)
@@ -174,7 +182,7 @@ internal static class DiscoveryCollector
                         else if (!string.IsNullOrWhiteSpace(text)) texts.Add(new(path, text));
                     }
                     if (StopWork()) return;
-                    var count = backend.ChildCount(node, budget);
+                    var count = selectedCount >= 0 ? selectedCount : backend.ChildCount(node, budget);
                     childCount = count; stage = 4; TraceNode();
                     var maximumDepth = diagnostic ? TargetedDiscoveryCollector.MaximumDepth : MaximumDepth;
                     if (eligibleTargets is null && (count > 8 || (depth >= maximumDepth && count > 0))) bounded = true;
@@ -289,6 +297,8 @@ internal static class DiscoveryCollector
                             throw new UiSmokeStopped("frontier_parent_shape_changed");
                         if (remainingGate.Depth == focusDepth && focusCount != remainingGate.Count)
                             throw new UiSmokeStopped("remaining_parent_shape_changed");
+                        if (active && focusDepth == 1 && focusCount != 20)
+                            throw new UiSmokeStopped("active_parent_shape_changed");
                         if (index >= focusCount) throw new UiSmokeStopped("discovery_focus_unavailable");
                         focusStage = 4; TraceFocus();
                         var child = backend.Child(current, index, budget);

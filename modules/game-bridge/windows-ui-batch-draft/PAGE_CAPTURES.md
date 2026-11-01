@@ -303,3 +303,27 @@ ceiling is also retained. Completion reason `approved_ineligible_diagnostic_comp
 means selected diagnostic work finished, not that current UI/business facts were
 read. Partial work remains explicitly bounded. CI must verify actual fixture cost;
 no timing or exactdeadline guarantee follows from node arithmetic.
+
+## Fixed active-container inventory (normal eligibility only)
+
+`tactics_active_inventory` runs exactly two fresh chunks: panel0 relative `0/17`,
+then `0/18`. These roots come from an observed immediate-child census with
+positive finite bounds and one child; they are not semantic tactical selectors.
+Each chunk requires fresh childCount20 on `0` before selecting its fixed slot,
+and childCount1 on that selected container before traversing its descendants.
+A mismatch fails the manifest; there is no fallback, sibling search or retry.
+
+Use `-Scope tactics_active_inventory -StableProfileAsserted -FiniteManifestConfirmed`.
+Do not pass `-IneligibleTextDiagnosticConfirmed`: the seven-object exception is
+not active here. Normal visibility, TextElement type and positive finite bounds
+are required before any text getter. DiagnosticTexts remains empty. Existing
+14-field numeric topology records bounds classifications and getter outcomes;
+normal observations remain raw, unverified UI text, never tactical facts merely
+because a subtree contains words. Empty/bounded is not proof the page is empty.
+
+Each chunk retains1000ms/2048 units, cooperative800ms/1792,96 nodes, depth48,
+first8 children per node,8 texts of128 UTF-16 units/1024 total,64 live and512
+total roots. Declared total2000ms/4096 units, cooldown at least2 seconds, expiry
+120 seconds. No pointers survive chunks; each re-resolves and revalidates its
+root. No slots1/3, old0/4 frontier or extra panel is selected. Synthetic native
+fixture costs are printed by CI, not estimates of real Windows elapsed time.

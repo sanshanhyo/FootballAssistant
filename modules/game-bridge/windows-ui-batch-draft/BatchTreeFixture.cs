@@ -202,8 +202,17 @@ sealed class BatchTreeFixture : IDisposable
             foreach(var child in children)EnsurePath(focus+"/"+child);
         }
     }
+    internal static string ActiveFocus(string profile) => profile switch {
+        "tactics_active17" => "0/17", "tactics_active18" => "0/18", _ => throw new ArgumentException() };
+    internal void BuildActive(string profile, params string[] paths)
+    {
+        Children[103]=new(); EnsurePath("0/19"); var focus=ActiveFocus(profile);
+        EnsurePath(focus+"/0");
+        foreach(var path in paths)EnsurePath(focus+"/0/"+path);
+    }
     internal static string PageFocus(string profile) => profile switch
-    { "tactics_ineligible_text7" or "tactics_leaf_eligibility7" or "tactics_remaining45_1" or "tactics_remaining46_1" or "tactics_remaining46_2" or "tactics_remaining56_1" or "tactics_remaining56_2" => RemainingFocus(profile),
+    { "tactics_active17" or "tactics_active18" => ActiveFocus(profile),
+      "tactics_ineligible_text7" or "tactics_leaf_eligibility7" or "tactics_remaining45_1" or "tactics_remaining46_1" or "tactics_remaining46_2" or "tactics_remaining56_1" or "tactics_remaining56_2" => RemainingFocus(profile),
       "tactics_root_census" => "0", "tactics_frontier35" => FrontierRoot,
       "tactics_sibling12" or "tactics_sibling7" or "tactics_sibling4" => SiblingFocus(profile),
       "tactics_current" => TacticsPageRoot, "tactics_alignment_candidate" => TacticsAlignmentRoot, "next_match_card" => NextMatchPageRoot,

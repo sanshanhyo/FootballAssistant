@@ -11,7 +11,7 @@ internal static class PageDiscoveryValidation
     {
         if (result is not null && (result.DiagnosticTexts is null ||
             profile!="tactics_ineligible_text7" && result.DiagnosticTexts.Length!=0)) return false;
-        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_sibling_probe" or "tactics_frontier_probe" or "tactics_remaining_probe" or "tactics_ineligible_probe"))
+        if (FiniteCaptureSelection.TryGet(profile,out var probe) && (probe.Kind is "tactics_active_probe" or "tactics_sibling_probe" or "tactics_frontier_probe" or "tactics_remaining_probe" or "tactics_ineligible_probe"))
             return ValidateProbe(result,probe);
         if(!FiniteCaptureSelection.TryGet(profile,out var selection) || selection.Kind=="attributes" || result is null ||
             result.Status!="raw_diagnostics" || result.Reason!="approved_group_targets_complete" ||
