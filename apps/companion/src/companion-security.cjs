@@ -8,7 +8,7 @@ const SHARED_IPC = [
 const WINDOW_IPC = Object.freeze({
   pet: new Set([...SHARED_IPC, 'send-message', 'context-menu', 'transcribe', 'speak',
     'cancel-speech-operation', 'microphone-permission', 'drag-start', 'drag-move', 'drag-end', 'input-rects']),
-  settings: new Set([...SHARED_IPC, 'windows-discovery-import', 'windows-discovery-get', 'windows-discovery-clear', 'bridge-inspect', 'bridge-plan', 'bridge-deploy', 'bridge-rollback', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release', 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
+  settings: new Set([...SHARED_IPC, 'windows-discovery-import', 'windows-discovery-get', 'windows-discovery-clear', 'bridge-inspect', 'bridge-plan', 'bridge-deploy', 'bridge-rollback', 'persona-get', 'persona-save', 'character-introduction', 'about-get', 'repository-open', 'contributors-open', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release', 'model-providers-get', 'model-models-list', 'model-models-cancel', 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
 });
 
 function allowsWindowIpc({ role, trustedMainFrame, currentUrl, pageUrl }, method) {

@@ -84,6 +84,8 @@ jobs:
             $speaker.Speak('Football Assistant speech smoke test')
           } finally { $speaker.Dispose() }
           if ((Get-Item $outputPath).Length -le 44) { throw 'TTS output is empty' }
+      - name: Build and verify bundled local Whisper (CPU-only, 31 MiB multilingual model)
+        run: python packaging/build-local-stt.py
       - name: Package desktop
         run: npm run pack:${{ matrix.target }}
         env:

@@ -3,25 +3,29 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const DEFAULTS = Object.freeze({ schema_version: 1, provider: 'opencode-go', baseUrl: '', model: 'deepseek-v4.1-flash' });
+const { destination, PROVIDERS } = require('./model-providers.cjs');
+const DEFAULTS = Object.freeze({ schema_version: 1, provider: 'opencode-go', baseUrl: '', model: '' });
 function validate(input, { persisted = false } = {}) {
   if (!input || Object.getPrototypeOf(input) !== Object.prototype) throw Error('模型配置格式无效。');
   const allowed = persisted ? ['schema_version', 'provider', 'baseUrl', 'model'] : ['provider', 'baseUrl', 'model', 'apiKey', 'removeKey'];
   if (Object.keys(input).some(key => !allowed.includes(key))) throw Error('模型配置包含未知字段。');
   if (persisted && input.schema_version !== undefined && input.schema_version !== 1) throw Error('模型配置版本不受支持。');
-  if (!['opencode-go', 'openai-compatible'].includes(input.provider)) throw Error('请选择支持的模型服务类型。');
+  if (!PROVIDERS.some(item => item.id === input.provider && !item.disabled)) throw Error('请选择支持的模型服务类型。');
   for (const key of ['baseUrl', 'model']) if (typeof input[key] !== 'string' || input[key].length > 2048 || /[\x00-\x1f\x7f]/.test(input[key])) throw Error('模型地址或名称无效。');
-  const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
+  let baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
+  if (!persisted) baseUrl = destination(input.provider, baseUrl).baseUrl;
   if (baseUrl) {
     let url; try { url = new URL(baseUrl); } catch { throw Error('请输入有效的模型服务 URL。'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw Error('模型服务须使用 HTTPS，不能包含账号、密码、查询参数或片段。');
   }
-  if (!input.model.trim()) throw Error('请输入模型名称。');
+  if (!persisted && !input.model.trim()) throw Error('请输入模型名称。');
   if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 8192 || /[\x00-\x20\x7f]/.test(input.apiKey))) throw Error('API Key 格式无效，请勿包含空白。');
   if (input.removeKey !== undefined && typeof input.removeKey !== 'boolean') throw Error('清除密钥选项无效。');
   if (input.removeKey && input.apiKey) throw Error('不能同时保存和清除密钥。');
   if (input.apiKey && !baseUrl) throw Error('保存密钥前请填写服务地址。');
-  return { schema_version: 1, provider: input.provider, baseUrl, model: input.model.trim() };
+  const preset = PROVIDERS.find(item => item.id === input.provider);
+  const provider = persisted && !preset.custom && baseUrl && baseUrl !== preset.baseUrl ? 'openai-compatible' : input.provider;
+  return { schema_version: 1, provider, baseUrl, model: input.model.trim() };
 }
 function atomicWrite(file, value, backup = false) {
   const temp = `${file}.${randomUUID()}.tmp`;

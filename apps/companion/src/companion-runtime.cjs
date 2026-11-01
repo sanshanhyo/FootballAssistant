@@ -10,7 +10,7 @@ const { MockReaderClient, DisconnectedReaderClient, metadata, MOCK_LIMITATIONS, 
 const { DEFAULT_CHARACTER_ID, storedCharacterId, characterPresentation } = require('./character.cjs');
 const PREFERENCE_VALUES = Object.freeze({
   expression: ['auto', 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'notice', 'happy', 'puzzled', 'error'],
-  sttProvider: ['openai', 'mock'],
+  sttProvider: ['local-whisper', 'openai', 'mock'],
   ttsProvider: ['system', 'edge', 'openai', 'azure', 'mock'],
 });
 
@@ -32,7 +32,7 @@ class CompanionRuntime extends EventEmitter {
     this.mode = 'mock'; this.backendId = 'mock'; this.epoch = 1; this.sessionId = randomUUID(); this.mockDisconnected = false;
     this.proactivity = 80; this.historyEnabled = false;
     this.characterId = DEFAULT_CHARACTER_ID;
-    this.preferences = { expression: 'auto', sttProvider: 'openai', ttsProvider: 'system' };
+    this.preferences = { expression: 'auto', sttProvider: 'local-whisper', ttsProvider: 'system' };
     this.savedEnvelope = {};
     this.messages = []; this.memories = []; this.pending = new Map();
     this.tools = new Map();

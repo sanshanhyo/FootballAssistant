@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { createCredentialConfig, validateModelConfig } = require('../src/credentials.cjs');
 const { allowsWindowIpc } = require('../src/companion-security.cjs');
-const input = { provider: 'opencode-go', baseUrl: 'https://example.test/v1', model: 'deepseek-v4.1-flash', apiKey: 'TEST-only-secret' };
+const input = { provider: 'openai-compatible', baseUrl: 'https://example.test/v1', model: 'deepseek-v4.1-flash', apiKey: 'TEST-only-secret' };
 function fixture(t, available = true) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'fa-creds-'));
   t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
@@ -66,7 +66,7 @@ test('schema migration is backed up, future/unknown fields are not overwritten',
   }
 });
 test('credentials IPC is settings main-frame only, never pet-accessible', () => {
-  for (const method of ['model-config-get', 'model-config-save', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release']) {
+  for (const method of ['model-providers-get', 'model-models-list', 'model-models-cancel', 'model-config-get', 'model-config-save', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release']) {
     const context = { role: 'settings', trustedMainFrame: true, currentUrl: 'file://settings', pageUrl: 'file://settings' };
     assert.equal(allowsWindowIpc(context, method), true);
     assert.equal(allowsWindowIpc({ ...context, role: 'pet' }, method), false);
@@ -81,48 +81,15 @@ test('UI uses masked input, no secret readback, and preloads expose only sanitiz
   assert.doesNotMatch(src('settings.js'), /value\.apiKey/);
   assert.doesNotMatch(src('preload.cjs'), /backendEnv/);
 });
-test('settings UI clears typed key, sends only entered fields and reflects session/restart state', async () => {
-  const vm = require('node:vm');
-  const elements = new Map();
-  const element = id => {
-    if (!elements.has(id)) elements.set(id, { value: '', textContent: '', disabled: false, hidden: false, handlers: {}, addEventListener(name, fn) { this.handlers[name] = fn; }, append() {}, replaceChildren() {}, focus() {}, classList: { toggle() {} } });
-    return elements.get(id);
-  };
-  let received;
-  const publicConfig = { ...input, apiKey: undefined, hasApiKey: false, secureStorageAvailable: false, storage: 'none' };
-  delete publicConfig.apiKey;
-  const api = {
-    personaStatus: async () => ({ ok: true, value: { status: 'ready', path: '/fixture/persona.md', canOpen: true, external: false } }),
-    openPersonaFile: async () => ({ ok: true, value: { opened: true } }),
-    subscribe: () => () => {}, getState: async () => ({ ok: false, error: 'offline fixture' }), speechCapabilities: async () => ({ ok: true, value: {} }),
-    getModelConfig: async () => ({ ok: true, value: publicConfig }), updateStatus: async () => ({ ok: true, value: { state: 'disabled' } }),
-    bootstrapStatus: async () => ({ ok: true, value: { backend: { state: 'ready', owned: true }, game: { state: 'running' }, readerPlatformSupported: false } }),
-    saveModelConfig: async value => { received = { ...value }; assert.equal(element('model-api-key').value, ''); return { ok: true, value: { ...publicConfig, hasApiKey: true, storage: 'session', restartRequired: true } }; },
-  };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/settings.js'), 'utf8'), {
-    document: { getElementById: element, querySelectorAll: () => [], createElement: () => element(Symbol()) },
-    window: { companion: api, CompanionUI: { EXPRESSIONS: {} }, addEventListener() {} },
-    setTimeout: () => 1, clearTimeout() {},
-  });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(element('persona-open-file').disabled, false);
-  assert.equal(element('persona-path').textContent, '/fixture/persona.md');
-  api.personaStatus = async () => ({ ok: true, value: { status: 'ready', path: '/external/persona.md', canOpen: false, external: true } });
-  await element('persona-refresh').handlers.click();
-  assert.equal(element('persona-open-file').disabled, true);
-  assert.equal(element('persona-open-folder').disabled, true);
-  assert.match(element('persona-note').textContent, /不自动打开/);
-  api.personaStatus = async () => ({ ok: false, error: 'offline' });
-  await element('persona-refresh').handlers.click();
-  assert.equal(element('persona-path').textContent, '');
-  assert.equal(element('persona-open-file').disabled, true);
-  assert.match(element('bootstrap-reader').textContent, /尚不支持/);
-  assert.match(element('update-status').textContent, /尚未配置可信/);
-  element('model-api-key').value = input.apiKey;
-  element('model-config-form').handlers.submit({ preventDefault() {} });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(received, input);
-  assert.match(element('model-storage-note').textContent, /仅本次运行/);
-  assert.match(element('notice').textContent, /外部服务/);
-  assert.equal(element('model-save').disabled, false);
+// Six-page UI secret lifecycle is exercised by settings-pages.test.cjs.
+test('legacy nonstandard preset is custom and cannot reuse the old bound secret', t => {
+  const options=fixture(t); const store=createCredentialConfig(options);
+  store.save(input);
+  const configFile=path.join(options.userData,'model-config.json');
+  fs.writeFileSync(configFile,JSON.stringify({...store.getPublicConfig(),configured:undefined,hasApiKey:undefined,storage:undefined,secureStorageAvailable:undefined,provider:'opencode-go'}));
+  fs.writeFileSync(path.join(options.userData,'credentials.enc.json'),JSON.stringify({schema_version:1,ciphertext:options.safeStorage.encryptString(JSON.stringify({...input,provider:'opencode-go'})).toString('base64')}));
+  const restored=createCredentialConfig(options);
+  assert.equal(restored.getPublicConfig().provider,'openai-compatible');
+  assert.equal(restored.getPublicConfig().hasApiKey,false);
+  assert.equal(restored.getPublicConfig().baseUrl,input.baseUrl);
 });

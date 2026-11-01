@@ -32,13 +32,13 @@ def test_handle_closed_on_exception():
     assert closed == [42]
 
 
-def test_alpha_tts_section_is_hidden_by_author_css():
+def test_alpha_tts_controls_are_absent_from_six_page_settings():
     root=Path(__file__).resolve().parents[3]/"apps"/"companion"/"src"
     html=(root/"settings.html").read_text(encoding="utf-8")
-    css=(root/"settings.css").read_text(encoding="utf-8")
-    section=html[html.rfind('<section class="card"',0,html.index('id="tts-provider"')):html.index('id="tts-provider"')]
-    assert '<section class="card" hidden>' in section
-    assert '[hidden]{display:none!important}' in css.replace(' ', '')
+    assert 'id="tts-provider"' not in html
+    assert 'id="tts-enabled"' not in html
+    assert 'id="stt-provider"' in html
+    assert html.count('class="settings-page"') == 6
 
 
 def test_toolhelp_end_does_not_mask_other_errors():

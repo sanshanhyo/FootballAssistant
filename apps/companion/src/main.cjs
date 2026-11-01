@@ -4,6 +4,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createPersonaAccess } = require('./persona-access.cjs');
+const { createSettingsContent } = require('./settings-content.cjs');
+const { createModelDiscovery } = require('./model-providers.cjs');
 const { createCredentialConfig } = require('./credentials.cjs');
 const { createBridgeSetup } = require('./bridge-setup.cjs');
 const { createBridgeDeployment } = require('./bridge-ipc.cjs');
@@ -31,10 +33,11 @@ if (process.env.FA_COMPANION_USER_DATA_DIR) {
 
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
-app.on('second-instance', () => showPet());
+app.on('second-instance', () => { showPet(); openSettings().catch(() => {}); });
 let backendSupervisor;
 let backendOptions;
 let credentials;
+let modelDiscovery;
 let personaAccess;
 let bridgeDeployment;
 let savingModel = false;
@@ -70,7 +73,7 @@ function emit(value) {
   }
 }
 function emitPet(value) { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('companion:event', value); }
-const speech = createSpeechService({ onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
+const speech = createSpeechService({ localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'), onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
 function senderRole(event, method) {
   for (const [role, window, url] of [['pet', win, pageUrl], ['settings', settingsWindow, settingsPageUrl]]) {
     if (!window || window.isDestroyed() || event.sender !== window.webContents) continue;
@@ -117,7 +120,7 @@ function pointerFallback() {
 function showPet() { if (win && !win.isDestroyed()) { win.show(); win.focus(); pointerFallback(); emitPet({ type: 'visibility', visible: true }); } }
 function hidePet() { if (win && !win.isDestroyed()) { speech.stop(); emitPet({ type: 'visibility', visible: false }); win.hide(); } }
 async function openSettings() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return { opened: true }; }
+  if (settingsWindow && !settingsWindow.isDestroyed()) { if (settingsWindow.isMinimized()) settingsWindow.restore(); settingsWindow.show(); settingsWindow.focus(); return { opened: true }; }
   const area = screen.getPrimaryDisplay().workArea;
   const window = new BrowserWindow({ width: Math.min(960, area.width), height: Math.min(740, area.height),
     minWidth: Math.min(580, area.width), minHeight: Math.min(420, area.height),
@@ -166,6 +169,13 @@ function trayImage() {
 function registerIpc() {
   bridgeDeployment.register(handle);
   handle('persona-status', () => personaAccess.status());
+  handle('persona-get', () => personaAccess.read());
+  handle('persona-save', input => personaAccess.save(input));
+  const settingsContent = createSettingsContent({ version: app.getVersion(), openExternal: url => shell.openExternal(url) });
+  handle('character-introduction', () => settingsContent.introduction());
+  handle('about-get', () => settingsContent.about());
+  handle('repository-open', () => settingsContent.openRepository());
+  handle('contributors-open', () => settingsContent.openContributors());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
   handle('game-status', () => detectGame());
@@ -174,6 +184,9 @@ function registerIpc() {
     if (backend.state === 'ready' && !(await backendSupervisor.healthy())) { backend.state = 'unavailable'; backend.message = '本机后端当前不可连接。'; }
     return { ...bootstrapStatus, backend, game: await detectGame() };
   });
+  handle('model-providers-get', () => modelDiscovery.providers());
+  handle('model-models-list', input => modelDiscovery.list(input));
+  handle('model-models-cancel', () => { modelDiscovery.cancel(); return { cancelled: true }; });
   handle('model-config-get', () => credentials.getPublicConfig());
   handle('model-config-save', async input => {
     if (savingModel || quitting || bridgeDeployment?.busy) throw new Error('配置正在应用，请稍后再试。');
@@ -351,6 +364,7 @@ async function main() {
   const external = Boolean(process.env.FOOTBALL_ASSISTANT_RUNTIME_FILE || process.argv.includes('--runtime-file'));
   const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
   credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
+  modelDiscovery = createModelDiscovery({ credentials });
   backendOptions = { userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
   installedUpdates = createInstalledUpdater({ platform: process.platform,
@@ -405,7 +419,7 @@ async function main() {
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
-  app.on('activate', showPet);
+  app.on('activate', () => { showPet(); openSettings().catch(() => {}); });
   const rendererHealthy = await win.webContents.executeJavaScript("document.readyState === 'complete' && Boolean(window.companion) && Boolean(document.getElementById('pet'))").catch(() => false);
   if (bootstrapStatus.backend.state === 'ready' && rendererHealthy && !runtime.storageWarning) await updateRecovery.acknowledgeHealthy();
   else if (updateRecovery.status.state === 'awaiting_health') await updateRecovery.fail('Updated app backend or local state failed initial health check');

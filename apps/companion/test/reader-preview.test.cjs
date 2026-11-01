@@ -75,9 +75,9 @@ test('stable changes use existing local proactive message path, mute suppresses,
   runtime.setProactivity(0); await tick(); hash = 'd'; await runtime.refreshReaderPreviews(); await runtime.refreshReaderPreviews();
   assert.equal(runtime.state().messages.length, 1); await runtime.close();
 });
-test('settings preview is safely rendered with DOM text, and refresh IPC is explicit', () => {
+test('developer preview IPC remains explicit but six-page settings contains no diagnostics', () => {
   const src = name => fs.readFileSync(path.join(__dirname, '../src', name), 'utf8');
-  assert.match(src('settings.html'), /id="reader-previews"/);
+  assert.doesNotMatch(src('settings.html'), /id="reader-previews"/);
   assert.match(src('settings.js'), /element.textContent = String\(text\)/);
   assert.match(src('preload.cjs'), /refreshReaderPreviews:.*refresh-reader-previews/);
   assert.match(src('main.cjs'), /handle\('refresh-reader-previews'/);

@@ -1,100 +1,36 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>FootballAssistant · 设置</title>
-  <link rel="stylesheet" href="settings.css">
-</head>
-<body>
-  <div class="settings-app">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">◉</span><div>FootballAssistant<span>桌宠设置</span></div></div>
-      <nav aria-label="设置分类">
-        <button class="nav-item active" data-page="connection" aria-controls="page-connection" aria-current="page"><span aria-hidden="true">◌</span>连接与数据</button>
-        <button class="nav-item" data-page="voice" aria-controls="page-voice"><span aria-hidden="true">≋</span>语音</button>
-        <button class="nav-item" data-page="companion" aria-controls="page-companion"><span aria-hidden="true">☺</span>陪伴与表情</button>
-        <button class="nav-item" data-page="records" aria-controls="page-records"><span aria-hidden="true">▤</span>历史与记忆</button>
-      </nav>
-      <div class="sidebar-footer"><span id="sidebar-mode" class="badge synthetic">模拟模式</span><p>单击桌宠输入文字<br>长按桌宠使用语音</p><button id="quit" class="text-button">退出应用</button></div>
-    </aside>
-    <main>
-      <header class="page-header"><div><p class="eyebrow">COMPANION</p><h1 id="page-title">连接与数据</h1><p id="page-description">查看连接状态、数据来源和任务进度。</p></div><span id="header-status" class="status-indicator">准备中</span></header>
-      <div id="notice" class="notice" role="status" hidden></div>
-      <div id="error" class="notice error" role="alert" hidden></div>
-
-      <section id="page-connection" class="settings-page" aria-labelledby="page-title">
-        <section class="card connection-card"><div class="card-heading"><h2>当前连接</h2><span id="mode-badge" class="badge synthetic">模拟模式</span></div><p id="connection-label" class="connection-label">正在读取状态…</p><p id="connection-reason" class="muted">不会自动连接游戏或调用模型。</p><div class="setting-row"><div><label for="mode">数据模式</label><p>本机真实服务与模拟演示明确分开。</p></div><select id="mode"><option value="mock">模拟演示</option><option value="real">真实后端</option></select></div><dl class="key-values"><dt>当前会话</dt><dd id="session-id" class="mono">未知</dd><dt>来源</dt><dd id="backend-id">未知</dd><dt>服务能力</dt><dd id="reader-capabilities">未知</dd></dl><ul id="connection-limitations" class="limitations"></ul></section>
-        <section class="card"><div class="card-heading"><h2>本机启动诊断</h2><button id="bootstrap-refresh" class="secondary-button">重新检测</button></div><p id="bootstrap-status" class="service-note" role="status">正在检测…</p><p id="bootstrap-reader" class="muted"></p></section>
-        <section class="card" id="bridge-setup-card"><div class="card-heading"><h2>游戏桥接部署</h2><button id="bridge-refresh" class="secondary-button">刷新状态</button></div>
-          <p class="muted">先选择本机游戏并验证版本与架构，再查看部署计划。只处理独立私有副本，不修改 Steam 原始游戏；不会自动启动或结束 FM。部署成功不等于已读取游戏数据。</p>
-          <p id="bridge-status" class="service-note" role="status">正在读取部署能力…</p><ul id="bridge-candidates" class="limitations"></ul>
-          <div class="row-actions"><button id="bridge-select" class="secondary-button" disabled>选择游戏 App…</button></div>
-          <section id="bridge-plan" hidden><h3>确认部署计划</h3><dl id="bridge-plan-fields" class="key-values"></dl><ul id="bridge-plan-changes" class="limitations"></ul>
-            <p class="notice">以下权限仅针对计划所示的私有副本。ad-hoc 重新签名会替换该副本的原签名；JIT 权限会放宽该副本的代码执行限制。只有你明确勾选并点击启用后才执行。</p>
-            <label class="switch-row"><span>我确认部署位置与改动，同意创建独立私有副本。</span><input id="bridge-consent-copy" type="checkbox"></label>
-            <label class="switch-row"><span>我同意对该私有副本进行 ad-hoc 重新签名。</span><input id="bridge-consent-signing" type="checkbox"></label>
-            <label class="switch-row"><span>我同意仅为该私有副本添加计划列出的 JIT 权限。</span><input id="bridge-consent-jit" type="checkbox"></label>
-            <button id="bridge-enable" class="primary-button" disabled>按此计划启用桥接</button>
-          </section>
-          <p id="bridge-result" class="muted"></p>
-          <div id="bridge-rollback-section" hidden><label class="switch-row"><span>我确认撤销本应用部署的桥接；仅处理部署收据记录的私有副本，不改原始游戏。</span><input id="bridge-consent-rollback" type="checkbox"></label><button id="bridge-rollback" class="text-button danger" disabled>撤销桥接部署</button></div>
-        </section>
-        <section class="card"><h2>Alpha 更新</h2><p id="update-status" class="service-note" role="status">正在读取更新状态…</p><p id="update-mode-note" class="muted">正在确认安装模式；不会为更新强退游戏或中断当前对话。</p><div class="row-actions"><button id="update-check" class="secondary-button" disabled>检查更新</button><button id="update-open-release" class="secondary-button">打开官方下载页</button><button id="update-download" class="secondary-button" disabled>下载已验证更新</button></div></section>
-        <section class="card"><h2>首次模型配置</h2><p class="muted">无需编辑 .env。只保存你在这里输入的配置，不自动导入密钥；保存不会调用模型。API Key 不会回显。服务地址由你确认，请仅填写可信的服务商 HTTPS API 地址。</p>
-          <form id="model-config-form" autocomplete="off">
-            <div class="setting-row"><label for="model-provider">服务商</label><select id="model-provider"><option value="opencode-go">OpenCode Go</option><option value="openai-compatible">其他 OpenAI 兼容服务</option></select></div>
-            <div class="setting-row"><label for="model-base-url">API 地址</label><input id="model-base-url" type="url" required maxlength="2048" placeholder="https://服务商地址/v1"></div>
-            <div class="setting-row"><label for="model-name">模型名称</label><input id="model-name" required maxlength="2048" value="deepseek-v4.1-flash"></div>
-            <div class="setting-row"><label for="model-api-key">API Key</label><input id="model-api-key" type="password" maxlength="8192" autocomplete="new-password" spellcheck="false" placeholder="输入新密钥；留空保留同服务已有密钥"></div>
-            <p id="model-storage-note" class="service-note" role="status">正在读取本机配置…</p><p class="muted">更换服务商或 API 地址时，不会把旧密钥带到新服务。无安全存储时，密钥仅用于本次运行，退出后需重新输入。</p>
-            <div class="row-actions"><button id="model-save" type="submit" class="primary-button">保存模型配置</button><button id="model-remove-key" type="button" class="text-button danger">清除密钥</button></div>
-          </form>
-        </section>
-        <section class="card"><div class="card-heading"><h2>Reader 当前页面预览</h2><button id="refresh-reader" class="secondary-button">刷新</button></div><p class="muted">先在游戏里打开对应页面，再点该卡的“读取当前页”。这只切换本机采样范围，不是全局 FM API，不修改游戏，也不调用模型。必须等采样范围已应用且新鲜内容确认后才算完成；属性不绑定球员身份。向桌宠输入“看看我的赛程”或“分析我的战术”才会请求建议。</p><div id="reader-previews" class="stack" aria-live="polite"></div></section>
-        <section class="card" aria-labelledby="discovery-title">
-          <div class="card-heading"><h2 id="discovery-title">Windows 手动诊断导入</h2><span class="badge">局部显示 · 非业务数据</span></div>
-          <p class="muted">只粘贴一次已授权采集的 Discovery JSON 与对应 expected_source JSON。不会读取文件路径、监听游戏、重新采集或调用模型。导入时间不是采集时间；球员身份与内容新鲜度始终未知。每次点击导入都会替换旧诊断；新输入无效时也会清除旧导入，连接失败时会明确提示。</p>
-          <label for="discovery-mode">导入显示类型</label><select id="discovery-mode"><option value="position" selected>位置显示（默认）</option><option value="goalkeeper_row0">守门分类第 0 行（单行实验显示）</option></select>
-          <p class="muted">单行实验只展示同次采集的分类、标签和值，不按行号推断属性，不代表已验证的 Windows 球员属性。</p>
-          <label for="discovery-capture">单条 Discovery 采集 JSON</label><textarea id="discovery-capture" rows="5" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴单条 capture JSON 对象"></textarea>
-          <label for="discovery-source">预期来源 expected_source JSON</label><textarea id="discovery-source" rows="3" maxlength="32768" spellcheck="false" autocomplete="off" placeholder="粘贴与本次采集对应的 expected_source JSON 对象"></textarea>
-          <div class="row-actions"><button id="discovery-import" class="primary-button">校验并导入这一次</button><button id="discovery-refresh" class="secondary-button">查看已导入诊断</button><button id="discovery-clear" class="text-button danger">清除导入</button></div>
-          <p id="discovery-status" class="service-note" role="status">尚未查询；只有点击按钮才会访问本机诊断接口。</p>
-          <p id="discovery-warning" class="muted">手动导入、局部显示；身份未验证，新鲜度未知。不能据此确认当前球员、完整资料或提供个体建议。</p>
-          <dl id="discovery-fields" class="metadata-fields"></dl>
-          <p class="muted">导入后，在真实服务模式中对桌宠说“查看导入诊断”，可获得同一份显示字段与来源路径的确定性回复；不会发送给模型。</p>
-        </section>
-        <section class="card"><div class="card-heading"><h2>模拟数据演示</h2><span class="badge synthetic">仅演示</span></div><p class="muted">示例会显示在桌宠气泡中，不读取游戏，也不调用模型。</p><div class="inline-controls"><label class="sr-only" for="scenario">模拟数据场景</label><select id="scenario"><option value="default">默认观测</option><option value="missing">缺失数据</option><option value="stale">过期数据</option><option value="partial">不完整数据</option><option value="disconnected">连接中断</option></select><button id="simulate-scenario" class="primary-button">发送示例</button></div></section>
-        <section class="card"><div class="card-heading"><h2>任务进度</h2><span id="task-count" class="subtle-label">暂无任务</span></div><div id="tasks" class="stack" aria-live="polite"></div></section>
-        <section class="card"><div class="card-heading"><h2>最近观测与信息卡</h2><span id="observation-count" class="subtle-label">暂无观测</span></div><div id="observations" class="stack"></div></section>
-      </section>
-
-      <section id="page-voice" class="settings-page" aria-labelledby="page-title" hidden>
-        <section class="card"><h2>语音转文字</h2><p class="muted">按住桌宠开始录音，松开后转为可编辑草稿，再由你发送。</p><div class="setting-row"><div><label for="stt-provider">转写服务</label><p>服务切换时会停止当前语音操作。</p></div><select id="stt-provider"><option value="openai">云端转写</option><option value="mock">模拟转写</option></select></div><p id="stt-note" class="service-note">正在读取服务状态…</p><div id="stt-capabilities" class="provider-list"></div></section>
-        <p class="page-note">Alpha 0.0.1 暂不开放语音朗读。</p>
-        <section class="card" hidden><h2>语音播报</h2><p class="muted">右键桌宠选择“朗读上一条回复”才会播放语音。</p><div class="setting-row"><div><label for="tts-provider">播报服务</label><p>不会自动改用其他服务。</p></div><select id="tts-provider"><option value="system">系统语音</option><option value="edge">Edge TTS</option><option value="openai">云端 TTS</option><option value="azure">Azure TTS</option><option value="mock">模拟播报</option></select></div><p id="tts-note" class="service-note">正在读取服务状态…</p><div id="tts-capabilities" class="provider-list"></div><div class="card-actions"><span id="speech-state" class="muted" aria-live="polite">尚未收到语音状态</span><button id="stop-speech" class="secondary-button">停止语音</button></div></section>
-        <p class="page-note">模拟转写不会识别实际录音。</p>
-      </section>
-
-      <section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
-        <section class="card"><div class="card-heading"><h2>当前角色</h2><span class="subtle-label">内置角色</span></div><p id="character-name">角色资料待读取</p><p id="character-id" class="muted"></p><p id="character-visual" class="muted"></p><p id="character-fallback" class="muted" hidden></p></section>
-        <section class="card"><div class="card-heading"><h2>角色人设文件</h2><button id="persona-refresh" class="secondary-button">刷新状态</button></div><p class="muted">persona.md 为讲解、建议和闲聊共用的人设。首次启动自动生成；已有内容不会覆盖。保存编辑后，下一次模型请求读取新内容。</p><p id="persona-status" class="service-note" role="status">正在读取人设文件状态…</p><p id="persona-path" class="mono"></p><p id="persona-note" class="muted"></p><div class="row-actions"><button id="persona-open-file" class="primary-button" disabled>打开人设文件</button><button id="persona-open-folder" class="secondary-button" disabled>打开所在文件夹</button></div><p class="muted">仅打开本应用管理的固定本机文件或目录，不执行脚本，也不会在此显示或修改人设正文。请使用 UTF-8 文本，文件不超过 16 KiB。</p></section>
-        <section class="card"><div class="card-heading"><h2>主动性</h2><output id="proactivity-value" for="proactivity" class="range-value">80%</output></div><label class="sr-only" for="proactivity">主动性百分比</label><input id="proactivity" type="range" min="0" max="100" step="1" value="80"><div class="range-labels"><span>安静陪伴</span><span>更多提醒</span></div><p class="muted">0% 关闭真实提示；大于 0% 时，仅稳定的当前 UI 显示变化会触发本地文字提醒（至少间隔 60 秒）。不会自动调用模型或朗读；不把显示变化当作游戏事件。</p><button id="simulate-event" class="secondary-button">演示一条主动消息</button></section>
-        <section class="card"><h2>表情</h2><div class="setting-row"><div><label for="expression">桌宠表情</label><p>当前角色只有一张默认图，表情选择暂不可用；原偏好继续保留。</p></div><select id="expression" disabled><option value="auto">跟随交互</option></select></div><div class="asset-note"><span aria-hidden="true">◉</span><p>默认形象取自你提供的角色设定图。<br><span class="muted">聆听、识别与播报状态仍由文字提示；当前不切换人物表情。</span></p></div></section>
-      </section>
-
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Football Assistant · 设置</title><link rel="stylesheet" href="settings.css"></head>
+<body><div class="settings-app"><aside class="sidebar"><nav aria-label="设置分类">
+<button class="nav-item active" data-page="connection" aria-controls="page-connection" aria-current="page">连接</button>
+<button class="nav-item" data-page="voice" aria-controls="page-voice">输入</button>
+<button class="nav-item" data-page="companion" aria-controls="page-companion">人设</button>
+<button class="nav-item" data-page="records" aria-controls="page-records">历史与记忆</button>
+<button class="nav-item" data-page="appearance" aria-controls="page-appearance">外观</button></nav>
+<button class="nav-item about-nav" data-page="about" aria-controls="page-about">关于</button></aside>
+<main><header class="page-header"><h1 id="page-title">连接</h1></header>
+<div id="notice" class="notice" role="status" hidden></div><div id="error" class="notice error" role="alert" hidden></div>
+<section id="page-connection" class="settings-page" aria-labelledby="page-title">
+<section class="card"><div class="card-heading"><h2>API 配置</h2><span id="connection-status" role="status">连接未确认</span></div>
+<form id="model-config-form" autocomplete="off">
+<div class="setting-row"><label for="model-provider">服务商</label><select id="model-provider" disabled><option value="">正在读取…</option></select></div>
+<div id="custom-url-row" class="setting-row" hidden><label for="model-base-url">服务器地址</label><input id="model-base-url" type="url" maxlength="2048" spellcheck="false"></div>
+<div class="setting-row"><label for="model-api-key">API Key</label><input id="model-api-key" type="password" maxlength="8192" autocomplete="new-password" spellcheck="false"></div>
+<div class="setting-row"><label for="model-name">模型</label><div class="model-controls"><select id="model-name" required disabled><option value="">未读取</option></select><button id="model-fetch" type="button" class="secondary-button">读取模型</button></div></div>
+<div class="card-actions"><span id="model-storage-note" role="status"></span><div class="row-actions"><button id="model-remove-key" type="button" class="text-button danger">清除密钥</button><button id="model-save" type="submit" class="primary-button" disabled>保存</button></div></div></form></section></section>
+<section id="page-voice" class="settings-page" aria-labelledby="page-title" hidden><section class="card"><h2>语音转文字</h2><div class="setting-row"><label for="stt-provider">转写服务</label><select id="stt-provider" disabled></select></div><div id="stt-note" role="status">状态未确认</div></section></section>
+<section id="page-companion" class="settings-page" aria-labelledby="page-title" hidden>
+<section class="card character-card"><img id="character-image" src="assets/characters/official.eckera/default.png" alt="角色形象"><div><h2 id="character-name">角色介绍</h2><div id="character-introduction" class="character-introduction"></div></div></section>
+<section class="card"><div class="card-heading"><h2>persona.md</h2><button id="persona-refresh" class="secondary-button">刷新</button></div><label class="sr-only" for="persona-content">人设内容</label><textarea id="persona-content" rows="10" spellcheck="false" disabled></textarea><div class="card-actions"><span id="persona-status" role="status">未读取</span><div class="row-actions"><button id="persona-open-file" class="text-button" disabled>打开文件</button><button id="persona-open-folder" class="text-button" disabled>打开文件夹</button><button id="persona-save" class="primary-button" disabled>保存</button></div></div></section>
+<section class="card"><div class="card-heading"><label for="proactivity">主动性</label><output id="proactivity-value" for="proactivity">80%</output></div><input id="proactivity" type="range" min="0" max="100" step="1" value="80"></section>
+<section class="card"><div class="setting-row first-row"><label for="expression">表情</label><select id="expression" disabled><option value="auto">跟随交互</option></select></div></section></section>
       <section id="page-records" class="settings-page" aria-labelledby="page-title" hidden>
-        <section class="card"><div class="card-heading"><h2>聊天历史</h2><button id="new-conversation" class="secondary-button">新对话</button></div><label class="switch-row" for="history-enabled"><span><strong>跨启动保留聊天历史</strong><small>关闭时只保留本次运行中的对话。聊天不会自动形成长期记忆。</small></span><input id="history-enabled" type="checkbox" role="switch"></label><div class="card-actions"><span id="history-count" class="muted">正在读取…</span><div class="row-actions"><button id="refresh-history" class="text-button">刷新</button><button id="clear-history" class="text-button danger">清除历史</button></div></div><div id="history-list" class="records-list"></div><button id="history-more" class="text-button" hidden>显示更多历史</button></section>
-        <section class="card"><div class="card-heading"><h2>明确保存的记忆</h2><span id="memory-count" class="subtle-label">0 条</span></div><p class="muted">只有你点击保存的内容才进入这里。可以随时查看和逐条删除。</p><label class="sr-only" for="memory-text">要保存的记忆内容</label><textarea id="memory-text" maxlength="2000" rows="3" placeholder="输入希望长期保留的内容…"></textarea><div class="card-actions"><span class="muted">不会自动提炼聊天内容</span><button id="save-memory" class="primary-button">保存这条记忆</button></div><div id="memory-list" class="records-list"></div></section>
+        <section class="card"><div class="card-heading"><h2>聊天历史</h2><button id="new-conversation" class="secondary-button">新对话</button></div><label class="switch-row" for="history-enabled"><span><strong>跨启动保留聊天历史</strong></span><input id="history-enabled" type="checkbox" role="switch"></label><div class="card-actions"><span id="history-count" class="value-label">正在读取…</span><div class="row-actions"><button id="refresh-history" class="text-button">刷新</button><button id="clear-history" class="text-button danger">清除历史</button></div></div><div id="history-list" class="records-list"></div><button id="history-more" class="text-button" hidden>显示更多历史</button></section>
+        <section class="card"><div class="card-heading"><h2>明确保存的记忆</h2><span id="memory-count" class="value-label">0 条</span></div><label class="sr-only" for="memory-text">要保存的记忆内容</label><textarea id="memory-text" maxlength="2000" rows="3" placeholder="输入希望长期保留的内容…"></textarea><div class="card-actions"><button id="save-memory" class="primary-button">保存这条记忆</button></div><div id="memory-list" class="records-list"></div></section>
       </section>
-      <footer class="main-footer">FootballAssistant · 前端预览<span id="session-short">会话待建立</span></footer>
-    </main>
-  </div>
-  <script src="ui-state.js"></script>
-  <script src="bridge-settings.js"></script>
-  <script src="discovery-settings.js"></script>
-  <script src="settings.js"></script>
-</body>
-</html>
+
+<section id="page-appearance" class="settings-page" aria-labelledby="page-title" hidden><section class="card"><div class="setting-row first-row"><label for="font-family">字体</label><select id="font-family"><option value="system">系统字体</option><option value="sans">无衬线</option><option value="serif">衬线</option><option value="mono">等宽</option></select></div><div class="setting-row"><label for="font-size">字号</label><select id="font-size"><option value="13">13</option><option value="14">14</option><option value="16">16</option><option value="18">18</option></select></div><label class="switch-row" for="dark-mode"><span>深色模式</span><input id="dark-mode" type="checkbox" role="switch" checked></label></section></section>
+<section id="page-about" class="settings-page" aria-labelledby="page-title" hidden><section class="about-content"><img class="app-icon" src="../packaging/assets/icon.png" alt="Football Assistant"><h2>Football Assistant</h2><div id="app-version">版本未确认</div><div id="update-status" role="status"></div><div class="row-actions"><button id="update-check" class="primary-button" disabled>检查更新</button><button id="update-open-release" class="secondary-button">下载页</button><button id="update-download" class="secondary-button" disabled>下载更新</button></div><div class="row-actions"><button id="open-repository" class="text-button">代码仓库</button><button id="open-contributors" class="text-button">贡献者</button></div></section></section>
+</main></div><script src="appearance.js"></script>
+  <script src="ui-state.js"></script><script src="settings.js"></script></body></html>

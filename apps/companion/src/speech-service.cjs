@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createSpeech } = require('./tts.cjs');
+const { createLocalWhisper } = require('./local-whisper.cjs');
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 12_000;
@@ -132,6 +133,7 @@ function createSpeechService(options = {}) {
   const fetchImpl = options.fetch || globalThis.fetch;
   const spawnImpl = options.spawn || spawn;
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const localWhisper = options.localWhisper || createLocalWhisper({ platform, spawn: spawnImpl, assetRoot: options.localAssetRoot });
   const active = new Map();
   let systemContext = null;
   let startingSystem = false;
@@ -152,6 +154,7 @@ function createSpeechService(options = {}) {
     const capability = (id, label, configured, reason, synthetic = false) => ({ id, label, configured, available: configured, reason: configured ? null : reason, synthetic });
     return {
       stt: [
+        localWhisper.capability(),
         capability('openai', 'OpenAI 兼容转写', openaiStt, '尚未配置转写服务、密钥或模型。'),
         capability('mock', '模拟转写', true, null, true),
       ],
@@ -198,7 +201,7 @@ function createSpeechService(options = {}) {
     cancel(context.operationId);
     const record = { controller: new AbortController(), kind };
     active.set(context.operationId, record);
-    const timer = setTimeout(() => record.controller.abort(new SpeechError('timeout', '语音服务响应超时。')), timeoutMs);
+    const timer = setTimeout(() => record.controller.abort(new SpeechError('timeout', '语音服务响应超时。')), kind === 'stt' && payload.provider === 'local-whisper' ? Math.max(timeoutMs, 120_000) : timeoutMs);
     let abortListener;
     const aborted = new Promise((_, reject) => {
       abortListener = () => reject(record.controller.signal.reason);
@@ -254,6 +257,16 @@ function createSpeechService(options = {}) {
         ...metadata(payload, provider, ['这是模拟转写，未识别录音中的实际内容。']),
         text: '【模拟转写】这是一条语音输入示例，未识别实际录音。',
       };
+      if (provider === 'local-whisper') {
+        if (!['audio/wav', 'audio/x-wav'].includes(mimeType)) fail('invalid-audio', '本地转写需要 PCM WAV 录音。');
+        let text;
+        try { text = await localWhisper.transcribe(bytes, payload.language, signal); }
+        catch (error) {
+          if (signal.aborted) throw signal.reason;
+          fail('local-stt-failed', '本地转写失败，请缩短录音重试或重新安装语音组件。');
+        }
+        return { ...metadata(payload, provider, ['轻量模型可能误识别，请检查草稿后发送。']), text };
+      }
       const form = new FormData();
       form.set('model', config.sttModel);
       form.set('file', new Blob([bytes], { type: mimeType }), `recording.${MIME_EXTENSIONS[mimeType]}`);

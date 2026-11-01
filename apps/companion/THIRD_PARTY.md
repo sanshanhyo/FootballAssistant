@@ -38,3 +38,14 @@ verify every native-library obligation or satisfy all corresponding-source dutie
 Electron/Chromium/Node notices and production npm module licenses must additionally
 be checked in the final target-platform application; this document cannot replace
 them. No Doorstop, CoreCLR, BepInEx or Dobby binary is included by this configuration.
+
+
+## Bundled local speech recognition
+
+- Engine: whisper.cpp v1.7.6, commit `a8d002cfd879315632a579e73f0148d06959de36`, MIT. Built from source, CPU-only, no CUDA/Metal runtime requirement.
+- Model: OpenAI Whisper tiny multilingual, GGML Q5_1 conversion distributed by whisper.cpp's maintainer. MIT. 32,152,673 bytes (~30.7 MiB). SHA-256 `818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7`.
+- Model source: https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1
+- Engine source: https://github.com/ggml-org/whisper.cpp/tree/a8d002cfd879315632a579e73f0148d06959de36
+- Engine and model MIT license texts are retained alongside binaries in `resources/local-stt/`. The CLI also embeds miniaudio and stb_vorbis under their public-domain alternatives; their complete dual-license notices and the engine/GGML MIT license are retained alongside the engine.
+- `packaging/build-local-stt.py` verifies pinned source/model hashes, compiles the platform binary, and runs actual CPU inference on upstream's public JFK sample. Build-time downloads only; recorded audio is never uploaded by this provider.
+- Tiny prioritizes footprint over accuracy, especially for Chinese proper names and football terms. Transcripts remain editable drafts, never automatically sent. Speed and peak RAM depend on CPU/audio duration; no real-time guarantee. Upstream reports ~273 MB RAM for unquantized tiny; this is not a measured Q5_1 memory promise.

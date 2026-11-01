@@ -47,36 +47,47 @@
   function dwellMs(text) { return Math.min(8000, Math.max(2200, 1200 + graphemes(text).length * 140)); }
 
   function createQueue({ onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, maxCharacters = 40 } = {}) {
-    let key = null, fullText = '', chunks = [], index = 0, timer = null, version = 0, paused = false, disposed = false;
-    const state = () => ({ key, text: chunks[index] || '', index, count: chunks.length, hasNext: index + 1 < chunks.length });
+    let key = null, fullText = '', chunks = [], index = 0, timer = null, version = 0, paused = false, disposed = false, hidden = true;
+    const state = () => ({ key, text: chunks[index] || '', index, count: chunks.length, hasNext: index + 1 < chunks.length, hidden });
     function stopTimer() { version++; if (timer !== null) clearTimer(timer); timer = null; }
+    function hide() {
+      stopTimer();
+      if (disposed || hidden) return false;
+      hidden = true; onChange(state()); return true;
+    }
     function schedule() {
       stopTimer();
-      if (disposed || paused || index + 1 >= chunks.length) return;
+      if (disposed || paused || hidden || !chunks.length) return;
       const fence = version;
-      timer = setTimer(() => { if (disposed || paused || version !== fence) return; timer = null; next(); }, dwellMs(chunks[index]));
+      // Reading time dismisses this page; it never consumes an unread page.
+      timer = setTimer(() => { if (disposed || paused || version !== fence) return; timer = null; hide(); }, dwellMs(chunks[index]));
     }
     function next() {
-      if (disposed || index + 1 >= chunks.length) return false;
+      if (disposed || paused || hidden || index + 1 >= chunks.length) return false;
       index++; onChange(state()); schedule(); return true;
+    }
+    function reopen() {
+      if (disposed || paused || !hidden || !chunks.length) return false;
+      hidden = false; onChange(state()); schedule(); return true;
     }
     return {
       replace(nextKey, text) {
         if (disposed) return state();
         text = String(text ?? '');
-        if (key === nextKey && fullText === text) return state(); // Polling/re-render never restarts a reply.
+        if (key === nextKey && fullText === text) return state(); // Polling never resurrects a timed-out reply.
         const previous = state();
-        const append = key === nextKey && text.startsWith(fullText);
-        if (!append) { stopTimer(); index = 0; }
+        const append = key === nextKey && fullText.length > 0 && text.startsWith(fullText);
+        if (!append) { stopTimer(); index = 0; hidden = false; }
         key = nextKey; fullText = text; chunks = splitReply(text, maxCharacters);
         index = Math.min(index, Math.max(0, chunks.length - 1));
+        if (!chunks.length) hidden = true;
         const current = state(); onChange(current);
-        // Streaming updates that do not alter the displayed segment keep its clock.
+        // Streaming append retains page and visibility, including unread pending pages.
         if (timer === null || previous.text !== current.text || !append) schedule();
         return current;
       },
-      next,
-      clear() { stopTimer(); key = null; fullText = ''; chunks = []; index = 0; if (!disposed) onChange(state()); },
+      next, hide, reopen,
+      clear() { stopTimer(); key = null; fullText = ''; chunks = []; index = 0; hidden = true; if (!disposed) onChange(state()); },
       pause() { paused = true; stopTimer(); },
       resume() { if (!disposed && paused) { paused = false; schedule(); } },
       dispose() { stopTimer(); disposed = true; },

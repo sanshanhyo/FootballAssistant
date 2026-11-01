@@ -55,13 +55,9 @@ test('render treats text as text and does not promote timestamp, names or unvali
   const f = ui({ windowsDiscoveryGet: async () => ok(value) }); await f.click('discovery-refresh');
   assert.match(f.output(), /<script>TEST<\/script>/); assert.doesNotMatch(f.output(), /MUST NOT RENDER|onerror|2026-01-01/); assert.match(f.output(), /未验证 \/ 未知/);
 });
-test('settings panel mounts without automatic refresh and has no file picker', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/settings.js'), 'utf8');
-  assert.match(source, /CompanionDiscoverySettings\?\.mountDiscoverySettings\(\{ document, api \}\);/);
-  const html = fs.readFileSync(path.join(__dirname, '../src/settings.html'), 'utf8');
-  assert.match(html, /src="discovery-settings.js"/);
-  const panel = html.split('id="discovery-title"')[1].split('</section>')[0];
-  assert.doesNotMatch(panel, /type="file"/); assert.match(panel, /新鲜度始终未知/);
+test('six-page settings has no developer import panel or automatic diagnostic calls', () => {
+ const source=fs.readFileSync(path.join(__dirname,'../src/settings.js'),'utf8');const html=fs.readFileSync(path.join(__dirname,'../src/settings.html'),'utf8');
+ assert.doesNotMatch(source,/mountDiscoverySettings|windowsDiscoveryImport|windowsDiscoveryGet/);assert.doesNotMatch(html,/discovery-settings.js|discovery-title|discovery-event|type="file"/);
 });
 test('unknown identity/freshness/partial contract is mandatory, not inferred from imported_at', async () => {
   for (const patch of [{ page_identity_verified: true }, { source_freshness: 'current' }, { partial: false }, { entity_id: 'TEST-player' }, { captured_at: '2026-01-01' }, { status: 'available' }]) {

@@ -29,52 +29,57 @@ test('hard cuts never split emoji ZWJ families, flags, combining accents or vari
   for (const chunk of chunks) { assert.ok(graphemes(chunk).length <= 40); assert.ok(graphemes(chunk).every(value => symbols.includes(value))); }
   assert.equal(splitReply('球'.repeat(81)).length, 3);
 });
-test('queue advances sequentially with bounded dwell, click-next, and retains final segment', () => {
+test('each segment times out without auto advancing; clicking alone advances and resets clock', () => {
   const f = fixture(); f.queue.replace('a', '第一句。第二句。第三句。');
-  assert.equal(f.queue.state().text, '第一句。'); assert.equal(f.timers.size, 1);
-  assert.ok([...f.timers.values()].every(timer => timer.ms >= 2200 && timer.ms <= 8000));
-  f.fire(); assert.equal(f.queue.state().text, '第二句。');
-  f.queue.next(); assert.equal(f.queue.state().text, '第三句。'); assert.equal(f.timers.size, 0);
-  assert.equal(f.queue.next(), false); assert.equal(f.queue.state().text, '第三句。');
-  assert.equal(dwellMs('短句'), 2200); assert.ok(dwellMs('球'.repeat(40)) > 5000);
+  assert.equal(f.queue.state().hidden, false); assert.equal(f.timers.size, 1);
+  f.fire(); assert.equal(f.queue.state().index, 0); assert.equal(f.queue.state().hidden, true);
+  assert.equal(f.queue.state().count, 3); assert.equal(f.queue.next(), false);
+  f.queue.reopen(); assert.equal(f.queue.state().text, '第一句。');
+  const stale = [...f.timers.values()][0].callback;
+  f.queue.next(); stale(); assert.equal(f.queue.state().index, 1); assert.equal(f.queue.state().hidden, false);
+  f.queue.next(); assert.equal(f.queue.state().index, 2); assert.equal(f.timers.size, 1);
+  f.fire(); assert.equal(f.queue.state().hidden, true); assert.equal(f.queue.state().text, '第三句。');
 });
-test('new replies and cancellation fence late timer callbacks, including rapid repeated next clicks', () => {
-  const f = fixture(); f.queue.replace('old', '旧一。旧二。');
-  const late = [...f.timers.values()][0].callback;
-  f.queue.replace('new', '新一。新二。新三。'); late();
-  assert.equal(f.queue.state().text, '新一。');
+test('single and final pages disappear with grapheme-based bounded reading time', () => {
+  const f = fixture(); f.queue.replace('single', '一段。'); f.fire(); assert.equal(f.queue.state().hidden, true);
+  assert.equal(dwellMs('短句'), 2200); assert.equal(dwellMs('球'.repeat(40)), 6800);
+  assert.equal(dwellMs('球'.repeat(100)), 8000);
+  assert.equal(dwellMs('👨‍👩‍👧‍👦'.repeat(20)), dwellMs('球'.repeat(20)));
+});
+test('new messages, clear and dispose fence stale timer callbacks', () => {
+  const f = fixture(); f.queue.replace('old', '旧一。旧二。'); const late = [...f.timers.values()][0].callback;
+  f.queue.replace('new', '新一。新二。新三。'); late(); assert.equal(f.queue.state().hidden, false);
   for (let i = 0; i < 20; i++) f.queue.next();
-  assert.equal(f.queue.state().text, '新三。'); assert.equal(f.timers.size, 0);
-  f.queue.replace('third', '再一。再二。'); const cancelled = [...f.timers.values()][0].callback;
+  assert.equal(f.queue.state().text, '新三。'); assert.equal(f.timers.size, 1);
+  const cancelled = [...f.timers.values()][0].callback;
   f.queue.clear(); cancelled(); assert.equal(f.queue.state().count, 0); assert.equal(f.timers.size, 0);
+  f.queue.replace('third', '再一。再二。'); const closed = [...f.timers.values()][0].callback;
+  f.queue.dispose(); const count = f.changes.length; closed(); f.queue.reopen(); f.queue.next(); f.queue.replace('x', '不显示');
+  assert.equal(f.changes.length, count); assert.equal(f.timers.size, 0);
 });
-test('unchanged state refreshes do not restart timing or replay a completed message', () => {
+test('polling and streaming append never resurrect hidden pages or discard unread segments', () => {
   const f = fixture(); f.queue.replace('a', '第一句。第二句。'); const timer = [...f.timers.keys()][0];
   f.queue.replace('a', '第一句。第二句。'); assert.deepEqual([...f.timers.keys()], [timer]);
-  f.fire(); f.queue.replace('a', '第一句。第二句。');
-  assert.equal(f.queue.state().index, 1); assert.equal(f.timers.size, 0);
+  f.fire(); f.queue.replace('a', '第一句。第二句。第三句。');
+  assert.equal(f.queue.state().index, 0); assert.equal(f.queue.state().hidden, true); assert.equal(f.queue.state().count, 3);
+  f.queue.reopen(); f.queue.next(); assert.equal(f.queue.state().text, '第二句。');
+  f.queue.replace('a', '修正后的第一句。后续句。'); assert.equal(f.queue.state().index, 0); assert.equal(f.queue.state().hidden, false);
+  f.queue.replace('a', ''); assert.equal(f.queue.state().count, 0); assert.equal(f.timers.size, 0);
+  f.queue.replace('a', '恢复。下一段。'); assert.equal(f.queue.state().hidden, false);
 });
-test('stream append keeps current segment progress; rewrite resets safely and empty output cannot stick', () => {
-  const f = fixture(); f.queue.replace('stream', '第一句。第二句。'); f.fire();
-  f.queue.replace('stream', '第一句。第二句。第三句。'); assert.equal(f.queue.state().index, 1);
-  f.fire(); assert.equal(f.queue.state().text, '第三句。');
-  f.queue.replace('stream', '修正后的第一句。后续句。'); assert.equal(f.queue.state().index, 0);
-  f.queue.replace('stream', ''); assert.equal(f.queue.state().count, 0); assert.equal(f.timers.size, 0);
-  f.queue.replace('stream', '恢复。下一段。'); f.fire(); assert.equal(f.queue.state().text, '下一段。');
-});
-test('long partial streaming extends only current part and eventually advances without starvation', () => {
-  const f = fixture(); f.queue.replace('stream', '球'.repeat(40));
-  f.queue.replace('stream', '球'.repeat(41)); const timer = [...f.timers.keys()][0];
+test('streaming beyond displayed segment preserves its timer', () => {
+  const f = fixture(); f.queue.replace('stream', '球'.repeat(40)); const timer = [...f.timers.keys()][0];
   f.queue.replace('stream', '球'.repeat(80)); assert.deepEqual([...f.timers.keys()], [timer]);
-  f.fire(); assert.equal(f.queue.state().index, 1);
+  f.fire(); assert.equal(f.queue.state().index, 0); assert.equal(f.queue.state().hidden, true);
 });
-test('hide pauses, show resumes current part, dispose prevents all later output', () => {
+test('window close pauses; reopening resumes the same visible page, never a hidden one', () => {
   const f = fixture(); f.queue.replace('a', '第一句。第二句。'); const late = [...f.timers.values()][0].callback;
   f.queue.pause(); late(); assert.equal(f.queue.state().index, 0); assert.equal(f.timers.size, 0);
-  f.queue.resume(); assert.equal(f.timers.size, 1); f.fire(); assert.equal(f.queue.state().index, 1);
-  f.queue.replace('b', '第三句。第四句。'); const afterClose = [...f.timers.values()][0].callback;
-  f.queue.dispose(); const count = f.changes.length; afterClose(); f.queue.next(); f.queue.replace('c', '不应显示。');
-  assert.equal(f.changes.length, count); assert.equal(f.timers.size, 0);
+  assert.equal(f.queue.next(), false); f.queue.resume(); assert.equal(f.timers.size, 1);
+  f.fire(); assert.equal(f.queue.state().hidden, true);
+  f.queue.pause(); f.queue.resume(); assert.equal(f.timers.size, 0);
+  f.queue.reopen(); assert.equal(f.queue.state().index, 0); assert.equal(f.timers.size, 1);
+  f.queue.hide(); assert.equal(f.timers.size, 0);
 });
 test('latest reply excludes previous input, old request responses and old sessions; full history is untouched', () => {
   const session = { sessionId: 's', epoch: 1 };

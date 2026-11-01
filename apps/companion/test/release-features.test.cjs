@@ -15,9 +15,9 @@ test('desktop artifact excludes local runtime, credentials, captures, logs and s
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.equal(manifest.version, '0.0.1-alpha.1');
   const files = manifest.build.files;
-  assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json']);
+  assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));
-  assert.equal(manifest.build.extraResources.length, 1);
+  assert.equal(manifest.build.extraResources.length, 2);
   const backend = manifest.build.extraResources[0];
   assert.equal(backend.from, '../../build/desktop-backend/football-assistant-backend');
   assert.equal(backend.to, 'backend');
@@ -27,6 +27,7 @@ test('desktop artifact excludes local runtime, credentials, captures, logs and s
   assert.equal(manifest.build.nsis.perMachine, false);
   assert.equal(manifest.build.nsis.allowElevation, false);
   assert.notEqual(manifest.build.nsis.artifactName, manifest.build.portable.artifactName);
+  const stt = manifest.build.extraResources[1]; assert.equal(stt.from, 'local-stt'); assert.equal(stt.to, 'local-stt'); assert.deepEqual(stt.filter, ['whisper-cli', 'whisper-cli.exe', 'ggml-tiny-q5_1.bin', 'manifest.json', '*-LICENSE.txt']);
   assert.equal(manifest.build.extraFiles, undefined);
   assert.match(manifest.scripts['pack:win'], /--publish never/);
   assert.match(manifest.scripts['pack:mac'], /--publish never/);

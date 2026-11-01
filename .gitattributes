@@ -5,3 +5,5 @@
 /packaging/licenses/openssl-3.0.16/AUTHORS.md -text
 /packaging/licenses/openssl-3.0.16/ACKNOWLEDGEMENTS.md -text
 /packaging/licenses/openssl-3.0.16/README.md -text
+
+/apps/companion/packaging/WHISPER-MODEL-LICENSE.txt -text

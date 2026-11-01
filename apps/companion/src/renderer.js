@@ -39,23 +39,25 @@
     if (text !== undefined) element.textContent = String(text);
     return element;
   };
-  const preferences = () => ({ expression:'auto', sttProvider:'openai', ttsProvider:'system', ...state?.preferences });
+  const preferences = () => ({ expression:'auto', sttProvider:'local-whisper', ttsProvider:'system', ...state?.preferences });
 
   const bubbleQueue = Bubbles?.createQueue({ onChange: part => {
     $('compact-text').textContent = part.text;
-    $('compact-bubble').hidden = !part.text;
+    $('compact-bubble').hidden = part.hidden || !part.text;
     $('bubble-progress').hidden = part.count < 2;
-    $('bubble-progress').textContent = part.count > 1 ? `${part.index + 1} / ${part.count}${part.hasNext ? ' · 点击继续' : ' · 完'}` : '';
+    $('bubble-progress').textContent = part.count > 1 ? `${part.index + 1} / ${part.count}` : '';
     $('bubble-content').dataset.hasNext = String(part.hasNext);
-    $('compact-text').title = part.hasNext ? '点击或按 Enter 查看下一段；完整回复保留在历史中' : '完整回复保留在历史中';
+    $('compact-bubble').setAttribute('aria-label', part.hasNext ? `对白 ${part.index + 1} / ${part.count}，点击或按回车查看下一段` : '对白最后一段');
+    $('compact-bubble').setAttribute('aria-disabled', String(!part.hasNext));
+    $('compact-text').title = '';
     $('bubble-body').scrollTop = 0;
     updateRects();
   } });
 
   function updateRects() {
     if (!api?.inputRects) return;
-    // The artwork's transparent corners pass through; only its content area is interactive.
-    const rects = [$('pet'), $('bubble-content'), $('chat-form'), $('interaction-feedback'), $('draft-note')].filter(item => item && !item.hidden).map(element => {
+    // The full bubble is clickable; hidden ancestors must never leave a stale input region.
+    const rects = [$('pet'), $('compact-bubble'), $('chat-form'), $('interaction-feedback'), $('draft-note')].filter(item => item && !item.hidden && item.getClientRects().length).map(element => {
       const rect = element.getBoundingClientRect();
       return { x:rect.x, y:rect.y, width:rect.width, height:rect.height };
     });
@@ -341,6 +343,31 @@
     operation.stream?.getTracks().forEach(track => track.stop());
   }
 
+  async function localRecordingWav(blob) {
+    const context = new AudioContext();
+    let decoded;
+    try { decoded = await context.decodeAudioData(await blob.arrayBuffer()); }
+    finally { await context.close(); }
+    if (!decoded.length || decoded.duration > 65) throw new Error('录音长度无效。');
+    const frames = Math.ceil(decoded.duration * 16000);
+    const offline = new OfflineAudioContext(1, frames, 16000);
+    const source = offline.createBufferSource();
+    source.buffer = decoded; source.connect(offline.destination); source.start();
+    const pcm = (await offline.startRendering()).getChannelData(0);
+    const wav = new ArrayBuffer(44 + pcm.length * 2);
+    const view = new DataView(wav);
+    const tag = (offset, text) => [...text].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+    tag(0, 'RIFF'); view.setUint32(4, wav.byteLength - 8, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); tag(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) {
+      const value = Math.max(-1, Math.min(1, pcm[i]));
+      view.setInt16(44 + i * 2, value * (value < 0 ? 32768 : 32767), true);
+    }
+    return wav;
+  }
+
   async function finishTranscription(operation) {
     clearTimeout(operation.timer); operation.stream?.getTracks().forEach(track => track.stop());
     if (operation.cancelled || !voiceFence.accepts(operation.token) || recording !== operation) return;
@@ -351,9 +378,9 @@
     speechOperation = operation;
     setVoiceStatus(operation.provider === 'mock' ? '模拟转写中（非实际识别）…' : '正在转为文字…', 'transcribing');
     try {
-      const audio = await blob.arrayBuffer();
+      const audio = operation.provider === 'local-whisper' ? await localRecordingWav(blob) : await blob.arrayBuffer();
       if (!speechResultCurrent({}, operation)) return;
-      const result = unwrap(await api.transcribe({ ...operation.context, provider:operation.provider, audio, mimeType:blob.type, language:'zh' }));
+      const result = unwrap(await api.transcribe({ ...operation.context, provider:operation.provider, audio, mimeType:operation.provider === 'local-whisper' ? 'audio/wav' : blob.type, language:'zh' }));
       if (!speechResultCurrent(result, operation)) return;
       if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('转写服务未返回文字。');
       if ($('message').value && !$('message').value.endsWith('\n')) $('message').value += '\n';
@@ -423,16 +450,26 @@
     if (action === 'drag-end') dragReady.then(() => api.dragEnd()).catch(() => {});
     if (action === 'voice-stop') stopRecording();
     if (action === 'voice-cancel') stopRecording(true);
-    if (action === 'click') setComposer($('chat-form').hidden, true);
+    if (action === 'click') { bubbleQueue?.reopen(); setComposer($('chat-form').hidden, true); }
     if ($('pet').hasPointerCapture?.(event.pointerId)) $('pet').releasePointerCapture(event.pointerId);
   }
 
   function bindEvents() {
     $('chat-form').addEventListener('submit', send);
-    $('bubble-content').addEventListener('click', () => {
-      if (!window.getSelection()?.toString()) bubbleQueue?.next();
+    let bubblePointer = null;
+    $('compact-bubble').addEventListener('pointerdown', event => {
+      bubblePointer = event.button === 0 ? { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false } : null;
     });
-    $('compact-text').addEventListener('keydown', event => {
+    $('compact-bubble').addEventListener('pointermove', event => {
+      if (bubblePointer?.id === event.pointerId && Math.hypot(event.clientX - bubblePointer.x, event.clientY - bubblePointer.y) > 5) bubblePointer.moved = true;
+    });
+    $('compact-bubble').addEventListener('pointercancel', () => { bubblePointer = null; });
+    $('compact-bubble').addEventListener('click', event => {
+      const isClick = event.detail === 0 || (bubblePointer && !bubblePointer.moved);
+      bubblePointer = null;
+      if (isClick && !window.getSelection()?.toString()) bubbleQueue?.next();
+    });
+    $('compact-bubble').addEventListener('keydown', event => {
       if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); bubbleQueue?.next(); }
     });
     $('message').addEventListener('compositionstart', () => { composing = true; });
@@ -456,12 +493,12 @@
     $('pet').addEventListener('pointerup', event => endGesture(event));
     $('pet').addEventListener('pointercancel', event => endGesture(event, true));
     $('pet').addEventListener('lostpointercapture', event => { if (gesture.mode !== 'idle') endGesture(event, true); });
-    $('pet').addEventListener('keydown', event => { if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); setComposer($('chat-form').hidden, true); } });
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') { clearTimeout(holdTimer); cancelVoice(''); setComposer(false); } });
+    $('pet').addEventListener('keydown', event => { if ((event.key === 'Enter' || event.key === ' ') && !event.repeat) { event.preventDefault(); bubbleQueue?.reopen(); setComposer($('chat-form').hidden, true); } });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { clearTimeout(holdTimer); cancelVoice(''); bubbleQueue?.hide(); setComposer(false); } });
     document.addEventListener('toggle', updateRects, true);
     window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
     window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
-    window.addEventListener('beforeunload', () => { sceneClosed = true; clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
+    window.addEventListener('beforeunload', () => { sceneClosed = true; disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
     const observer = new ResizeObserver(updateRects);
     [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
   }
@@ -476,12 +513,14 @@
   }
 
   let unsubscribe;
+  let disposeAppearance;
   if (!api || !UI || !Bubbles || !Scenes) {
     $('error').textContent = '桌宠桥接未就绪，请从应用打开。';
     $('error').hidden = false; $('interaction-feedback').hidden = false;
     return;
   }
   bindEvents();
+  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: () => { resizeComposer(); updateRects(); }});
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeechCapabilities();
