@@ -25,5 +25,15 @@
     "BepInEx/core/Il2CppInterop.Generator.dll",
     "BepInEx/core/Cpp2IL.Core.dll",
     "BepInEx/core/dobby.dll"
-  ]
+  ],
+  "runtimePolicy": {
+    "interopMode": "local-metadata-no-unstrip",
+    "unityBaseLibrariesSource": "",
+    "unityLogListening": false,
+    "updateInteropAssemblies": true,
+    "runtimeDependencyDownloads": false,
+    "supportedGameUnityVersion": "6000.3.18f1-custom (96cdb67fb884)",
+    "unityPlayerSha256": "c927f41849e3347cfc430a90b05f072df07ac45b0b2a3b39e9412c776f7c0d57",
+    "realGameAcceptance": "pending"
+  }
 }
