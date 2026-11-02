@@ -26,11 +26,15 @@ async function loaderProgress(gamePath) {
     return { phase, updatedAt: new Date(stat.mtimeMs).toISOString(), errorRecorded: /\[Error\s*:|fatal|failed to download|failed to generate/i.test(text) };
   } catch { return null; } finally { await handle?.close(); }
 }
+function deploymentError(error) {
+  const messages = { game_running: '请先退出 FM，再部署或回滚比赛组件。', game_state_unknown: '无法确认 FM 是否退出，未修改游戏。', unsupported_game_binary: '当前游戏版本不受支持，未修改游戏。', loader_conflict: '发现不兼容加载器或他人组件，不能覆盖。', migration_consent_required: '请单独确认备份并替换列出的旧加载器。', confirmation_required: '部署计划已失效或尚未确认，请重新生成计划。', plan_changed: '文件在确认后发生变化，请重新生成计划。', rollback_file_modified: '部署后的文件已被修改，回滚已停止，不会覆盖这些文件。', backup_integrity_failed: '备份校验失败，未覆盖游戏文件。', payload_integrity_failed: '内置组件校验失败，请安装完整软件包。', payload_identity_invalid: '内置组件版本不匹配，请安装完整软件包。', unsafe_file: '检测到不安全或被链接的文件，操作已停止。', unsafe_directory: '检测到不安全或被链接的目录，操作已停止。', recovery_required: '上次操作未完成，请先回滚恢复。', EACCES: '没有文件写入权限，未提升权限或绕过限制。', EPERM: '文件不可写或被占用，请退出游戏后检查权限。' };
+  return Object.assign(Error(messages[error.code] || error.message || '比赛组件操作失败。'), { code: error.code });
+}
 function createWindowsMatchSetup({ userData, installer, packaged, platform = process.platform, chooseGame, inspectSelectedGame = inspectGame,
   requestMatch, probeGame = () => detectGame(platform), onConfigured = async () => ({}), now = Date.now }) {
   let pending = null, selected = null, busy = false, waitingSince = null, lastInspection = null;
   const supported = platform === 'win32' && packaged;
-  const exclusive = async action => { if (busy) throw Error('比赛组件操作正在进行，请稍候。'); busy = true; try { return await action(); } finally { busy = false; } };
+  const exclusive = async action => { if (busy) throw Error('比赛组件操作正在进行，请稍候。'); busy = true; try { return await action(); } catch (error) { throw deploymentError(error); } finally { busy = false; } };
   const publicValue = value => { const { confirmationToken, ...rest } = value || {}; return rest; };
   async function persist(enabled, gamePath, snapshotPath = '') {
     const file = path.join(userData, 'settings.json');
@@ -49,7 +53,7 @@ function createWindowsMatchSetup({ userData, installer, packaged, platform = pro
       install = verify && lastInspection ? lastInspection : await installer.inspect(selected || settings.windowsMatchGamePath || settings.windowsReaderGamePath || undefined);
       if (!verify) lastInspection = install;
     }
-    catch (error) { return { supported: true, state: 'deployment_error', error: error.message, code: error.code, dataConnected: false }; }
+    catch (error) { return { supported: true, state: 'deployment_error', error: deploymentError(error).message, code: error.code, dataConnected: false }; }
     const result = { ...publicValue(install), supported: true, enabled: settings.windowsMatchEnabled === true, dataConnected: false };
     if (install.state !== 'deployed') return result;
     await trustedMatchPath(userData, install.snapshotPath);
