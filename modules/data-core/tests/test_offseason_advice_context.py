@@ -126,3 +126,70 @@ def test_native_prompt_is_untrusted_and_local_identity_never_sent(tmp_path, monk
         assert "untrusted_persona" in captured["message"]
     finally:
         agent.close(); store.close()
+
+
+def selected_envelope():
+    data = envelope(); s = data["snapshot"]
+    s["team"] = {"status": "experimental_candidates_incomplete", "observedAt": s["capturedAt"], "players": [
+        {"uid": uid, "name": f"Player {uid}", "clubUid": 34, "linkStatus": "exact_types", "position": "injected keeper"} for uid in (101, 102)]}
+    s["player"] = {"observedAt": s["capturedAt"], "value": {"status": "experimental", "uid": 101, "displayName": "Player 101",
+        "affiliation": {"clubUid": 34}, "details": {"reflexesRaw": 211, "handlingRaw": 0, "anticipationRaw": 255,
+        "jumpingRaw": 54, "heightCm": 193, "dateOfBirth": "2001-01-02", "position": "injected keeper"},
+        "contract": {"wageRaw": "DO NOT SEND"}}}
+    s["tactic"] = {"status": "experimental", "observedAt": s["capturedAt"], "phase": "candidate", "positionMasks": ["raw"],
+        "rolesDuties": ["candidate"], "contentFreshness": "current", "players": ["DO NOT SEND"]}
+    return data
+
+
+def test_explicit_selection_raw_attributes_and_tactic_remain_candidates():
+    data = selected_envelope()
+    without = prepare_offseason_advice(data)["facts"]
+    assert not without["team_candidates"] and without["player_candidate"] is None and without["tactic_candidate"] is None
+    facts = prepare_offseason_advice(data, club_uid=34, person_uid=101)["facts"]
+    assert len(facts["team_candidates"]) == 2
+    assert all(row["position"] == "unknown" for row in facts["team_candidates"])
+    assert facts["player_candidate"]["attributes_raw"] == {"reflexesRaw": 211, "handlingRaw": 0, "anticipationRaw": 255, "jumpingRaw": 54}
+    assert facts["player_candidate"]["height_cm"] == 193 and facts["player_candidate"]["date_of_birth"] == "2001-01-02"
+    assert facts["tactic_candidate"]["content_freshness"] == "unknown"
+    assert "DO NOT SEND" not in str(facts) and "injected keeper" not in str(facts)
+    assert prepare_offseason_advice(data, club_uid=35, person_uid=101)["facts"]["player_candidate"] is None
+    assert prepare_offseason_advice(data, club_uid=34, person_uid=102)["facts"]["player_candidate"] is None
+    assert prepare_offseason_advice(data, club_uid=True) is None
+
+
+def test_malformed_raw_or_stale_fields_are_unknown():
+    data = selected_envelope(); s = data["snapshot"]
+    s["player"]["value"]["details"].update(reflexesRaw=256, handlingRaw=True, heightCm=99, dateOfBirth="2001-02-30")
+    s["team"]["players"][0]["linkStatus"] = "guessed"
+    s["tactic"]["observedAt"] = "2000-01-01T00:00:00Z"
+    facts = prepare_offseason_advice(data, club_uid=34, person_uid=101)["facts"]
+    assert len(facts["team_candidates"]) == 1
+    assert facts["tactic_candidate"] is None
+    assert facts["player_candidate"]["attributes_raw"]["reflexesRaw"] is None
+    assert facts["player_candidate"]["attributes_raw"]["handlingRaw"] is None
+    assert facts["player_candidate"]["height_cm"] is None and facts["player_candidate"]["date_of_birth"] is None
+
+
+def test_related_people_require_primary_roster_same_session_and_club():
+    data = selected_envelope()
+    related = []
+    for uid in (101, 102):
+        item = deepcopy(data); item["snapshot"]["player"]["value"].update(uid=uid, displayName=f"Player {uid}")
+        related.append({"person_uid": uid, "envelope": item})
+    agent = AgentService(None, None)
+    async def fake_chat(message, conversation_id, context, **kwargs):
+        return {"reply": "fixture"}
+    agent._chat = fake_chat
+    try:
+        result = asyncio.run(agent.offseason_advice("比较指定门将", None, data, club_uid=34, related_people=related))
+        assert [p["uid"] for p in result["context"]["facts"]["player_candidates"]] == [101, 102]
+        process = related[1]["envelope"]["snapshot"]["process"]
+        process["pid"] = 43
+        process["sessionId"] = hashlib.sha256(f"43:{process['startedAt']}".encode()).hexdigest()
+        result = asyncio.run(agent.offseason_advice("比较", None, data, club_uid=34, related_people=related))
+        assert len(result["context"]["facts"]["player_candidates"]) == 1
+        related[0]["envelope"]["snapshot"]["player"]["value"]["affiliation"]["clubUid"] = 35
+        result = asyncio.run(agent.offseason_advice("比较", None, data, club_uid=34, related_people=related))
+        assert result["context"]["facts"]["player_candidates"] == []
+    finally:
+        agent.close()

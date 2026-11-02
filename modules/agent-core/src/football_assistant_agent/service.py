@@ -115,10 +115,27 @@ class AgentService:
         response = await self._chat(message, conversation_id, context, business=True, **({"character_context": character_context} if character_context is not None else {}))
         return {**prepared, **response, "status": "generated"}
 
-    async def offseason_advice(self, message, conversation_id, envelope, *, character_context=None):
-        prepared = prepare_offseason_advice(envelope)
+    async def offseason_advice(self, message, conversation_id, envelope, *, character_context=None, club_uid=0, person_uid=0, related_people=()):
+        prepared = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid)
         if prepared is None:
             return None
+        # Related person reads are bounded, same-process, and must belong to the
+        # primary selected-club roster projection. Never merge a new game session.
+        if club_uid and isinstance(related_people, (tuple, list)) and len(related_people) <= 2:
+            roster = {row["uid"] for row in prepared["facts"]["team_candidates"]}
+            candidates, seen = [], set()
+            for related in related_people:
+                if not isinstance(related, dict) or type(related.get("person_uid")) is not int:
+                    continue
+                uid = related["person_uid"]
+                if uid not in roster or uid in seen:
+                    continue
+                item = prepare_offseason_advice(related.get("envelope"), club_uid=club_uid, person_uid=uid)
+                if item is None or item["session_id"] != prepared["session_id"] or item["facts"]["player_candidate"] is None:
+                    continue
+                seen.add(uid)
+                candidates.append(item["facts"]["player_candidate"])
+            prepared["facts"]["player_candidates"] = candidates
         if asks_managed_team(message):
             response = managed_team_unconfirmed(conversation_id, mode="native")
         else:
