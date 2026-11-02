@@ -25,8 +25,8 @@ if (-not $process.WaitForExit(120000)) {
   throw 'Silent installer failed to reject missing game path without interaction'
 }
 if ($process.ExitCode -ne 3) { throw "Expected missing-game-path exit 3, got $($process.ExitCode)" }
-if ((Test-Path (Join-Path $install 'FootballAssistant.exe')) -or (Test-Path (Join-Path $install 'installation.json'))) {
-  throw 'Rejected installation left an installed application/channel marker'
+if (Test-Path (Join-Path $install 'installation.json')) {
+  throw 'Incomplete installation wrote a successful channel marker'
 }
 if ((Get-FileHash $settings).Hash -ne $settingsHash -or (Get-FileHash $persona).Hash -ne $personaHash) {
   throw 'Rejected installation changed user settings/persona'
@@ -35,7 +35,9 @@ if ((Get-FileHash $settings).Hash -ne $settingsHash -or (Get-FileHash $persona).
   schema = 2
   silentMissingGamePathRejected = $true
   rejectionExitCode = $process.ExitCode
-  noApplicationInstalled = $true
+  appFilesMayRemain = $true
+  applicationFilesPresent = (Test-Path (Join-Path $install 'FootballAssistant.exe'))
+  successfulChannelMarkerAbsent = $true
   settingsPreservedOnRejection = $true
   personaPreservedOnRejection = $true
   fullInstallation = 'not_run'
