@@ -23,7 +23,7 @@ test('native metadata and publication plan bind one exact installer, with channe
 
 test('manual Alpha workflow accepts only main and keeps signing isolated from push and PR events',()=>{
  const vm=require('node:vm');
- const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8');
+ const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8').replace(/\r\n/g,'\n');
  const prepareStep=workflow.split('      - name: Prepare monotonic Alpha version without publishing\n')[1].split('      - run: npm ci')[0];
  assert.match(prepareStep,/if: github\.event_name == 'workflow_dispatch' && inputs\.prepare_alpha\n/);
  const guard=prepareStep.split('\n').find(line=>line.includes('process.env.GITHUB_REF'))?.trim();
@@ -44,7 +44,7 @@ test('manual Alpha workflow accepts only main and keeps signing isolated from pu
 });
 
 test('Windows metadata artifact includes each preparation file as a separate unindented path',()=>{
- const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8');
+ const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8').replace(/\r\n/g,'\n');
  const upload=workflow.split('      - name: Upload Windows update metadata\n')[1].split('      - name:')[0];
  const lines=upload.split('          path: |\n')[1].split('          if-no-files-found:')[0].trimEnd().split('\n');
  assert.deepEqual(lines.map(line=>{assert.match(line,/^ {12}\S/);return line.slice(12);}),[
