@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import re
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -28,12 +29,14 @@ def character_scope(save_id: str | None, character_id: str | None) -> tuple[str,
 
 
 class CompanionStore:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path | None):
         self._lock = threading.RLock()
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db = sqlite3.connect(":memory:" if path is None else path, check_same_thread=False)
         self._db.execute("PRAGMA busy_timeout = 5000")
+        if path is None:
+            self._db.execute("PRAGMA temp_store = MEMORY")
         existing = self._db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()
-        if existing and "save_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(messages)")}:
+        if existing and path is not None and "save_id" not in {row[1] for row in self._db.execute("PRAGMA table_info(messages)")}:
             # SQLite backup includes committed WAL data. Never overwrite the first backup.
             backup_path = path.with_name(path.name + ".pre-character-v1.bak")
             if backup_path.exists():
@@ -79,7 +82,7 @@ class CompanionStore:
             self._db.execute("CREATE INDEX IF NOT EXISTS memories_character_scope ON memories(save_id,character_id,created_at)")
             self._db.execute("CREATE TABLE IF NOT EXISTS character_migrations (name TEXT PRIMARY KEY, completed_at TEXT NOT NULL)")
             self._db.execute("INSERT OR IGNORE INTO character_migrations VALUES ('scope-v1',?)", (datetime.now(timezone.utc).isoformat(),))
-        if os.name != "nt":
+        if path is not None and os.name != "nt":
             path.chmod(0o600)
 
     def close(self) -> None:
@@ -119,6 +122,42 @@ class CompanionStore:
     def legacy_archive_counts(self) -> dict:
         with self._lock:
             return {table: self._db.execute(f"SELECT COUNT(*) FROM {table} WHERE save_id=?", (ARCHIVE_SAVE_ID,)).fetchone()[0] for table in ("messages", "memories")}
+
+    def legacy_archive(self) -> dict:
+        """Bounded read-only preview of unassigned, pre-character Eckera records.
+
+        Never copies archive text into active scope. Text clipping is explicit;
+        original rows and the migration backup remain untouched.
+        """
+        result = {"messages": [], "memories": [], "readOnly": True, "counts": {}, "truncated": {}}
+        columns = {
+            "messages": ("id", "conversation_id", "role", "content", "created_at", "content_truncated"),
+            "memories": ("id", "content", "source", "created_at", "content_truncated"),
+        }
+        queries = {
+            "messages": "SELECT id,substr(conversation_id,1,128),role,substr(content,1,12000),substr(created_at,1,64),length(content)>12000 FROM messages WHERE save_id=? AND character_id=? ORDER BY id DESC LIMIT 500",
+            "memories": "SELECT substr(id,1,64),substr(content,1,2000),substr(source,1,64),substr(created_at,1,64),length(content)>2000 FROM memories WHERE save_id=? AND character_id=? ORDER BY created_at DESC,id DESC LIMIT 200",
+        }
+        with self._lock:
+            for table, query in queries.items():
+                args = (ARCHIVE_SAVE_ID, DEFAULT_CHARACTER_ID)
+                count = self._db.execute(f"SELECT COUNT(*) FROM {table} WHERE save_id=? AND character_id=?", args).fetchone()[0]
+                result["counts"][table] = count
+                remaining = 1_000_000
+                clipped = False
+                entries = []
+                for row in self._db.execute(query, args):
+                    entry = dict(zip(columns[table], row))
+                    entry["content_truncated"] = bool(entry["content_truncated"])
+                    size = len(json.dumps(entry, ensure_ascii=False).encode("utf-8")) + 1
+                    if size > remaining:
+                        break
+                    remaining -= size
+                    clipped = clipped or entry["content_truncated"]
+                    entries.append(entry)
+                result[table] = list(reversed(entries))
+                result["truncated"][table] = clipped or len(entries) < count
+        return result
 
     def assign_legacy_archive(self, verified_save_id: str) -> dict:
         """Explicit verified single-save mapping only; never called automatically.

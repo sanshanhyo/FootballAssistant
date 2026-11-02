@@ -35,10 +35,41 @@ class CaptureProfileRequest(BaseModel):
     profile: Literal["schedule", "tactics", "current_page_attributes", "next_match"]
 
 
+class CharacterContext(BaseModel):
+    """Authenticated main-process context; never accepts resource paths or URLs."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    save_id: str = Field(min_length=1, max_length=512)
+    character_id: str = Field(min_length=1, max_length=96, pattern=r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$")
+    persona: str | None = Field(default=None, min_length=1, max_length=16384)
+
+    @field_validator("save_id", "persona")
+    @classmethod
+    def bounded_text(cls, value: str | None, info):
+        if value is None:
+            return value
+        maximum = 512 if info.field_name == "save_id" else 16384
+        if not value.strip() or "\x00" in value or len(value.encode("utf-8")) > maximum:
+            raise ValueError("Invalid character context text")
+        return value
+
+    @field_validator("character_id")
+    @classmethod
+    def normalize_builtin(cls, value: str):
+        return "official.eckera" if value == "builtin.eckera" else value
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    character_context: CharacterContext | None = None
+
+    @field_validator("character_context")
+    @classmethod
+    def selected_persona(cls, value):
+        if value is not None and value.character_id != "official.eckera" and value.persona is None:
+            raise ValueError("Selected character requires persona text")
+        return value
 
     @field_validator("message")
     @classmethod
@@ -62,6 +93,7 @@ class CalendarAdviceRequest(ChatRequest):
 class MemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     content: str = Field(min_length=1, max_length=2000)
+    character_context: CharacterContext | None = None
 
     @field_validator("content")
     @classmethod
@@ -172,6 +204,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             app.state.windows_discovery = empty_snapshot()
             observations.close()
             if companion is not None:
+                app.state.agent.close()
                 companion.close()
             try:
                 runtime = json.loads(settings.runtime_file.read_text())
@@ -217,7 +250,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     async def status():
         if not enable_agent:
             return {"source_status":app.state.observations.source_status(),"mode":"reader","agent_enabled":False}
-        return {"source_status":app.state.observations.source_status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.companion.counts()}
+        return {"source_status":app.state.observations.source_status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
 
     if enable_agent:
         @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
@@ -455,7 +488,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             # override provenance, readiness or provide their own snapshot.
             snapshot = app.state.business_snapshots.read()["snapshot"]
             try:
-                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot)
+                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
@@ -471,7 +504,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
             envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
             try:
-                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end)
+                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
             except ModelNotConfigured as error:
@@ -496,7 +529,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}
             try:
-                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"])
+                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"], **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
                 if result.get("status") == "partial":
                     result["reply"] = "按经理关联球队候选读取，尚未确认当前执教身份。\n" + result["reply"]
                     result["selection"] = {key: scope[key] for key in ("club_uid", "club_name", "selection", "start", "end")}
@@ -515,7 +548,8 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             snapshot = app.state.observations.reader_snapshot(0, MAX_FACTS)
             try:
                 return await app.state.agent.ui_advice(body.message,body.conversation_id,body.capability,snapshot,
-                    refresh=lambda: app.state.observations.reader_snapshot(0, MAX_FACTS))
+                    refresh=lambda: app.state.observations.reader_snapshot(0, MAX_FACTS),
+                    **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
@@ -526,7 +560,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
-                return await app.state.agent.chat(body.message,body.conversation_id)
+                return await app.state.agent.chat(body.message,body.conversation_id, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
@@ -534,17 +568,34 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelUnavailable as error:
                 raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
 
+        @app.get("/v1/characters/legacy-archive", dependencies=[Depends(authorized)])
+        async def legacy_character_archive(request: Request):
+            if request.query_params:
+                raise HTTPException(422, detail={"code": "archive_scope_fixed", "message": "The legacy archive does not accept scope parameters."})
+            return app.state.companion.legacy_archive()
+
+        def memory_scope(save_id=None, character_id=None):
+            try:
+                supplied = None if save_id is None and character_id is None else CharacterContext(save_id=save_id, character_id=character_id).model_dump(exclude_none=True)
+                context = app.state.agent.character_context(supplied)
+                return {key: context[key] for key in ("save_id", "character_id")}
+            except (ValueError, TypeError):
+                raise HTTPException(422, detail={"code": "invalid_character_scope", "message": "Both save_id and character_id are required."}) from None
+
         @app.get("/v1/memories",dependencies=[Depends(authorized)])
-        async def memories():
-            return {"memories":app.state.companion.memories()}
+        async def memories(save_id: str | None = Query(default=None, max_length=512), character_id: str | None = Query(default=None, max_length=96)):
+            scope = memory_scope(save_id, character_id)
+            return {"memories":app.state.agent.store_for_context(scope).memories(**scope), "character_context":scope}
 
         @app.post("/v1/memories",dependencies=[Depends(authorized)],status_code=201)
         async def create_memory(body: MemoryRequest):
-            return app.state.companion.add_memory(body.content)
+            scope = memory_scope(body.character_context.save_id, body.character_context.character_id) if body.character_context else memory_scope()
+            return {**app.state.agent.store_for_context(scope).add_memory(body.content, **scope), "character_context":scope}
 
         @app.delete("/v1/memories/{memory_id}",dependencies=[Depends(authorized)])
-        async def delete_memory(memory_id: UUID):
-            if not app.state.companion.delete_memory(str(memory_id)):
+        async def delete_memory(memory_id: UUID, save_id: str | None = Query(default=None, max_length=512), character_id: str | None = Query(default=None, max_length=96)):
+            scope = memory_scope(save_id, character_id)
+            if not app.state.agent.store_for_context(scope).delete_memory(str(memory_id), **scope):
                 raise HTTPException(404,detail={"code":"memory_not_found","message":"记忆不存在。"})
             return {"deleted":True}
 

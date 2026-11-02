@@ -18,12 +18,12 @@ function sameLocalPage(currentUrl, pageUrl) {
 const SHARED_IPC = [
   'get-state', 'game-status', 'refresh-reader-previews', 'set-capture-profile', 'set-mode', 'cancel-request', 'new-conversation', 'set-proactivity', 'set-preferences',
   'simulate-event', 'get-history', 'clear-history', 'set-history-enabled', 'get-memories',
-  'save-memory', 'delete-memory', 'open-settings', 'speech-capabilities', 'stop-speech', 'quit',
+  'save-memory', 'delete-memory', 'open-settings', 'speech-config-get', 'speech-capabilities', 'stop-speech', 'quit',
 ];
 const WINDOW_IPC = Object.freeze({
   pet: new Set([...SHARED_IPC, 'send-message', 'context-menu', 'transcribe', 'speak',
     'cancel-speech-operation', 'microphone-permission', 'drag-start', 'drag-move', 'drag-end', 'input-rects']),
-  settings: new Set([...SHARED_IPC, 'settings-window-control', 'windows-discovery-import', 'windows-discovery-get', 'windows-discovery-clear', 'bridge-inspect', 'bridge-plan', 'bridge-deploy', 'bridge-rollback', 'persona-get', 'persona-save', 'character-introduction', 'about-get', 'repository-open', 'contributors-open', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release', 'model-providers-get', 'model-models-list', 'model-models-cancel', 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
+  settings: new Set([...SHARED_IPC, 'result-reactions-get', 'result-reactions-set', 'characters-list', 'character-get', 'character-select', 'character-import', 'character-save', 'character-portrait', 'character-reset', 'character-archive', 'speech-config-save', 'settings-window-control', 'windows-discovery-import', 'windows-discovery-get', 'windows-discovery-clear', 'bridge-inspect', 'bridge-plan', 'bridge-deploy', 'bridge-rollback', 'persona-get', 'persona-save', 'character-introduction', 'about-get', 'repository-open', 'contributors-open', 'persona-status', 'persona-open-file', 'persona-open-folder', 'update-open-release', 'model-providers-get', 'model-models-list', 'model-models-cancel', 'model-config-get', 'model-config-save', 'bootstrap-status', 'update-status', 'update-check', 'update-download']),
 });
 
 function allowsWindowIpc({ role, trustedMainFrame, currentUrl, pageUrl }, method) {

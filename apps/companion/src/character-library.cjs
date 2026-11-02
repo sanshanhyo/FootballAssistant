@@ -87,9 +87,15 @@ class CharacterLibrary {
   }
   saveRegistry(value) { atomic(this.registryFile, JSON.stringify(value, null, 2)); }
   builtin() {
-    const manifest = validateManifest(json(path.join(this.builtinRoot, 'manifest.json')), { builtin: true });
+    // App-shipped resources may live inside Electron app.asar (a virtual directory).
+    // Never run user-directory ancestor checks against this trusted fixed resource root.
+    const manifestBytes = fs.readFileSync(path.join(this.builtinRoot, 'manifest.json'));
+    if (manifestBytes.length > 16384) throw Error('Builtin manifest exceeds limit');
+    const manifest = validateManifest(JSON.parse(manifestBytes), { builtin: true });
     if (manifest.id !== DEFAULT_CHARACTER_ID) throw Error('Invalid builtin identity');
-    return { manifest, persona: decode(read(path.join(this.builtinRoot, manifest.persona), 16384)), portraitPath: path.join(this.builtinRoot, manifest.portrait) };
+    const personaBytes = fs.readFileSync(path.join(this.builtinRoot, manifest.persona));
+    if (personaBytes.length > 16384) throw Error('Builtin persona exceeds limit');
+    return { manifest, persona: decode(personaBytes), portraitPath: path.join(this.builtinRoot, manifest.portrait) };
   }
   load(id) {
     id = normalizeCharacterId(id);

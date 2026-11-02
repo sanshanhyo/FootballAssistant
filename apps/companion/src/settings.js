@@ -3,11 +3,13 @@
   const $ = id => document.getElementById(id);
   const api = window.companion;
   const UI = window.CompanionUI;
-  const PAGES = { connection: '连接', voice: '输入', records: '历史与记忆', appearance: '外观', about: '关于' };
+  const PAGES = { connection: '连接', voice: '语音', companion: '角色库', records: '历史与记忆', appearance: '外观', about: '关于' };
   let state = null, activePage = 'connection', speechInfo = null;
   let history = [], historyLimit = 40, historyLoad = 0, memoryLoad = 0;
   let recordsTimer, noticeTimer, unsubscribe, stopped = false, proactivityEditing = false;
   let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false, modelSaving = false;
+  let characterSettings;
+  let speechSettings;
   let personaRevision = null, personaDirty = false, personaLoad = 0;
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -167,7 +169,7 @@
     $('page-title').textContent = PAGES[page];
     if (page === 'records') { refreshHistory(); refreshMemories(); }
     if (page === 'voice') refreshSpeech();
-    if (page === 'companion' && !personaDirty) refreshPersona();
+    if (page === 'companion') characterSettings?.refresh();
     window.scrollTo({ top: 0 });
   }
   function onEvent(event) {
@@ -343,6 +345,7 @@
     }
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     Object.entries(UI.EXPRESSIONS).forEach(([value,label]) => { if (value === 'auto') return; const option=node('option','',label); option.value=value; $('expression').append(option); });
+    $('result-reactions-enabled').addEventListener('change', async () => { const result = await perform(() => api.setResultReactions($('result-reactions-enabled').checked)); if (!result) $('result-reactions-enabled').checked = false; });
     $('proactivity').addEventListener('input', () => { proactivityEditing=true; $('proactivity-value').textContent=`${$('proactivity').value}%`; });
     $('proactivity').addEventListener('change', async () => { const result=await perform(() => api.setProactivity(Number($('proactivity').value))); proactivityEditing=false; if(result) applyState(result); else if(state) renderPreferences(); });
     for (const [id,key] of [['expression','expression'],['stt-provider','sttProvider']]) $(id).addEventListener('change',async () => { const result=await perform(() => api.setPreferences({[key]:$(id).value})); if(result) applyState(result); else if(state) renderPreferences(); });
@@ -371,13 +374,16 @@
     for (const id of ['bubble-duration-mode','bubble-duration-seconds']) $(id).addEventListener('change',saveBubbleDuration);
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
     $('light-motion').addEventListener('change',saveLightMotion);
-    window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
+    window.addEventListener('beforeunload',event => { if(personaDirty || characterSettings?.hasUnsavedChanges()) {event.preventDefault();event.returnValue='';return;} stopped=true;characterSettings?.dispose();speechSettings?.dispose?.();api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
   }
   try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}')); } catch { applyAppearance({}); }
   if (!api || !UI) { showError('设置服务未连接'); return; }
   bind(); unsubscribe=api.subscribe(onEvent);
+  characterSettings = window.FootballCharacterSettings?.bind({ root: $('character-library'), api, onState: applyState, onError: showError, onNotice: notice });
+  speechSettings = window.FootballSpeechSettings?.bind({ root: $('tts-settings'), api, onError: showError, onNotice: notice });
   perform(() => api.getState()).then(value => {if(value)applyState(value);});
   loadModelConfiguration(); refreshSpeech();
+  if (api.getResultReactions) perform(() => api.getResultReactions()).then(value => { $('result-reactions-enabled').checked = value?.enabled === true; });
   perform(() => api.getAbout()).then(value => { if(value?.version) $('app-version').textContent=value.version; });
   perform(() => api.updateStatus()).then(renderUpdate);
 })();

@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { ALPHA_TTS_ENABLED, speakWhenEnabled } = require('../src/release-features.cjs');
-test('Alpha 0.0.1 rejects speech before invoking the provider', () => {
+test('Alpha 0.0.2 exposes speech capability; main additionally enforces explicit user consent', () => {
   let called = false;
-  assert.equal(ALPHA_TTS_ENABLED, false);
-  assert.throws(() => speakWhenEnabled(() => { called = true; }), /TTS is disabled/);
-  assert.equal(called, false);
+  assert.equal(ALPHA_TTS_ENABLED, true);
+  speakWhenEnabled(() => { called = true; });
+  const main = fs.readFileSync(path.join(__dirname, '../src/main.cjs'), 'utf8');
+  assert.match(main, /speechConfig\.authorizeSpeak\(speechInput\(input\)/);
+  assert.equal(called, true);
 });
 
 test('desktop artifact excludes local runtime, credentials, captures, logs and saves', () => {
