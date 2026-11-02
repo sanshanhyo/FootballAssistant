@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "loader": {
+    "id": "bepinex",
+    "version": "6.0.0-be.785+6abdba4",
+    "url": "https://builds.bepinex.dev/projects/bepinex_be/785/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.785%2B6abdba4.zip",
+    "sourceSha256": "2a7cbf74d26abe4765c3e662db1721b923bac39849ebfef2ca5dc7de7e2d9b7f",
+    "sourceCommit": "6abdba47eeebe08552282e7a58ef0f4a9ab60b62"
+  },
+  "gamePluginSha256": "bc940e472418fc5c214208d7cf30fecf600f689b6f9d71c11ba19a2df0fe057f",
+  "requiredFiles": [
+    "winhttp.dll",
+    ".doorstop_version",
+    "doorstop_config.ini",
+    "dotnet/coreclr.dll",
+    "dotnet/System.Private.CoreLib.dll",
+    "BepInEx/core/BepInEx.Core.dll",
+    "BepInEx/core/BepInEx.Unity.Common.dll",
+    "BepInEx/core/BepInEx.Unity.IL2CPP.dll",
+    "BepInEx/core/BepInEx.Preloader.Core.dll",
+    "BepInEx/core/MonoMod.RuntimeDetour.dll",
+    "BepInEx/core/MonoMod.Utils.dll",
+    "BepInEx/core/Il2CppInterop.Runtime.dll",
+    "BepInEx/core/Il2CppInterop.Generator.dll",
+    "BepInEx/core/Cpp2IL.Core.dll",
+    "BepInEx/core/dobby.dll"
+  ]
+}

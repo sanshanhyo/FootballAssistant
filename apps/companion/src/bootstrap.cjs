@@ -5,14 +5,16 @@ const path = require('node:path');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { request } = require('./backend.cjs');
-const DEFAULT_SETTINGS = Object.freeze({ version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '', windowsReaderEnabled: false, windowsReaderGamePath: '' });
+const DEFAULT_SETTINGS = Object.freeze({ version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '', windowsReaderEnabled: false, windowsReaderGamePath: '', windowsMatchEnabled: false, windowsMatchGamePath: '' });
 function validateSettings(value) {
   if (!value || value.version !== 1 || !Number.isInteger(value.backend?.port) || value.backend.port < 1 || value.backend.port > 65535) throw new Error('settings.json 版本或后端端口无效；文件未被覆盖。');
   for (const key of ['bridgePrivateRoot', 'backendEnvFile']) if (typeof value[key] !== 'string' || (value[key] && !path.isAbsolute(value[key]))) throw new Error('配置路径必须为绝对路径。');
   if (value.windowsReaderEnabled !== undefined && typeof value.windowsReaderEnabled !== 'boolean') throw new Error('Windows 读取开关无效。');
   if (value.windowsReaderGamePath !== undefined && (typeof value.windowsReaderGamePath !== 'string' || (value.windowsReaderGamePath && !path.isAbsolute(value.windowsReaderGamePath)))) throw new Error('游戏路径必须为绝对路径。');
+  if (value.windowsMatchEnabled !== undefined && typeof value.windowsMatchEnabled !== 'boolean') throw new Error('Windows 比赛组件开关无效。');
+  if (value.windowsMatchGamePath !== undefined && (typeof value.windowsMatchGamePath !== 'string' || (value.windowsMatchGamePath && !path.isAbsolute(value.windowsMatchGamePath)))) throw new Error('比赛游戏路径必须为绝对路径。');
   // No credentials accepted in this non-secret configuration.
-  if (Object.keys(value).some(key => !['version', 'backend', 'bridgePrivateRoot', 'backendEnvFile', 'windowsReaderEnabled', 'windowsReaderGamePath'].includes(key)) || Object.keys(value.backend).some(key => key !== 'port')) throw new Error('settings.json 包含不支持的字段；密钥不可写入此文件。');
+  if (Object.keys(value).some(key => !['version', 'backend', 'bridgePrivateRoot', 'backendEnvFile', 'windowsReaderEnabled', 'windowsReaderGamePath', 'windowsMatchEnabled', 'windowsMatchGamePath'].includes(key)) || Object.keys(value.backend).some(key => key !== 'port')) throw new Error('settings.json 包含不支持的字段；密钥不可写入此文件。');
   return value;
 }
 async function loadSettings(userData) {
@@ -43,8 +45,8 @@ async function initializeCompanion(runtime) {
   return runtime.setMode('real');
 }
 class BackendSupervisor {
-  constructor({ userData, resourcesPath, packaged, runtimeFile, external = false, settings, backendEnv = {}, readerExecutable = '', spawnProcess = spawn, probe = request, timeoutMs = 30000 }) {
-    Object.assign(this, { userData, resourcesPath, packaged, runtimeFile, external, settings, backendEnv, readerExecutable, spawnProcess, probe, timeoutMs });
+  constructor({ userData, resourcesPath, packaged, runtimeFile, external = false, settings, backendEnv = {}, readerExecutable = '', matchFile = '', platform = process.platform, spawnProcess = spawn, probe = request, timeoutMs = 30000 }) {
+    Object.assign(this, { userData, resourcesPath, packaged, runtimeFile, external, settings, backendEnv, readerExecutable, matchFile, platform, spawnProcess, probe, timeoutMs });
     this.child = null; this.stopping = false; this.status = { state: 'idle', owned: false };
   }
   async healthy() {
@@ -70,6 +72,10 @@ class BackendSupervisor {
     if (this.settings.windowsReaderEnabled === true && this.readerExecutable) {
       env.FOOTBALL_ASSISTANT_OFFSEASON_EXE = this.readerExecutable;
       env.FOOTBALL_ASSISTANT_OFFSEASON_CONSENT = '1';
+    }
+    if (this.platform === 'win32') {
+      delete env.FOOTBALL_ASSISTANT_MATCH_FILE;
+      if (this.settings.windowsMatchEnabled === true && this.matchFile) env.FOOTBALL_ASSISTANT_MATCH_FILE = this.matchFile;
     }
     const child = this.spawnProcess(binary, [], { cwd: dataDir, env, windowsHide: true, stdio: 'ignore' });
     this.child = child; this.status = { state: 'starting', owned: true };

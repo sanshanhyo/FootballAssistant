@@ -193,6 +193,7 @@ internal sealed class GameMatchTickHook : IDisposable
                 out MatchUpdateDelegate original);
             _original = original;
             _started = true;
+            _timeline.SetLoadState("hook_installed", sha256);
             Interlocked.Exchange(ref _lastDrainCompletedTimestamp, Stopwatch.GetTimestamp());
             // This timer is also the non-critical log pump. Keep it alive in
             // release mode so queued lifecycle warnings never run on the native
