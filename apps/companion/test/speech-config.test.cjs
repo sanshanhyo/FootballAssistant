@@ -62,3 +62,12 @@ test('duplicate concurrent save cannot race consent or credentials', async t => 
   await first;
   assert.equal(config.getPublicConfig().enabled, false);
 });
+test('trusted character voice is only a default for the already consented provider', async t => {
+  const { config } = await setup(t);
+  await config.save({ ...defaults, enabled: true, provider: 'edge', networkConsent: true });
+  assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'zh-CN-YunxiNeural' }).voice, 'zh-CN-YunxiNeural');
+  assert.equal(config.authorizeSpeak({}, { provider: 'openai', voice_id: 'alloy' }).voice, undefined);
+  assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: '<xml>' }).voice, undefined);
+  await config.save({ ...defaults, enabled: true, provider: 'edge', networkConsent: true, voice: 'zh-CN-XiaoxiaoNeural' });
+  assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'zh-CN-YunxiNeural' }).voice, 'zh-CN-XiaoxiaoNeural');
+});

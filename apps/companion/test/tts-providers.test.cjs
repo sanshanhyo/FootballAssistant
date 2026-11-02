@@ -46,3 +46,23 @@ test('interrupt cancels old playback and allows new work even if old play hangs'
   const a = queue.enqueue({ operationId: 'a' }); const ar = assert.rejects(a, { code: 'cancelled' }); await tick();
   await queue.enqueue({ operationId: 'b' }, { interrupt: true }); await ar; assert.equal(signal.aborted, true); queue.dispose();
 });
+test('ttsEnv never replaces STT credentials, model or local-whisper capability', async () => {
+  const calls = [];
+  const service = createSpeechService({ env: { ...env, FA_SPEECH_OPENAI_API_KEY: 'stt-only-key', FA_SPEECH_STT_MODEL: 'transcribe-only' }, ttsEnv: { FA_SPEECH_OPENAI_BASE_URL: 'https://tts.invalid/v1', FA_SPEECH_OPENAI_API_KEY: 'tts-only-key', FA_SPEECH_TTS_MODEL: 'tts-only' }, localWhisper: { capability: () => ({ id: 'local-whisper', available: true }) }, fetch: async (url, options) => {
+    calls.push({ url, options });
+    return url.endsWith('/transcriptions') ? new Response(JSON.stringify({ text: 'fixture' })) : new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'audio/mpeg' } });
+  } });
+  await service.speak(payload);
+  await service.transcribe({ ...payload, audio: new Uint8Array([1]), mimeType: 'audio/webm' });
+  assert.equal(calls[0].url, 'https://tts.invalid/v1/audio/speech');
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer tts-only-key');
+  assert.equal(calls[1].url, 'https://example.invalid/v1/audio/transcriptions');
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer stt-only-key');
+  assert.equal(calls[1].options.body.get('model'), 'transcribe-only');
+  assert.equal(service.capabilities().stt.find(x => x.id === 'local-whisper').available, true);
+  service.dispose();
+  const onlyTts = createSpeechService({ env: {}, ttsEnv: env });
+  assert.equal(onlyTts.capabilities().stt.find(x => x.id === 'openai').available, false);
+  assert.equal(onlyTts.capabilities().tts.find(x => x.id === 'openai').available, true);
+  onlyTts.dispose();
+});

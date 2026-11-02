@@ -63,11 +63,12 @@ async function createSpeechConfig({ userData, safeStorage }) {
       FA_SPEECH_EDGE_VOICE: config.provider === 'edge' ? (config.voice || 'zh-CN-XiaoxiaoNeural') : '',
     };
   }
-  function authorizeSpeak(payload) {
+  function authorizeSpeak(payload, trustedCharacterVoice) {
     if (!config.enabled) throw Error('语音朗读尚未启用。');
     if (config.provider !== 'system' && !config.networkConsent) throw Error('尚未同意发送待朗读文字到在线语音服务。');
     if (!payload || typeof payload !== 'object') throw Error('语音请求无效。');
-    return { ...payload, provider: config.provider, voice: config.voice || undefined, speed: config.provider === 'system' ? 1 : config.speed, volume: config.provider === 'system' ? 1 : config.volume };
+    const characterVoice = trustedCharacterVoice?.provider === config.provider && typeof trustedCharacterVoice.voice_id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(trustedCharacterVoice.voice_id) ? trustedCharacterVoice.voice_id : undefined;
+    return { ...payload, provider: config.provider, voice: config.voice || characterVoice, speed: config.provider === 'system' ? 1 : config.speed, volume: config.provider === 'system' ? 1 : config.volume };
   }
   return { getPublicConfig, save, speechEnv, authorizeSpeak };
 }

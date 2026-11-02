@@ -131,12 +131,14 @@ function createSpeechService(options = {}) {
   const env = options.env || process.env;
   const platform = options.platform || process.platform;
   const config = snapshotConfig(env, platform);
+  // TTS configuration is isolated from STT: never reuse a speech key across consent scopes.
+  const ttsConfig = snapshotConfig(options.ttsEnv === undefined ? env : { PATH: env.PATH, FA_SPEECH_EDGE_PATH: env.FA_SPEECH_EDGE_PATH, ...options.ttsEnv }, platform);
   // Main-process-only installed backend path; never forwarded from renderer payloads.
   let edgeArgs = [];
-  if (!config.edgePath && options.bundledEdgePath && path.isAbsolute(options.bundledEdgePath)) {
+  if (!ttsConfig.edgePath && options.bundledEdgePath && path.isAbsolute(options.bundledEdgePath)) {
     try {
       fs.accessSync(options.bundledEdgePath, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
-      config.edgePath = fs.realpathSync(options.bundledEdgePath);
+      ttsConfig.edgePath = fs.realpathSync(options.bundledEdgePath);
       edgeArgs = ['--edge-tts'];
     } catch { /* Missing bundle remains visibly unavailable. */ }
   }
@@ -158,8 +160,8 @@ function createSpeechService(options = {}) {
 
   function capabilities() {
     const openaiStt = Boolean(config.baseUrl && config.apiKey && config.sttModel);
-    const openaiTts = Boolean(config.baseUrl && config.apiKey && config.ttsModel);
-    const azure = Boolean(config.azureKey && /^[a-z0-9-]{1,60}$/u.test(config.azureRegion));
+    const openaiTts = Boolean(ttsConfig.baseUrl && ttsConfig.apiKey && ttsConfig.ttsModel);
+    const azure = Boolean(ttsConfig.azureKey && /^[a-z0-9-]{1,60}$/u.test(ttsConfig.azureRegion));
     const system = ['darwin', 'win32'].includes(platform);
     const capability = (id, label, configured, reason, synthetic = false) => ({ id, label, configured, available: configured, reason: configured ? null : reason, synthetic, connectivity: ['system', 'mock'].includes(id) ? 'local' : 'unverified' });
     return {
@@ -170,7 +172,7 @@ function createSpeechService(options = {}) {
       ],
       tts: [
         capability('system', '系统语音', system, '当前平台没有系统语音适配。'),
-        capability('edge', 'Edge TTS', Boolean(config.edgePath), '未检测到 Edge TTS，请在主进程配置可执行文件。'),
+        capability('edge', 'Edge TTS', Boolean(ttsConfig.edgePath), '未检测到 Edge TTS，请在主进程配置可执行文件。'),
         capability('openai', 'OpenAI 兼容语音', openaiTts, '尚未配置语音服务、密钥或模型。'),
         capability('azure', 'Azure 语音', azure, '尚未配置 Azure 语音密钥或区域。'),
         capability('mock', '模拟播报（无音频）', true, null, true),
@@ -300,7 +302,7 @@ function createSpeechService(options = {}) {
       await fsp.writeFile(input, text, { encoding: 'utf8', mode: 0o600 });
       await new Promise((resolve, reject) => {
         if (signal.aborted) { reject(signal.reason); return; }
-        const child = spawnImpl(config.edgePath, [...edgeArgs, '--file', input, '--voice', voice, '--write-media', output, `--rate=${Math.round((settings.speed - 1) * 100) >= 0 ? '+' : ''}${Math.round((settings.speed - 1) * 100)}%`], {
+        const child = spawnImpl(ttsConfig.edgePath, [...edgeArgs, '--file', input, '--voice', voice, '--write-media', output, `--rate=${Math.round((settings.speed - 1) * 100) >= 0 ? '+' : ''}${Math.round((settings.speed - 1) * 100)}%`], {
           windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'],
         });
         let settled = false;
@@ -322,7 +324,7 @@ function createSpeechService(options = {}) {
       return new Uint8Array(await fsp.readFile(output));
     } finally { await fsp.rm(directory, { recursive: true, force: true }); }
   }
-  const providers = createTtsProviders({ config, request, edgeAudio, requireVoice, escapeXml, fail, maxAudioBytes: MAX_AUDIO_BYTES });
+  const providers = createTtsProviders({ config: ttsConfig, request, edgeAudio, requireVoice, escapeXml, fail, maxAudioBytes: MAX_AUDIO_BYTES });
   // Extension adapters are main-process supplied; capability metadata must be non-secret.
   for (const [id, adapter] of options.ttsProviders || []) {
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(id) || ['system', 'mock', 'edge', 'openai', 'azure'].includes(id) || typeof adapter?.synthesize !== 'function') throw new Error('Invalid TTS adapter');
