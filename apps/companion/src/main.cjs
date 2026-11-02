@@ -1,4 +1,9 @@
 'use strict';
+if (process.argv.includes('--fa-install-readers')) {
+  const { app, dialog } = require('electron');
+  require('./windows-install-entry.cjs').runWindowsInstallEntry({ app, dialog })
+    .then(code => app.exit(code)).catch(() => app.exit(5));
+} else {
 const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences, dialog, safeStorage, shell, powerMonitor } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -483,7 +488,11 @@ async function main() {
     { type: 'separator' }, { role: 'quit', label: '退出' },
   ] }]) : null);
   await buildWindow();
-  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable || !settings.windowsMatchEnabled || !matchFile)) await openSettings();
+  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable || !settings.windowsMatchEnabled || !matchFile)) {
+    if (app.isPackaged && distribution({ packaged: true, executable: app.getPath('exe') }) !== 'portable')
+      dialog.showErrorBox('游戏读取安装未完成', '请重新运行安装器并选择 FM 目录。不会自动下载依赖、修改游戏或冒充已连接。');
+    else await openSettings();
+  }
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
@@ -503,3 +512,5 @@ app.on('before-quit', event => {
   clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
   Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });
+
+}
