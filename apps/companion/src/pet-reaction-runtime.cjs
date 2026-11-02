@@ -12,7 +12,7 @@ async function createPetReactionRuntime({ runtime, journalFile, preferencesFile,
   const reactions = new PetReactions({ gate: new ResultEventGate({ journal: new FileResultJournal(journalFile) }),
     suggest: async (event, { signal }) => {
       const epoch = runtime.epoch, sessionId = runtime.sessionId, characterContext = runtime.characterContext();
-      const result = await runtime.realClient.reply({ message: `请对以下已核实赛果做一句简短陪伴回应，不推断过程或战术原因：${JSON.stringify(event)}`, conversationId: sessionId, characterContext, signal });
+      const result = await runtime.realClient.reply({ message: `请对以下已核实赛果做一句简短陪伴回应，不推断过程或战术原因：${JSON.stringify(event)}`, conversationId: runtime.backendConversationId || sessionId, characterContext, signal });
       return { result, epoch, sessionId, characterId: runtime.characterId };
     },
     deliver: async ({ suggestion }, { signal }) => {
