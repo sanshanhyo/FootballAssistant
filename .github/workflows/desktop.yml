@@ -65,7 +65,7 @@ jobs:
         working-directory: .
         run: |
           python -c "import platform,sys; assert platform.machine().lower() in (('arm64','aarch64') if sys.platform == 'darwin' else ('amd64','x86_64')), 'Backend architecture must match Electron target'"
-          python -m pip install ".[agent]" "pyinstaller==6.16.0"
+          python -m pip install ".[agent,speech]" "pyinstaller==6.16.0"
           python scripts/build_desktop_backend.py
           python scripts/smoke_desktop_backend.py
       - uses: actions/setup-node@v4
