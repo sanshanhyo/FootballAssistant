@@ -37,7 +37,7 @@ lists native runtime files for release review: collecting notices does not itsel
 verify every native-library obligation or satisfy all corresponding-source duties.
 Electron/Chromium/Node notices and production npm module licenses must additionally
 be checked in the final target-platform application; this document cannot replace
-them. No Doorstop, CoreCLR, BepInEx or Dobby binary is included by this configuration.
+them. No Doorstop, BepInEx or Dobby binary is included by this configuration. Windows now includes the self-contained .NET reader runtime described below.
 
 
 ## Bundled local speech recognition
@@ -49,3 +49,17 @@ them. No Doorstop, CoreCLR, BepInEx or Dobby binary is included by this configur
 - Engine and model MIT license texts are retained alongside binaries in `resources/local-stt/`. The CLI also embeds miniaudio and stb_vorbis under their public-domain alternatives; their complete dual-license notices and the engine/GGML MIT license are retained alongside the engine.
 - `packaging/build-local-stt.py` verifies pinned source/model hashes, compiles the platform binary, and runs actual CPU inference on upstream's public JFK sample. Build-time downloads only; recorded audio is never uploaded by this provider.
 - Tiny prioritizes footprint over accuracy, especially for Chinese proper names and football terms. Transcripts remain editable drafts, never automatically sent. Speed and peak RAM depend on CPU/audio duration; no real-time guarantee. Upstream reports ~273 MB RAM for unquantized tiny; this is not a measured Q5_1 memory promise.
+
+## Windows read-only offseason reader
+
+The Windows package includes our existing `OffseasonReaderCli` and its self-contained
+Microsoft .NET runtime in `resources/reader-windows-x64`. It does not include game
+binaries, generated game interop assemblies, BepInEx, or match-reader plugins.
+The exact runtime version and every shipped file SHA-256 are recorded in
+`manifest.json`. Its `licenses/` retains the actual runtime pack's full license and
+third-party notices, plus the FootballAssistant license; a missing notice fails CI.
+Windows .NET runtime binaries use Microsoft's .NET Library License, not a blanket
+relicensing under our MIT license. See upstream distribution guidance:
+https://github.com/dotnet/core/blob/main/license-information.md .
+The manifest's `realGameAcceptance: pending` is deliberate: packaging and offline
+self-tests cannot prove compatibility with the user's actual game build.

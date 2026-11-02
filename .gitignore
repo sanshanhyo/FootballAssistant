@@ -42,3 +42,6 @@ build/
 
 # Python build metadata
 *.egg-info/
+
+# Generated CI provenance
+/apps/companion/build-identity.json
