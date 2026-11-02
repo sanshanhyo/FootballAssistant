@@ -86,9 +86,9 @@ function createWindowsMatchSetup({ userData, installer, packaged, platform = pro
     select: () => exclusive(async () => { pending = null; lastInspection = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const candidate = await chooseGame(); if (!candidate) return { cancelled: true }; selected = (await inspectSelectedGame(candidate)).gamePath; pending = null; return { ...await status(), gamePath: selected }; }),
     plan: () => exclusive(async () => { pending = null; lastInspection = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const game = await gamePath(); if (!game) return { cancelled: true }; pending = await installer.plan(game); return { ...publicValue(pending), supported: true }; }),
     deploy: input => exclusive(async () => {
-      if (!supported || !input || Object.keys(input).some(k => !['planId','confirm','migrateLoader','allowFirstRunDownload'].includes(k)) || input.confirm !== true || input.allowFirstRunDownload !== true || typeof input.migrateLoader !== 'boolean' || !pending || pending.planId !== input.planId) throw Error('请确认当前部署计划、首次启动联网下载及互操作生成说明。');
+      if (!supported || !input || Object.keys(input).some(k => !['planId','confirm','migrateLoader','confirmOfflineGeneration','confirmSharedConfig'].includes(k)) || input.confirm !== true || input.confirmOfflineGeneration !== true || typeof input.migrateLoader !== 'boolean' || !pending || pending.planId !== input.planId) throw Error('请确认当前部署计划、本机离线互操作生成说明。');
       const plan = pending; pending = null; lastInspection = null;
-      const installed = await installer.deploy({ planId: plan.planId, confirmationToken: plan.confirmationToken, confirm: true, migrateLoader: input.migrateLoader });
+      const installed = await installer.deploy({ planId: plan.planId, confirmationToken: plan.confirmationToken, confirm: true, migrateLoader: input.migrateLoader, confirmSharedConfig: input.confirmSharedConfig === true });
       const configured = await persist(true, installed.gamePath, installed.snapshotPath); waitingSince = null;
       return { ...await status(), ...configured, state: 'deployed', needsGameStart: true };
     }),

@@ -147,14 +147,15 @@ def assemble(cache, staging, plugin, output):
                 archive.add(file, arcname=file.relative_to(ROOT).as_posix(), recursive=False)
         for file in [ROOT / 'LICENSE', ROOT / 'modules/game-bridge/match-reader/vendor/LICENSE']:
             archive.add(file, arcname=file.relative_to(ROOT).as_posix(), recursive=False)
-    (output / 'source-provenance.json').write_text(json.dumps({'loader': pin['loader'], 'components': components}, indent=2) + '\n')
+    (output / 'source-provenance.json').write_text(json.dumps({'loader': pin['loader'], 'components': components, 'runtimePolicy': pin['runtimePolicy']}, indent=2) + '\n')
     hashes, sizes = inventory(output)
     manifest = {'schema': 1, 'target': 'win32-x64', 'producerId': 'io.footballassistant.matchreader',
         'protocol': 'fa-match-snapshot/0.1', 'loader': pin['loader'], 'files': hashes, 'fileSizes': sizes,
         'gamePluginSha256': pin['gamePluginSha256'], 'buildCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
         'deploymentPaths': sorted(p.relative_to(payload).as_posix() for p in payload.rglob('*') if p.is_file()),
         'gameFilesIncluded': False, 'interopIncluded': False, 'firstRunInteropGenerationRequired': True,
-        'realGameAcceptance': 'pending', 'firstRunUnityLibraries': 'upstream download may be required; not a bundled game-derived assembly'}
+        'realGameAcceptance': 'pending', 'runtimePolicy': pin['runtimePolicy'],
+        'firstRunUnityLibraries': 'no-unstrip: generate interop from local game inputs; no Unity library download or bundled game assemblies'}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     verify(output)
 
@@ -166,6 +167,7 @@ def verify(output):
     paths = manifest['deploymentPaths']
     if not paths or len(paths) != len(set(paths)) or PLUGIN not in paths: raise ValueError('Incomplete deployment inventory')
     pin = json.loads(PIN.read_text())
+    if manifest.get('runtimePolicy') != pin['runtimePolicy']: raise ValueError('Wrong offline interop runtime policy')
     for name in [*pin['requiredFiles'], PLUGIN]:
         if name not in paths: raise ValueError(f'Missing required deployment file {name}')
     for name in paths:

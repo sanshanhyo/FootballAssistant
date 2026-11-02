@@ -1,6 +1,6 @@
 {
   "name": "football-assistant-companion",
-  "version": "0.0.2-alpha.2",
+  "version": "0.0.2-alpha.3",
   "private": true,
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
@@ -138,7 +138,7 @@
       "allowElevation": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
-      "runAfterFinish": false,
+      "runAfterFinish": true,
       "include": "packaging/installer.nsh"
     },
     "portable": {

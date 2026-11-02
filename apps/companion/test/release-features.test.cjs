@@ -15,7 +15,7 @@ test('Alpha 0.0.2 exposes speech capability; main additionally enforces explicit
 
 test('desktop artifact excludes local runtime, credentials, captures, logs and saves', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.0.2-alpha.2');
+  assert.equal(manifest.version, '0.0.2-alpha.3');
   const files = manifest.build.files;
   assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png', 'build-identity.json']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));

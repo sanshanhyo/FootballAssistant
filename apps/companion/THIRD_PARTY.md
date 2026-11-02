@@ -79,8 +79,9 @@ Unity reference binary redistribution has been authorized.
 
 No game binary, game-derived interop, memory snapshot, user path or credentials are
 in this payload. BepInEx generates interop on the user's machine from that user's
-game. Its first run may download matching Unity base libraries from its upstream
-service; this is an external runtime dependency, not proof of offline completeness.
+game. This distribution disables upstream Unity base-library downloads and uses
+the supported local-metadata generation mode without unstripping. It bundles no
+Unity base libraries; real-game compatibility of this mode remains unverified.
 BepInEx's pinned .NET 6.0.7 compatibility runtime is older than the separate .NET 10
 offseason reader runtime; no automatic security-support or game-compatibility claim
 is made. Deployment and actual loading remain distinct from resource integrity.
