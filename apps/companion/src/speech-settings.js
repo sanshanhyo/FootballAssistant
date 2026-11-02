@@ -43,7 +43,7 @@
       for (const name of ['provider', 'voice', 'speed', 'volume', 'baseUrl', 'model']) elements[name].value = value[name] ?? '';
       key.value = ''; elements.removeKey.checked = false;
       key.placeholder = value.hasApiKey ? '已配置；留空保留现有密钥' : '输入语音服务密钥';
-      storage.textContent = value.storage === 'encrypted' ? '密钥由本机安全存储加密保存，不与聊天密钥共用。' : value.storage === 'session' ? '系统安全存储不可用：密钥仅本次会话有效，退出后需重新输入。' : '未保存语音密钥；不会自动复用聊天密钥。';
+      storage.textContent = value.warning || (value.storage === 'encrypted' ? '密钥由本机安全存储加密保存，不与聊天密钥共用。' : value.storage === 'session' ? '系统安全存储不可用：密钥仅本次会话有效，退出后需重新输入。' : '未保存语音密钥；不会自动复用聊天密钥。');
       state();
     }
     async function load() {

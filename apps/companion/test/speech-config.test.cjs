@@ -53,7 +53,11 @@ test('invalid preferences, insecure endpoints and persisted secrets are rejected
   const { config, userData } = await setup(t);
   for (const input of [{ ...defaults, speed: NaN }, { ...defaults, volume: 2 }, { ...defaults, voice: '<xml>' }, { ...defaults, secret: 'x' }, { ...online, baseUrl: 'http://example.invalid' }]) await assert.rejects(config.save(input));
   await fs.writeFile(path.join(userData, 'tts', 'preferences.json'), JSON.stringify({ schema_version: 1, ...defaults, apiKey: 'forbidden' }));
-  await assert.rejects(createSpeechConfig({ userData, safeStorage }), /字段/);
+  const disabled = await createSpeechConfig({ userData, safeStorage });
+  assert.equal(disabled.getPublicConfig().enabled, false);
+  assert.ok(disabled.getPublicConfig().warning);
+  await assert.rejects(disabled.save(defaults), /保留原文件/);
+  assert.ok((await fs.readFile(path.join(userData, 'tts', 'preferences.json'), 'utf8')).includes('forbidden'));
 });
 test('duplicate concurrent save cannot race consent or credentials', async t => {
   const { config } = await setup(t);
@@ -70,4 +74,16 @@ test('trusted character voice is only a default for the already consented provid
   assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: '<xml>' }).voice, undefined);
   await config.save({ ...defaults, enabled: true, provider: 'edge', networkConsent: true, voice: 'zh-CN-XiaoxiaoNeural' });
   assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'zh-CN-YunxiNeural' }).voice, 'zh-CN-XiaoxiaoNeural');
+});
+
+test('damaged credential config fails closed without preventing desktop startup', async t => {
+  const { userData } = await setup(t);
+  const file = path.join(userData, 'tts', 'model-config.json');
+  await fs.writeFile(file, '{broken');
+  const disabled = await createSpeechConfig({ userData, safeStorage });
+  assert.equal(disabled.getPublicConfig().enabled, false);
+  assert.ok(disabled.getPublicConfig().warning);
+  assert.throws(() => disabled.authorizeSpeak({}), /尚未启用/);
+  await assert.rejects(disabled.save(defaults), /保留原文件/);
+  assert.equal(await fs.readFile(file, 'utf8'), '{broken');
 });

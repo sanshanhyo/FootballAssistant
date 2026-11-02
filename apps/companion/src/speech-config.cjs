@@ -19,15 +19,25 @@ function validate(input, persisted = false) {
 async function createSpeechConfig({ userData, safeStorage }) {
   const directory = path.join(userData, 'tts');
   const file = path.join(directory, 'preferences.json');
-  const stored = await readStateFile(file, 16384);
-  let config = stored.bytes ? validate(JSON.parse(stored.bytes.toString('utf8')), true) : { ...DEFAULTS };
+  let stored = { bytes: null, revision: null }, config = { ...DEFAULTS }, warning = null;
+  try {
+    stored = await readStateFile(file, 16384);
+    if (stored.bytes) config = validate(JSON.parse(stored.bytes.toString('utf8')), true);
+  } catch { warning = '语音设置损坏或版本不受支持，已安全关闭朗读并保留原文件；请先备份并修复 TTS 配置。'; }
   let revision = stored.revision, saving = false;
-  const credentials = createCredentialConfig({ userData: directory, safeStorage });
+  let credentials;
+  try { credentials = createCredentialConfig({ userData: directory, safeStorage }); }
+  catch {
+    warning = '语音凭据配置无法读取，已安全关闭朗读并保留原文件；请先备份并修复 TTS 配置。';
+    credentials = { getPublicConfig: () => ({ baseUrl: '', model: '', hasApiKey: false, storage: 'none', secureStorageAvailable: false }), backendEnv: () => ({}) };
+  }
+  if (warning) config = { ...DEFAULTS };
   function getPublicConfig() {
     const { baseUrl, model, hasApiKey, storage, secureStorageAvailable } = credentials.getPublicConfig();
-    return { ...config, baseUrl, model, hasApiKey, storage, secureStorageAvailable };
+    return { ...config, baseUrl, model, hasApiKey, storage, secureStorageAvailable, warning };
   }
   async function save(input) {
+    if (warning) throw Error(warning);
     if (saving) throw Error('语音设置正在保存，请稍候。');
     const next = validate(input);
     const saved = credentials.getPublicConfig();
