@@ -54,6 +54,8 @@ async function createSpeechConfig({ userData, safeStorage }) {
     const secret = credentials.backendEnv();
     const allowed = config.enabled && config.networkConsent && config.provider === 'openai';
     return {
+      // Legacy service shares this key with STT; never enable recording upload with TTS consent.
+      FA_SPEECH_STT_MODEL: '',
       FA_SPEECH_OPENAI_BASE_URL: allowed ? secret.FOOTBALL_ASSISTANT_BASE_URL : '',
       FA_SPEECH_OPENAI_API_KEY: allowed ? secret.FOOTBALL_ASSISTANT_API_KEY : '',
       FA_SPEECH_TTS_MODEL: allowed ? secret.FOOTBALL_ASSISTANT_MODEL : '',

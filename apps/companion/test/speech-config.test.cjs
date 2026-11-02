@@ -30,6 +30,7 @@ test('credentials are encrypted in isolated TTS directory, redacted publicly, an
   assert.equal(JSON.stringify(value).includes(online.apiKey), false);
   for (const file of await fs.readdir(path.join(userData, 'tts'))) assert.equal((await fs.readFile(path.join(userData, 'tts', file), 'utf8')).includes(online.apiKey), false);
   assert.equal(config.speechEnv().FA_SPEECH_OPENAI_API_KEY, online.apiKey);
+  assert.equal(config.speechEnv().FA_SPEECH_STT_MODEL, '');
   const again = await createSpeechConfig({ userData, safeStorage });
   assert.equal(again.speechEnv().FA_SPEECH_OPENAI_API_KEY, online.apiKey);
   await assert.rejects(again.save({ ...online, apiKey: '', baseUrl: 'https://other.invalid/v1' }), /密钥/);
