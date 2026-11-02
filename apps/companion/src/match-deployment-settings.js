@@ -26,7 +26,7 @@
       if (next.restartRequired) status.textContent += ' · 请重启外部后台';
       game.textContent = next.gamePath || next.gameRoot || '';
       const log = next.loaderProgress;
-      progress.textContent = log ? `${({generating_interop:'近期日志：正在生成互操作文件',downloading_unity:'近期日志：正在下载 Unity 库',loader_started:'近期日志：加载器已启动'})[log.phase]}${log.errorRecorded ? '；日志中出现错误，请检查' : ''} · ${log.updatedAt}` : '';
+      progress.textContent = log ? `${({generating_interop:'近期日志：包含互操作生成记录',downloading_unity:'近期日志：包含 Unity 库下载记录',loader_started:'近期日志：有加载器输出'})[log.phase]}${log.errorRecorded ? '；日志中出现错误，请检查' : ''} · ${log.updatedAt}` : '';
       if (next.planId) { plan = next; confirmation.checked = false; download.checked = false; migration.checked = false; }
       files.textContent = plan ? JSON.stringify({operations:plan.operations,conflicts:plan.conflicts,migrationFiles:plan.migrationFiles},null,2) : '';
       details.hidden = !plan; if (next.error) onError(next.error); buttons();
