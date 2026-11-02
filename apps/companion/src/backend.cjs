@@ -31,13 +31,29 @@ async function readRuntime(file) {
   return validateRuntime(JSON.parse(await fs.readFile(file, 'utf8')));
 }
 
+function validMemoryScope(scope) {
+  return scope && typeof scope.save_id === 'string' && scope.save_id.trim() && !scope.save_id.includes('\0') && Buffer.byteLength(scope.save_id) <= 512 && typeof scope.character_id === 'string' && scope.character_id.length <= 96 && /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/.test(scope.character_id);
+}
+function scopedMemoryRoute(endpoint) {
+  if (typeof endpoint !== 'string' || endpoint.length > 4096 || !endpoint.startsWith('/v1/memories')) return null;
+  const url = new URL(endpoint, 'http://localhost');
+  if (url.hash || url.origin !== 'http://localhost') return null;
+  const entries = [...url.searchParams];
+  if (entries.length !== 2 || new Set(entries.map(([key]) => key)).size !== 2 || entries.some(([key]) => !['save_id', 'character_id'].includes(key))) return null;
+  if (!validMemoryScope(Object.fromEntries(entries))) return null;
+  if (url.pathname === '/v1/memories') return 'collection';
+  return /^\/v1\/memories\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(url.pathname) ? 'item' : null;
+}
+
 async function request(runtimeFile, endpoint, body, options = {}) {
   const raw = options.rawJson !== undefined;
   if (raw && (endpoint !== '/v1/reader/windows-discovery/import' || typeof options.rawJson !== 'string' || body !== undefined)) throw new Error('原始 JSON 仅用于固定诊断导入接口。');
-  const deleting = endpoint === '/v1/reader/windows-discovery' && options.method === 'DELETE';
+  const memoryRoute = scopedMemoryRoute(endpoint);
+  const memoryPost = endpoint === '/v1/memories' && body !== undefined && validMemoryScope(body?.character_context);
+  const deleting = (endpoint === '/v1/reader/windows-discovery' || memoryRoute === 'item') && options.method === 'DELETE';
   if (options.method !== undefined && !deleting) throw new Error('不支持的服务接口或请求方法。');
-  const post = endpoint === '/v1/reader/windows-discovery/import' || (endpoint === '/v1/reader/capture-profile' && body !== undefined) || ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice', '/v1/agent/calendar-advice', '/v1/agent/auto-calendar-advice'].includes(endpoint);
-  const get = ['/v1/reader/match', '/v1/reader/windows-discovery', '/v1/agent/persona', '/v1/reader/capture-profile', '/v1/reader/ui-change-preview', '/v1/reader/schedule', '/v1/reader/tactics', '/v1/reader/current-page-attributes', '/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || isCalendarEndpoint(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
+  const post = memoryPost || endpoint === '/v1/reader/windows-discovery/import' || (endpoint === '/v1/reader/capture-profile' && body !== undefined) || ['/v1/chat', '/v1/agent/business-advice', '/v1/agent/ui-advice', '/v1/agent/calendar-advice', '/v1/agent/auto-calendar-advice'].includes(endpoint);
+  const get = memoryRoute === 'collection' || ['/v1/reader/match', '/v1/reader/windows-discovery', '/v1/agent/persona', '/v1/reader/capture-profile', '/v1/reader/ui-change-preview', '/v1/reader/schedule', '/v1/reader/tactics', '/v1/reader/current-page-attributes', '/v1/status', '/v1/companion/state', '/v1/monitoring', '/v1/reader/business/status', '/v1/reader/business/snapshot'].includes(endpoint) || isCalendarEndpoint(endpoint) || /^\/v1\/events\?after=\d{1,16}&limit=100$/.test(endpoint);
   if ((!post && !get && !deleting) || (post !== (body !== undefined || raw))) throw new Error('不支持的服务接口或请求方法。');
   if (endpoint === '/v1/reader/windows-discovery/import' && Buffer.byteLength(raw ? options.rawJson : JSON.stringify(body), 'utf8') > 32768) throw new Error('诊断导入超过 32 KiB。');
   options.signal?.throwIfAborted();
@@ -87,4 +103,4 @@ async function request(runtimeFile, endpoint, body, options = {}) {
   return data;
 }
 
-module.exports = { validateRuntime, readRuntime, request, defaultRuntimeFile };
+module.exports = { scopedMemoryRoute, validateRuntime, readRuntime, request, defaultRuntimeFile };

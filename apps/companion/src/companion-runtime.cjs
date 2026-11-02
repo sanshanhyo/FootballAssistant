@@ -3,6 +3,9 @@ const { asksImportedDiagnostic } = require('./windows-discovery.cjs');
 
 const { UiChangeTracker } = require('./ui-changes.cjs');
 const { matchView, matchCard, MatchChangeTracker } = require('./match-reader.cjs');
+const { CharacterSession } = require('./character-session.cjs');
+const { pathToFileURL } = require('node:url');
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { readStateFile, writeStateFile } = require('./state-file.cjs');
@@ -23,6 +26,28 @@ class CompanionRuntime extends EventEmitter {
   constructor(options = {}) {
     super();
     this.file = options.file;
+    this.characterLibrary = options.characterLibrary || null;
+    this.cancelCharacterEffects = options.cancelCharacterEffects || (() => {});
+    this.saveId = `session:${randomUUID()}`; this.verifiedSave = false;
+    this.temporaryScopes = new Map(); this.temporarySelections = new Map();
+    this.memoryControllers = new Set(); this.scopeStorageWarning = null;
+    if (this.characterLibrary) {
+      const library = this.characterLibrary;
+      // Unknown game identity is never a persistent save or selection bucket.
+      const sessions = {
+        resolve: id => library.resolve(id),
+        selected: saveId => saveId.startsWith('session:') ? library.resolve(this.temporarySelections.get(saveId)) : library.selected(saveId),
+        select: (saveId, id) => {
+          if (!saveId.startsWith('session:')) return library.select(saveId, id);
+          const selected = library.resolve(id); if (selected.fallback) throw Error('Selected character is unavailable');
+          this.temporarySelections.set(saveId, selected.characterId); return selected;
+        },
+      };
+      this.characterSession = new CharacterSession({ library: sessions, cancel: [() => {
+        this.cancelAll(); for (const controller of this.memoryControllers) controller.abort();
+        this.memoryControllers.clear(); this.cancelCharacterEffects();
+      }] });
+    }
     this.mockClient = options.mockClient || new MockReaderClient();
     this.realClient = options.realClient || new DisconnectedReaderClient();
     this.captureRequest = null; this.captureController = null;
@@ -40,15 +65,15 @@ class CompanionRuntime extends EventEmitter {
     this.writeQueue = Promise.resolve(); this.storageRevision = null; this.closed = false;
   }
   async init() {
-    if (!this.file) return this.state();
+    if (!this.file) return this.initializeCharacter();
     try {
       const stored = await readStateFile(this.file);
       this.storageRevision = stored.revision;
-      if (!stored.bytes) return this.state();
+      if (!stored.bytes) return this.initializeCharacter();
       const saved = JSON.parse(stored.bytes.toString('utf8'));
       if (saved.version !== 1) {
         this.storageWarning = '本地记录版本暂不支持；原文件保持不变，当前更改不会写入该文件。';
-        return this.state();
+        return this.initializeCharacter();
       }
       this.savedEnvelope = saved;
       this.characterId = storedCharacterId(saved.characterId);
@@ -64,7 +89,59 @@ class CompanionRuntime extends EventEmitter {
     } catch (error) {
       if (error.code !== 'ENOENT') this.storageWarning = '本地记录无法读取；原文件未被删除。';
     }
+    return this.initializeCharacter();
+  }
+  initializeCharacter() {
+    if (this.characterLibrary && !this.characterSession.current) this.activateCharacter(undefined, false);
     return this.state();
+  }
+  characterContext() {
+    const token = this.characterSession?.current;
+    return token ? { save_id: token.scope.saveId, character_id: token.scope.characterId, persona: token.character.persona } : undefined;
+  }
+  currentCharacter() {
+    const value = this.characterSession?.current?.character;
+    if (!value) return characterPresentation(this.characterId);
+    const useBuiltinScenes = value.characterId === DEFAULT_CHARACTER_ID && path.resolve(value.portraitPath) === path.join(__dirname, 'assets/characters/official.eckera/default.png');
+    return { characterId: value.characterId, requestedCharacterId: value.requestedCharacterId,
+      name: value.name, displayName: value.name, englishName: value.characterId === DEFAULT_CHARACTER_ID ? 'Eckera' : value.name,
+      fallback: value.fallback, warnings: value.warnings, voice: value.voice, useBuiltinScenes,
+      visual: { kind: 'character-image', source: pathToFileURL(value.portraitPath).href, label: value.name } };
+  }
+  saveCharacterScope() {
+    const token = this.characterSession?.current;
+    if (!token || this.scopeStorageWarning) return;
+    const value = { messages: this.historyEnabled ? structuredClone(this.messages) : [], memories: structuredClone(this.memories) };
+    if (!this.verifiedSave) this.temporaryScopes.set(token.scope.key, value);
+    else {
+      try { this.characterLibrary.writeScope(token.scope.saveId, token.scope.characterId, value); }
+      catch (error) { this.scopeStorageWarning = '角色记录保存失败；原记录保持不变。'; throw error; }
+    }
+  }
+  activateCharacter(id, savePrevious = true) {
+    if (!this.characterLibrary) throw Error('角色库尚未启用。');
+    if (savePrevious) this.saveCharacterScope();
+    const token = this.characterSession.activate(this.saveId, id);
+    this.characterId = token.scope.characterId; this.scopeStorageWarning = null;
+    this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID();
+    let saved = { messages: [], memories: [] };
+    try { saved = this.verifiedSave ? this.characterLibrary.readScope(this.saveId, this.characterId) : this.temporaryScopes.get(token.scope.key) || saved; }
+    catch { this.scopeStorageWarning = '角色记录无法读取；不会覆盖原记录。'; }
+    this.messages = this.historyEnabled && Array.isArray(saved.messages) ? saved.messages.filter(item => item && typeof item.text === 'string' && item.text.length <= 12000).slice(-500).map(item => ({ ...item, sessionId: this.sessionId, epoch: this.epoch })) : [];
+    this.memories = Array.isArray(saved.memories) ? saved.memories.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 2000).slice(-200).map(item => ({ ...item })) : [];
+    this.refreshConnection(); this.changed(); return this.state();
+  }
+  listCharacters() { return this.characterLibrary ? this.characterLibrary.list().map(value => ({ characterId: value.characterId, name: value.name, version: value.version, fallback: value.fallback, warnings: value.warnings })) : [this.currentCharacter()]; }
+  selectCharacter(id) { return this.activateCharacter(id); }
+  refreshCharacter() { return this.activateCharacter(this.characterId); }
+  // Internal adapter boundary only: never derive a save identity from UI labels or scores.
+  bindSaveContext(verifiedSaveId) {
+    if (!this.characterLibrary || typeof verifiedSaveId !== 'string' || !verifiedSaveId.trim() || verifiedSaveId.startsWith('session:') || verifiedSaveId.includes('\0') || Buffer.byteLength(verifiedSaveId) > 512) throw Error('需要已验证的存档标识。');
+    if (this.verifiedSave && this.saveId === verifiedSaveId) return this.state();
+    this.saveCharacterScope(); const previous = { saveId: this.saveId, verifiedSave: this.verifiedSave };
+    this.saveId = verifiedSaveId; this.verifiedSave = true;
+    try { return this.activateCharacter(undefined, false); }
+    catch (error) { this.saveId = previous.saveId; this.verifiedSave = previous.verifiedSave; throw error; }
   }
   client() { return this.mode === 'mock' ? this.mockClient : this.realClient; }
   state() {
@@ -73,7 +150,8 @@ class CompanionRuntime extends EventEmitter {
       canSend: mock ? !this.mockDisconnected : typeof this.realClient.reply === 'function',
       mode: this.mode, epoch: this.epoch, sessionId: this.sessionId, proactivity: this.proactivity,
       preferences: { ...this.preferences },
-      character: characterPresentation(this.characterId),
+      character: this.currentCharacter(),
+      characterScope: this.characterSession?.current ? { ...this.characterSession.current.scope, verifiedSave: this.verifiedSave, generation: this.characterSession.current.epoch } : null,
       connection: !mock && this.realConnection ? { ...this.realConnection, backendId: this.backendId } : { state: mock ? (this.mockDisconnected ? 'disconnected' : 'simulated') : 'unavailable', label: mock ? (this.mockDisconnected ? '模拟模式 · 连接已失效（模拟）' : '模拟模式 · 未连接游戏或模型') : '真实模式 · 后端尚未接入', reason: mock ? (this.mockDisconnected ? '模拟断线场景；恢复其他示例后可继续演示。' : null) : '真实后端由另一开发线提供；当前未发起网络请求。', backendId: this.backendId },
       captureRequest: mock ? null : this.captureRequest,
       readerPreviews: mock ? [] : this.readerPreviews.map(card => card.status === 'available' && Date.now() - Date.parse(card.metadata?.sampledAt) > 15_000
@@ -83,14 +161,15 @@ class CompanionRuntime extends EventEmitter {
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
       pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
       tools: [...this.tools.values()].filter(item => item.sessionId === this.sessionId && item.epoch === this.epoch),
-      memoryCount: this.memories.length, storageWarning: this.storageWarning || null,
+      memoryCount: this.memories.length, storageWarning: this.scopeStorageWarning || this.storageWarning || null,
     };
   }
   publish(event) { if (!this.closed) this.emit('event', event); }
   changed() { this.publish({ type: 'state', state: this.state() }); }
   persist() {
+    try { this.saveCharacterScope(); } catch { this.changed(); return Promise.resolve(); }
     if (!this.file || this.storageWarning) return Promise.resolve();
-    const value = JSON.stringify({ ...this.savedEnvelope, version: 1, characterId: this.characterId, proactivity: this.proactivity, preferences: { ...this.savedEnvelope.preferences, ...this.preferences }, historyEnabled: this.historyEnabled, memories: this.memories, messages: this.historyEnabled ? this.messages : [] });
+    const value = JSON.stringify({ ...this.savedEnvelope, version: 1, characterId: this.characterId, proactivity: this.proactivity, preferences: { ...this.savedEnvelope.preferences, ...this.preferences }, historyEnabled: this.historyEnabled, memories: this.characterLibrary ? [] : this.memories, messages: !this.characterLibrary && this.historyEnabled ? this.messages : [] });
     this.writeQueue = this.writeQueue.catch(() => {}).then(async () => {
       if (this.storageWarning) return;
       this.storageRevision = await writeStateFile(this.file, value, this.storageRevision);
@@ -206,6 +285,7 @@ class CompanionRuntime extends EventEmitter {
     });
   }
   switchSession() {
+    if (this.characterLibrary) { this.saveCharacterScope(); this.characterSession.activate(this.saveId, this.characterId); }
     this.cancelAll(); this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
     return this.state();
   }
@@ -213,7 +293,10 @@ class CompanionRuntime extends EventEmitter {
     const mode = typeof input === 'string' ? input : input?.mode;
     if (!['mock', 'real'].includes(mode)) throw new Error('模式无效。');
     const backendId = typeof input === 'object' && input.backendId !== undefined ? text(input.backendId, 80, '后端标识') : mode === 'mock' ? 'mock' : 'local-service';
-    this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
+    if (this.characterLibrary) this.saveCharacterScope();
+    this.cancelAll(); this.tools.clear(); this.mode = mode; this.backendId = backendId; this.mockDisconnected = false; this.epoch += 1; this.sessionId = randomUUID();
+    if (this.characterLibrary) { this.saveId = `session:${randomUUID()}`; this.verifiedSave = false; this.activateCharacter(this.characterId, false); }
+    else { this.refreshConnection(); this.changed(); }
     return this.state();
   }
   setProactivity(value) {
@@ -241,7 +324,7 @@ class CompanionRuntime extends EventEmitter {
     this.messages.push(message); this.messages = this.messages.slice(-500); this.persist();
     this.publish({ type: 'message', message });
   }
-  active(request) { return !this.closed && !request.controller.signal.aborted && this.pending.get(request.id) === request && request.epoch === this.epoch && request.sessionId === this.sessionId; }
+  active(request) { return !this.closed && !request.controller.signal.aborted && this.pending.get(request.id) === request && request.epoch === this.epoch && request.sessionId === this.sessionId && (!this.characterSession || this.characterSession.accepts(request.characterToken)); }
   tool(request, status, meta) {
     if (!this.active(request)) return;
     const id = `${request.id}:snapshot`;
@@ -263,7 +346,7 @@ class CompanionRuntime extends EventEmitter {
     const capability = this.mode === 'real' && !diagnostic ? adviceCapability(message, input?.capability) : null;
     const adviceMode = input?.adviceMode ?? 'ui_evidence';
     if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
-    const request = { diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const request = { characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {
       // Previous cards are historical, not current values after a new read or failure.
       for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];
@@ -278,7 +361,7 @@ class CompanionRuntime extends EventEmitter {
     try {
       this.tool(request, 'running');
       const result = request.mode === 'real'
-        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, adviceMode: request.adviceMode, signal: request.controller.signal })
+        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, adviceMode: request.adviceMode, characterContext: request.characterContext, signal: request.controller.signal })
         : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
       if (request.mode === 'real') {
@@ -324,19 +407,51 @@ class CompanionRuntime extends EventEmitter {
     this.addMessage(message); this.changed(); return { messageId: message.id };
   }
   getHistory() { return { enabled: this.historyEnabled, messages: [...this.messages] }; }
-  async clearHistory() { this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); await this.persist(); this.changed(); return this.getHistory(); }
-  getMemories() { return { entries: [...this.memories] }; }
+  async clearHistory() { this.characterSession?.activate(this.saveId, this.characterId); this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); await this.persist(); this.changed(); return this.getHistory(); }
+  getMemories() {
+    if (this.characterLibrary && this.mode === 'real') return this.syncRealMemories();
+    return { entries: [...this.memories] };
+  }
+  async memoryOperation(operation) {
+    const token = this.characterSession.current, epoch = this.epoch;
+    const context = this.characterContext(), controller = new AbortController();
+    this.memoryControllers.add(controller);
+    try {
+      const result = await operation(context, controller.signal);
+      if (controller.signal.aborted || epoch !== this.epoch || !this.characterSession.accepts(token)) throw Error('角色或会话已切换，旧记忆响应已丢弃。');
+      return result;
+    } finally { this.memoryControllers.delete(controller); }
+  }
+  memoryRecord(value) {
+    if (!value || typeof value.id !== 'string' || typeof value.content !== 'string' || value.content.length > 2000) throw Error('记忆服务返回了无效记录。');
+    return { id: value.id, text: value.content, createdAt: value.created_at, source: 'user-confirmed' };
+  }
+  async syncRealMemories() {
+    const epoch = this.epoch;
+    const result = await this.memoryOperation((characterContext, signal) => this.realClient.memories({ characterContext, signal }));
+    if (!Array.isArray(result.memories) || result.memories.length > 200) throw Error('记忆服务返回了无效列表。');
+    this.memories = result.memories.map(value => this.memoryRecord(value));
+    await this.persist(); if (epoch !== this.epoch) throw Error('会话已切换。'); this.changed(); return { entries: [...this.memories] };
+  }
   async saveMemory(input) {
+    const epoch = this.epoch;
     const memory = { id: randomUUID(), text: text(input?.text, 2_000, '记忆内容'), createdAt: new Date().toISOString(), source: 'user-confirmed' };
     if (this.memories.length >= 200) throw new Error('已保存 200 条记忆，请先删除不再需要的内容。');
+    if (this.characterLibrary && this.mode === 'real') {
+      const result = await this.memoryOperation((characterContext, signal) => this.realClient.addMemory({ content: memory.text, characterContext, signal }));
+      const saved = this.memoryRecord(result); this.memories.push(saved);
+      await this.persist(); if (epoch !== this.epoch) throw Error('会话已切换。'); this.changed(); return saved;
+    }
     this.memories.push(memory); await this.persist(); this.changed(); return memory;
   }
   async deleteMemory(id) {
+    const epoch = this.epoch;
     if (typeof id !== 'string' || id.length > 128) throw new Error('记忆标识无效。');
+    if (this.characterLibrary && this.mode === 'real') await this.memoryOperation((characterContext, signal) => this.realClient.deleteMemory({ id, characterContext, signal }));
     const before = this.memories.length; this.memories = this.memories.filter(item => item.id !== id);
-    await this.persist(); this.changed(); return { deleted: before !== this.memories.length };
+    await this.persist(); if (epoch !== this.epoch) throw Error('会话已切换。'); this.changed(); return { deleted: before !== this.memories.length };
   }
-  async close() { this.captureController?.abort(); this.captureController = null; clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.previewController?.abort(); this.closed = true; this.connectionController?.abort(); this.cancelAll(); await this.writeQueue; this.removeAllListeners(); }
+  async close() { try { this.saveCharacterScope(); } catch {} this.characterSession?.dispose(); this.captureController?.abort(); this.captureController = null; clearTimeout(this.previewTimer); clearTimeout(this.previewExpiryTimer); this.previewController?.abort(); this.closed = true; this.connectionController?.abort(); this.cancelAll(); await this.writeQueue; this.removeAllListeners(); }
 }
 
 module.exports = { CompanionRuntime };

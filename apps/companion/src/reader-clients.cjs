@@ -175,16 +175,50 @@ class RealReaderClient {
     const envelope = await this.request('/v1/reader/business/status', undefined, { signal });
     return { connection: 'connected', metadata: businessMetadata(envelope), capabilities: this.capabilities(envelope), readiness: envelope };
   }
+  async agentRequest(endpoint, body, options) {
+    const result = await this.request(endpoint, body, options);
+    const expected = body.character_context;
+    // Deterministic blocked advice need not carry a model scope, generated output must.
+    if (expected && (endpoint === '/v1/chat' || result?.character_context || ['generated', 'partial'].includes(result?.status))) {
+      if (result?.character_context?.save_id !== expected.save_id || result?.character_context?.character_id !== expected.character_id) throw Error('角色回复范围不匹配。');
+    }
+    return result;
+  }
+  memoryScope(characterContext) {
+    if (!characterContext || typeof characterContext.save_id !== 'string' || !characterContext.save_id.trim() || typeof characterContext.character_id !== 'string' || !characterContext.character_id.trim()) throw Error('记忆请求缺少角色/存档范围。');
+    return { save_id: characterContext.save_id, character_id: characterContext.character_id };
+  }
+  verifyMemoryScope(result, context) {
+    if (result?.character_context?.save_id !== context.save_id || result?.character_context?.character_id !== context.character_id) throw Error('记忆响应范围不匹配。');
+    return result;
+  }
+  async memories({ characterContext, signal }) {
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request(`/v1/memories?${new URLSearchParams(scope)}`, undefined, { signal });
+    return this.verifyMemoryScope(result, scope);
+  }
+  async addMemory({ content, characterContext, signal }) {
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request('/v1/memories', { content, character_context: scope }, { signal });
+    return this.verifyMemoryScope(result, scope);
+  }
+  async deleteMemory({ id, characterContext, signal }) {
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) throw Error('无效记忆标识。');
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request(`/v1/memories/${encodeURIComponent(id)}?${new URLSearchParams(scope)}`, undefined, { signal, method: 'DELETE' });
+    if (result?.deleted !== true) throw Error('记忆删除未确认。');
+    return result;
+  }
   async match({ signal } = {}) {
     return this.request('/v1/reader/match', undefined, { signal });
   }
   async offseasonCalendar({ clubUid, start, end, signal } = {}) {
     return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
   }
-  async calendarAdvice({ message, conversationId, clubUid, start, end, signal } = {}) {
+  async calendarAdvice({ message, conversationId, clubUid, start, end, characterContext, signal } = {}) {
     calendarEndpoint(clubUid, start, end); // Validate the explicit selection before a request.
     if (typeof message !== 'string' || !message.trim() || message.length > 4000) throw new Error('Invalid question');
-    return this.request('/v1/agent/calendar-advice', { message, conversation_id: conversationId ?? null, club_uid: clubUid, start, end }, { signal, timeoutMs: 120_000 });
+    return this.agentRequest('/v1/agent/calendar-advice', { message, conversation_id: conversationId ?? null, club_uid: clubUid, start, end, ...(characterContext ? { character_context: characterContext } : {}) }, { signal, timeoutMs: 120_000 });
   }
   async snapshot({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/snapshot', undefined, { signal });
@@ -246,7 +280,7 @@ class RealReaderClient {
       }
     }));
   }
-  async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
+  async reply({ message, conversationId, capability, adviceMode = 'native', characterContext, signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
     // Never infer a selected club or range from a conversation or current save.
@@ -264,7 +298,7 @@ class RealReaderClient {
       } catch {
         return { text: '请明确提供一个俱乐部 UID 和两个同年日期（YYYY-MM-DD），范围最多 30 天。', conversationId, cards: [], metadata: meta };
       }
-      const result = await this.calendarAdvice({ message, conversationId, clubUid, start: dates[0], end: dates[1], signal });
+      const result = await this.calendarAdvice({ message, conversationId, clubUid, start: dates[0], end: dates[1], characterContext, signal });
       if (result?.status !== 'partial' || result.context?.status !== 'partial' || result.context?.selected_club_uid !== clubUid ||
           result.context?.start !== dates[0] || result.context?.end !== dates[1] || typeof result.reply !== 'string' || !result.reply.trim()) {
         return { text: '所选范围的赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
@@ -276,7 +310,7 @@ class RealReaderClient {
     if (typeof message === 'string' && /(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) {
       const meta = { source: 'native_calendar_candidate', synthetic: false, freshness: 'unknown', partial: true,
         limitations: ['仅包含已加载赛程候选，可能不完整；经理关联候选不代表已确认当前执教球队。'] };
-      const result = await this.request('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null }, { signal, timeoutMs: 120_000 });
+      const result = await this.agentRequest('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null, ...(characterContext ? { character_context: characterContext } : {}) }, { signal, timeoutMs: 120_000 });
       const selection = result?.selection, context = result?.context;
       if (result?.status !== 'partial' || context?.status !== 'partial' || !selection ||
           context.selected_club_uid !== selection.club_uid || context.start !== selection.start || context.end !== selection.end ||
@@ -297,7 +331,7 @@ class RealReaderClient {
         metadata: card.metadata, cards: [card] };
     }
     if (capability && adviceMode === 'ui_evidence') {
-      const result = await this.request('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability }, { signal });
+      const result = await this.agentRequest('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
       const provenance = result.provenance;
       return { text: result.reply, conversationId: result.conversation_id, cards: [], metadata: {
         source: 'ui', sourceLabel: 'Alpha · UI 采样建议（非后台全量数据）',
@@ -309,7 +343,7 @@ class RealReaderClient {
       } };
     }
     if (capability) {
-      const result = await this.request('/v1/agent/business-advice', { message, conversation_id: conversationId, capability }, { signal });
+      const result = await this.agentRequest('/v1/agent/business-advice', { message, conversation_id: conversationId, capability, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
       const meta = businessMetadata(result.readiness);
       meta.snapshotId = result.facts?.[0]?.snapshot_id ?? null;
       meta.limitations.push(...(result.missing_requirements || []));
@@ -318,7 +352,7 @@ class RealReaderClient {
         cards: facts.length ? [{ id: 'business-facts', title: '已读取事实 · 建议见回复', metadata: meta,
           fields: facts.slice(0, 100).map(fact => ({ label: `${fact.snapshot_id} ${fact.field_ref}`, value: fact.value, status: 'observed' })) }] : [] };
     }
-    const result = await this.request('/v1/chat', { message, conversation_id: conversationId }, { signal });
+    const result = await this.agentRequest('/v1/chat', { message, conversation_id: conversationId, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
     return { text: result.reply, conversationId: result.conversation_id, metadata: { ...businessMetadata(), source: 'agent', sourceLabel: 'AI 对话 · 非当前存档事实', limitations: ['普通对话不代表已读取当前存档业务数据。'] }, cards: [] };
   }
 }
