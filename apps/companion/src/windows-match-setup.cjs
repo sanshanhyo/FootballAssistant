@@ -28,7 +28,7 @@ async function loaderProgress(gamePath) {
 }
 function createWindowsMatchSetup({ userData, installer, packaged, platform = process.platform, chooseGame, inspectSelectedGame = inspectGame,
   requestMatch, probeGame = () => detectGame(platform), onConfigured = async () => ({}), now = Date.now }) {
-  let pending = null, selected = null, busy = false, waitingSince = null;
+  let pending = null, selected = null, busy = false, waitingSince = null, lastInspection = null;
   const supported = platform === 'win32' && packaged;
   const exclusive = async action => { if (busy) throw Error('比赛组件操作正在进行，请稍候。'); busy = true; try { return await action(); } finally { busy = false; } };
   const publicValue = value => { const { confirmationToken, ...rest } = value || {}; return rest; };
@@ -44,7 +44,11 @@ function createWindowsMatchSetup({ userData, installer, packaged, platform = pro
     if (!supported) return { supported: false, state: 'unsupported_platform', dataConnected: false };
     const settings = await loadSettings(userData);
     let install;
-    try { install = await installer.inspect(selected || settings.windowsMatchGamePath || settings.windowsReaderGamePath || undefined); }
+    try {
+      // Poll only current process-bound status; do not rehash a 400+ MiB game DLL every two seconds.
+      install = verify && lastInspection ? lastInspection : await installer.inspect(selected || settings.windowsMatchGamePath || settings.windowsReaderGamePath || undefined);
+      if (!verify) lastInspection = install;
+    }
     catch (error) { return { supported: true, state: 'deployment_error', error: error.message, code: error.code, dataConnected: false }; }
     const result = { ...publicValue(install), supported: true, enabled: settings.windowsMatchEnabled === true, dataConnected: false };
     if (install.state !== 'deployed') return result;
@@ -75,11 +79,11 @@ function createWindowsMatchSetup({ userData, installer, packaged, platform = pro
   }
   return {
     status,
-    select: () => exclusive(async () => { pending = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const candidate = await chooseGame(); if (!candidate) return { cancelled: true }; selected = (await inspectSelectedGame(candidate)).gamePath; pending = null; return { ...await status(), gamePath: selected }; }),
-    plan: () => exclusive(async () => { pending = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const game = await gamePath(); if (!game) return { cancelled: true }; pending = await installer.plan(game); return { ...publicValue(pending), supported: true }; }),
+    select: () => exclusive(async () => { pending = null; lastInspection = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const candidate = await chooseGame(); if (!candidate) return { cancelled: true }; selected = (await inspectSelectedGame(candidate)).gamePath; pending = null; return { ...await status(), gamePath: selected }; }),
+    plan: () => exclusive(async () => { pending = null; lastInspection = null; if (!supported) throw Error('此平台没有可部署的 Windows 比赛组件。'); const game = await gamePath(); if (!game) return { cancelled: true }; pending = await installer.plan(game); return { ...publicValue(pending), supported: true }; }),
     deploy: input => exclusive(async () => {
       if (!supported || !input || Object.keys(input).some(k => !['planId','confirm','migrateLoader','allowFirstRunDownload'].includes(k)) || input.confirm !== true || input.allowFirstRunDownload !== true || typeof input.migrateLoader !== 'boolean' || !pending || pending.planId !== input.planId) throw Error('请确认当前部署计划、首次启动联网下载及互操作生成说明。');
-      const plan = pending; pending = null;
+      const plan = pending; pending = null; lastInspection = null;
       const installed = await installer.deploy({ planId: plan.planId, confirmationToken: plan.confirmationToken, confirm: true, migrateLoader: input.migrateLoader });
       const configured = await persist(true, installed.gamePath, installed.snapshotPath); waitingSince = null;
       return { ...await status(), ...configured, state: 'deployed', needsGameStart: true };
@@ -87,7 +91,7 @@ function createWindowsMatchSetup({ userData, installer, packaged, platform = pro
     connect: () => exclusive(async () => { const current = await status(); if (!supported || !['deployed','deployed_unconfigured'].includes(current.state)) throw Error('请先完成完整组件部署。'); const configured = await persist(true, current.gamePath, current.snapshotPath); return { ...await status(), ...configured }; }),
     verify: () => status({ verify: true }),
     retry: () => { waitingSince = null; return status({ verify: true }); },
-    rollback: input => exclusive(async () => { if (!supported || !input || Object.keys(input).join(',') !== 'confirm' || input.confirm !== true) throw Error('请先确认回滚比赛组件。'); pending = null; const restored = await installer.rollback({ confirm: true }); const configured = await persist(false, ''); waitingSince = null; return { ...publicValue(restored), ...configured, supported: true, enabled: false, dataConnected: false }; }),
+    rollback: input => exclusive(async () => { if (!supported || !input || Object.keys(input).join(',') !== 'confirm' || input.confirm !== true) throw Error('请先确认回滚比赛组件。'); pending = null; lastInspection = null; const restored = await installer.rollback({ confirm: true }); const configured = await persist(false, ''); waitingSince = null; return { ...publicValue(restored), ...configured, supported: true, enabled: false, dataConnected: false }; }),
   };
 }
 module.exports = { createWindowsMatchSetup, trustedMatchPath, loaderProgress };
