@@ -92,24 +92,24 @@ test('explicit removal never submits a typed replacement and clears configured m
  assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-api-key').placeholder,'输入 API Key');
  assert.equal(h.$('model-storage-note').textContent,'未配置密钥');
 });
-test('five navigation pages with Alpha persona configuration hidden; diagnostic DOM removed',()=>{
+test('six navigation pages expose Alpha 0.0.2 character library; diagnostic DOM removed',()=>{
   assert.equal((html.match(/class="settings-page"/g)||[]).length,6);
-  assert.equal((html.match(/data-page="/g)||[]).length,5);
-  assert.doesNotMatch(html,/data-page="companion"/);
-  assert.match(html,/id="page-companion"[^>]+hidden inert/);
+  assert.equal((html.match(/data-page="/g)||[]).length,6);
+  assert.match(html,/data-page="companion"/);
+  assert.match(html,/id="page-companion"[^>]+hidden>/);
+  assert.match(html,/id="character-library"/);
   for(const forbidden of ['COMPANION','sidebar-footer','class="brand"','class="muted"','<small>','Windows 手动诊断导入','bridge-setup-card','模拟数据演示','page-description','discovery-settings.js','bridge-settings.js'])assert.ok(!html.includes(forbidden),forbidden);
   assert.match(html,/<select id="model-name"/);assert.doesNotMatch(html,/<input id="model-name"/);
   assert.match(css,/\.about-nav\{margin-top:auto\}/);
 });
 
-test('Alpha hides all character configuration navigation while retaining persona data and memory pages',async()=>{
- assert.doesNotMatch(html,/character-card|character-introduction|data-page="characters?"|id="page-characters?"/);
- for(const id of ['persona-content','persona-save','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
- const h=await harness();assert.equal(h.nav.some(x=>x.dataset.page==='companion'),false);
+test('Alpha 0.0.2 opens character library while retaining legacy persona data and memory pages',async()=>{
+ for(const id of ['character-library','tts-settings','persona-content','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
+ const h=await harness();assert.equal(h.nav.some(x=>x.dataset.page==='companion'),true);
  assert.equal(h.$('page-companion').hidden,true);
- const legacy=h.nav[0];legacy.dataset.page='companion';await legacy.fire('click');
- assert.equal(h.$('page-connection').hidden,false);assert.equal(h.$('page-companion').hidden,true);
- assert.equal(h.$('page-title').textContent,'连接');
+ await h.nav.find(x=>x.dataset.page==='companion').fire('click');
+ assert.equal(h.$('page-connection').hidden,true);assert.equal(h.$('page-companion').hidden,false);
+ assert.equal(h.$('page-title').textContent,'角色库');
 });
 test('unavailable backend remains visibly disconnected and unknown never becomes healthy',async()=>{const h=await harness();assert.equal(h.$('connection-status').textContent,'后台未连接');h.event({type:'state',state:{...h.state,connection:{state:'pending'}}});assert.equal(h.$('connection-status').textContent,'连接未确认');});
 test('preset URL hidden, custom URL shown, provider changes clear draft key and model list',async()=>{const h=await harness();assert.equal(h.$('custom-url-row').hidden,true);h.$('model-api-key').value='secret';h.$('model-provider').value='openai-compatible';await h.$('model-provider').fire('change');assert.equal(h.$('custom-url-row').hidden,false);assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-save').disabled,true);});
@@ -135,4 +135,14 @@ test('save masks the committed key and reports session-only storage without secr
  let h,received;h=await harness({saveModelConfig:input=>{received={...input};assert.equal(h.$('model-api-key').value,'test-secret');return Promise.resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',hasApiKey:true,storage:'session',restartRequired:true}});}});
  h.$('model-api-key').value='test-secret';await h.$('model-fetch').fire('click');h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();
  assert.deepEqual(received,{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',apiKey:'test-secret'});assert.equal(h.$('model-api-key').value,'');assert.match(h.$('model-storage-note').textContent,/仅本次/);assert.match(h.$('notice').textContent,/待重启/);
+});
+test('bubble duration persists, validates integer bounds, and survives unrelated appearance edits',async()=>{
+  const h=await harness();assert.equal(h.$('bubble-duration-mode').value,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
+  h.$('bubble-duration-mode').value='fixed';await h.$('bubble-duration-mode').fire('change');assert.equal(h.$('bubble-duration-row').hidden,false);
+  h.$('bubble-duration-seconds').value='60';await h.$('bubble-duration-seconds').fire('change');
+  const read=()=>JSON.parse(h.storage.get('football-assistant.appearance.v1'));
+  assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().fontFamily,undefined);
+  for (const invalid of ['','1','61','2.5','NaN']) {h.$('bubble-duration-seconds').value=invalid;await h.$('bubble-duration-seconds').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.match(h.$('error').textContent,/2–60/);}
+  h.$('font-size').value='18';await h.$('font-size').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().bubbleDurationMode,'fixed');
+  h.$('bubble-duration-mode').value='auto';await h.$('bubble-duration-mode').fire('change');assert.equal(read().bubbleDurationMode,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
 });

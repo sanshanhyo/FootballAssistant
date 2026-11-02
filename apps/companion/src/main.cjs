@@ -3,6 +3,11 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPref
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { CharacterLibrary } = require('./character-library.cjs');
+const { migrateLegacyCharacter } = require('./character-migration.cjs');
+const { createCharacterController } = require('./character-controller.cjs');
+const { createPetReactionRuntime } = require('./pet-reaction-runtime.cjs');
+const { createSpeechConfig } = require('./speech-config.cjs');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { controlSettingsWindow } = require('./settings-window.cjs');
 const { createSettingsContent } = require('./settings-content.cjs');
@@ -41,6 +46,10 @@ let backendOptions;
 let credentials;
 let modelDiscovery;
 let personaAccess;
+let characterLibrary;
+let characterController;
+let speechConfig;
+let petReactions;
 let bridgeDeployment;
 let savingModel = false;
 let updateController;
@@ -75,7 +84,7 @@ function emit(value) {
   }
 }
 function emitPet(value) { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('companion:event', value); }
-const speech = createSpeechService({ localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'), onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
+let speech = createSpeechService({ localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'), onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
 function senderRole(event, method) {
   for (const [role, window, url] of [['pet', win, pageUrl], ['settings', settingsWindow, settingsPageUrl]]) {
     if (!window || window.isDestroyed() || event.sender !== window.webContents) continue;
@@ -150,7 +159,7 @@ function contextMenu() {
   return Menu.buildFromTemplate([
     { label: win?.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => win?.isVisible() ? hidePet() : showPet() },
     { label: '设置…', click: () => openSettings().catch(() => {}) },
-    { label: '朗读上一条回复', enabled: ALPHA_TTS_ENABLED && Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
+    { label: '朗读上一条回复', enabled: ALPHA_TTS_ENABLED && speechConfig?.getPublicConfig().enabled === true && Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
     { label: '停止语音', click: () => { speech.stop(); emit({ type: 'stop-speech' }); } },
     { type: 'separator' }, { label: '退出', click: () => app.quit() },
   ]);
@@ -183,6 +192,29 @@ function registerIpc() {
   handle('contributors-open', () => settingsContent.openContributors());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
+  handle('result-reactions-get', () => petReactions?.status() || { enabled: false, readerEvidence: 'unavailable' });
+  handle('result-reactions-set', enabled => { if (!petReactions) throw Error('赛果反应配置不可用。'); return petReactions.setEnabled(enabled); });
+  handle('characters-list', () => characterController.list());
+  handle('character-get', id => characterController.get(id));
+  handle('character-select', id => characterController.select(id));
+  handle('character-import', () => characterController.importZip());
+  handle('character-save', input => characterController.save(input));
+  handle('character-portrait', id => characterController.portrait(id));
+  handle('character-reset', id => characterController.reset(id));
+  handle('character-archive', async () => {
+    const local = characterController.archive();
+    try { return { ...local, backend: await request(backendOptions.runtimeFile, '/v1/characters/legacy-archive') }; }
+    catch { return { ...local, backendUnavailable: true }; }
+  });
+  handle('speech-config-get', () => speechConfig.getPublicConfig());
+  handle('speech-config-save', async input => {
+    const saved = await speechConfig.save(input); speech.dispose();
+    speech = createSpeechService({ env: process.env, ttsEnv: speechConfig.speechEnv(),
+      bundledEdgePath: app.isPackaged ? path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'football-assistant-backend.exe' : 'football-assistant-backend') : undefined,
+      localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'),
+      onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
+    emit({ type: 'speech-config', config: saved }); emitPet({ type: 'stop-speech' }); return saved;
+  });
   handle('game-status', () => detectGame());
   handle('bootstrap-status', async () => {
     const backend = { ...backendSupervisor.status };
@@ -246,7 +278,7 @@ function registerIpc() {
     return input;
   }
   handle('transcribe', input => speech.transcribe(speechInput(input)));
-  handle('speak', input => speakWhenEnabled(() => speech.speak(speechInput(input))));
+  handle('speak', input => speakWhenEnabled(() => speech.speak(speechConfig.authorizeSpeak(speechInput(input), characterLibrary.resolve(runtime.characterId).voice))));
   handle('cancel-speech-operation', id => speech.cancel(id));
   handle('stop-speech', ({ role }) => stopSpeechForRole(role, { stop: () => speech.stop(), notifyPet: emitPet }), { withSender: true });
   handle('microphone-permission', async () => {
@@ -379,6 +411,12 @@ async function main() {
   const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
   credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
   modelDiscovery = createModelDiscovery({ credentials });
+  speechConfig = await createSpeechConfig({ userData: app.getPath('userData'), safeStorage });
+  speech.dispose();
+  speech = createSpeechService({ env: process.env, ttsEnv: speechConfig.speechEnv(),
+    bundledEdgePath: app.isPackaged ? path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'football-assistant-backend.exe' : 'football-assistant-backend') : undefined,
+    localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'),
+    onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
   backendOptions = { userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
   installedUpdates = createInstalledUpdater({ platform: process.platform,
@@ -421,8 +459,18 @@ async function main() {
   personaAccess = createPersonaAccess({ userData: app.getPath('userData'),
     isManaged: () => app.isPackaged && !backendSupervisor.external && backendSupervisor.status.owned === true && backendSupervisor.status.state === 'ready',
     getMetadata: () => request(runtimeFile, '/v1/agent/persona'), openPath: target => shell.openPath(target) });
-  runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
-  await initializeCompanion(runtime); runtime.on('event', emit);
+  characterLibrary = new CharacterLibrary({ root: path.join(app.getPath('userData'), 'characters') });
+  let characterMigrationWarning = null;
+  try { migrateLegacyCharacter({ library: characterLibrary, personaFile: path.join(app.getPath('userData'), 'backend', 'persona.md'), settingsFile: path.join(app.getPath('userData'), 'companion-ui.json') }); }
+  catch { characterMigrationWarning = '旧角色数据迁移未完成，原文件保留；请先检查后再编辑角色。'; }
+  runtime = new CompanionRuntime({ characterLibrary, cancelCharacterEffects: () => { petReactions?.cancel(); speech.stop(); emitPet({ type: 'stop-speech' }); }, realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
+  await initializeCompanion(runtime); if (characterMigrationWarning) runtime.storageWarning = characterMigrationWarning; runtime.on('event', emit);
+  const chooseFile = async (name, extensions) => {
+    const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name, extensions }] });
+    return result.canceled ? null : result.filePaths[0];
+  };
+  characterController = createCharacterController({ library: characterLibrary, runtime, chooseZip: () => chooseFile('角色包 ZIP', ['zip']), choosePortrait: () => chooseFile('角色 PNG', ['png']) });
+  try { petReactions = await createPetReactionRuntime({ runtime, journalFile: path.join(app.getPath('userData'), 'result-events.json'), preferencesFile: path.join(app.getPath('userData'), 'result-reactions.json'), emit: emitPet }); } catch { runtime.storageWarning ||= '赛果反应配置不可用，保持关闭，原文件保留。'; }
   registerIpc();
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
     { label: '显示桌宠', click: showPet }, { label: '隐藏桌宠', click: hidePet },
@@ -446,6 +494,6 @@ app.on('window-all-closed', () => { /* The tray owns application lifetime. */ })
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault(); quitting = true;
-  clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
+  clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); petReactions?.dispose(); tray?.destroy();
   Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });

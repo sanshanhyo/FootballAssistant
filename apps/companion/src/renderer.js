@@ -18,6 +18,10 @@
   let blockedReplyId = null;
   let noticeTimer;
   let speechInfo = null;
+  let speechPreferences = { enabled: false };
+  const systemSpeechResults = new Map();
+  const systemSpeechWaiters = new Map();
+  const queuedPlayback = window.FootballTtsPlayback?.createPlayback();
   let recording = null;
   let speechOperation = null;
   let player = null;
@@ -34,6 +38,25 @@
     if (!result?.ok) throw new Error(result?.error || '桌宠请求失败，请重试。');
     return result.value;
   };
+  const ttsQueue = window.FootballTtsQueue?.createTtsQueue({
+    synthesize: async payload => {
+      if (!speechPreferences.enabled || payload.generation !== state?.epoch || payload.conversationId !== state?.sessionId) throw Error('cancelled');
+      return unwrap(await api.speak(payload));
+    },
+    play: (result, signal) => {
+      if (result.generation !== state?.epoch || result.conversationId !== state?.sessionId || signal.aborted) return Promise.reject(Error('cancelled'));
+      setVoiceStatus('正在播报…', 'speaking');
+      if (result.playback === 'renderer') return queuedPlayback.play(result, signal);
+      if (result.playback !== 'system') return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const finish = value => { signal.removeEventListener('abort', abort); systemSpeechWaiters.delete(result.operationId); systemSpeechResults.delete(result.operationId); value === 'finished' ? resolve() : reject(Error('cancelled')); };
+        const abort = () => finish('cancelled');
+        if (systemSpeechResults.has(result.operationId)) { finish(systemSpeechResults.get(result.operationId)); return; }
+        systemSpeechWaiters.set(result.operationId, finish); signal.addEventListener('abort', abort, { once: true });
+      });
+    },
+    cancel: id => api.cancelSpeechOperation(id), stopPlayback: () => queuedPlayback?.stop(),
+  });
   const node = (tag, className, text) => {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -141,8 +164,8 @@
     const visual = character.visual;
     const scene = Scenes.selectScene({ game: gameStatus, messages: messages.values(), sessionId: state.sessionId, epoch: state.epoch });
     pet.dataset.scene = failedScenes.has(scene) ? 'default' : scene;
-    const localSource = character.characterId === 'official.eckera' ? Scenes.sourceFor(scene, failedScenes) : visual?.source;
-    const source = visual?.kind === 'builtin-image' && typeof localSource === 'string' ? new URL(localSource, document.baseURI).href : '';
+    const localSource = (character.useBuiltinScenes === true || (!('useBuiltinScenes' in character) && character.characterId === 'official.eckera')) ? Scenes.sourceFor(scene, failedScenes) : visual?.source;
+    const source = ['builtin-image', 'character-image'].includes(visual?.kind) && typeof localSource === 'string' ? new URL(localSource, document.baseURI).href : '';
     if (source && image.src !== source) {
       image.hidden = false;
       $('character-visual-error').hidden = true;
@@ -214,9 +237,12 @@
     if (event.type === 'read-last-reply') { speakLast(); return; }
     if (event.type === 'state') { applyState(event.state); return; }
     if (event.type === 'speech') { onSpeechEvent(event.state); return; }
+    if (event.type === 'speech-config') { speechPreferences = event.config || { enabled: false }; cancelVoice('', false); return; }
+    if (event.type === 'pet-motion') { if (event.epoch === state?.epoch && event.sessionId === state?.sessionId) motion?.setState(event.state); return; }
     if (event.type === 'message' && UI.belongsToSession(event.message, state)) {
       const isNew = !messages.has(event.message.id);
       messages.set(event.message.id, event.message); renderCharacter(); renderBubble();
+      if (isNew && event.message.role === 'assistant' && event.message.metadata?.synthetic !== true && speechPreferences.enabled) enqueueSpeech(event.message);
       if (isNew && event.message.origin === 'proactive' && speechPhase === 'idle' && $('error').hidden &&
           ![...requests.values()].some(item => ['pending', 'running', 'accepted', 'queued'].includes(item.status))) {
         setExpression('notice'); clearTimeout(noticeTimer); noticeTimer = setTimeout(refreshExpression, 2500);
@@ -260,6 +286,7 @@
 
   function providerEntries(kind) { return Array.isArray(speechInfo?.[kind]) ? speechInfo[kind] : []; }
   async function refreshSpeechCapabilities() {
+    try { speechPreferences = unwrap(await api.getSpeechConfig()); } catch { speechPreferences = { enabled: false }; }
     try { speechInfo = unwrap(await api.speechCapabilities()); }
     catch { speechInfo = null; }
   }
@@ -270,6 +297,9 @@
 
   function cancelVoice(message = '语音操作已取消', notifyMain = true) {
     voiceFence.invalidate();
+    ttsQueue?.switchContext();
+    for (const finish of [...systemSpeechWaiters.values()]) finish('cancelled');
+    systemSpeechResults.clear();
     if (recording) {
       recording.cancelled = true; recording.stopRequested = true;
       clearTimeout(recording.timer);
@@ -403,35 +433,27 @@
     } finally { if (speechOperation === operation) speechOperation = null; }
   }
 
+  function enqueueSpeech(reply, interrupt = false) {
+    if (!state || !speechPreferences.enabled || !ttsQueue) return;
+    const context = speechContext(operationId('tts'));
+    setVoiceStatus('正在准备播报…', 'speaking');
+    ttsQueue.enqueue({ ...context, text: reply.text }, { interrupt }).then(() => {
+      if (context.generation === state?.epoch && context.conversationId === state?.sessionId) setVoiceStatus('播报完成');
+    }).catch(error => {
+      if (error.code !== 'cancelled' && context.generation === state?.epoch && context.conversationId === state?.sessionId) { setVoiceStatus('语音失败，文字仍可阅读'); }
+    });
+  }
   async function speakLast() {
     if (!lastReply || !state) return;
-    const reply = lastReply;
-    cancelVoice(''); showError('');
-    const operation = { id:operationId('tts'), token:voiceFence.capture(), context:speechContext('') };
-    operation.context.operationId = operation.id; speechOperation = operation;
-    setVoiceStatus('正在准备播报…', 'speaking');
-    try {
-      const result = unwrap(await api.speak({ ...operation.context, text:reply.text, provider:preferences().ttsProvider }));
-      if (!speechResultCurrent(result, operation)) return;
-      if (result.playback === 'renderer') {
-        const bytes = result.audio instanceof ArrayBuffer ? result.audio : result.audio?.buffer instanceof ArrayBuffer ? result.audio.buffer : null;
-        if (!bytes || !bytes.byteLength) throw new Error('语音服务未返回音频。');
-        playerUrl = URL.createObjectURL(new Blob([bytes], { type:result.mimeType || 'audio/mpeg' }));
-        player = new Audio(playerUrl);
-        player.addEventListener('ended', () => { if (speechOperation === operation) { stopPlayer(); speechOperation = null; setVoiceStatus('播报完成'); } });
-        player.addEventListener('error', () => { if (speechOperation === operation) { stopPlayer(); speechOperation = null; setVoiceStatus('播放失败'); showError('无法播放返回的音频，请检查语音服务。'); } });
-        await player.play();
-        if (!speechResultCurrent(result, operation)) { stopPlayer(); return; }
-        setVoiceStatus('正在播报…', 'speaking');
-      } else if (result.playback === 'none') { speechOperation = null; setVoiceStatus(result.synthetic ? '模拟播报完成 · 未播放实际音频' : '未播放音频'); }
-      else setVoiceStatus('正在使用系统语音播报…', 'speaking');
-    } catch (error) {
-      if (!speechResultCurrent({}, operation)) return;
-      speechOperation = null; stopPlayer(); setVoiceStatus('播报失败'); showError(error.message);
-    }
+    if (!speechPreferences.enabled) { showError('请先在语音设置中启用朗读。'); return; }
+    cancelVoice(''); enqueueSpeech(lastReply, true);
   }
 
   function onSpeechEvent(event) {
+    if (event?.operationId && event.generation === state?.epoch && event.conversationId === state?.sessionId && ['finished', 'stopped', 'cancelled', 'error'].includes(event.state)) {
+      if (systemSpeechWaiters.has(event.operationId)) systemSpeechWaiters.get(event.operationId)(event.state);
+      else { systemSpeechResults.set(event.operationId, event.state); if (systemSpeechResults.size > 30) systemSpeechResults.delete(systemSpeechResults.keys().next().value); }
+    }
     if (!event || !speechOperation) return;
     const operation = speechOperation;
     if (event.operationId && event.operationId !== operation.id) return;
@@ -462,6 +484,12 @@
 
   function bindEvents() {
     $('chat-form').addEventListener('submit', send);
+    let bubbleHovered = false, bubbleFocused = false;
+    const reading = () => bubbleQueue?.setReading(bubbleHovered || bubbleFocused);
+    $('compact-bubble').addEventListener('pointerenter', () => { bubbleHovered = true; reading(); });
+    $('compact-bubble').addEventListener('pointerleave', () => { bubbleHovered = false; reading(); });
+    $('compact-bubble').addEventListener('focus', () => { bubbleFocused = true; reading(); });
+    $('compact-bubble').addEventListener('blur', () => { bubbleFocused = false; reading(); });
     let bubblePointer = null;
     $('compact-bubble').addEventListener('pointerdown', event => {
       bubblePointer = event.button === 0 ? { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false } : null;
@@ -504,7 +532,7 @@
     document.addEventListener('toggle', updateRects, true);
     window.addEventListener('resize', () => { resizeComposer(); updateRects(); });
     window.addEventListener('blur', () => { clearTimeout(holdTimer); if (recording) stopRecording(true); });
-    window.addEventListener('beforeunload', () => { sceneClosed = true; motion?.dispose(); clearTimeout(noticeTimer); disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
+    window.addEventListener('beforeunload', () => { sceneClosed = true; ttsQueue?.dispose(); queuedPlayback?.stop(); motion?.dispose(); clearTimeout(noticeTimer); disposeAppearance?.(); clearTimeout(gamePollTimer); cancelVoice(''); bubbleQueue?.dispose(); unsubscribe?.(); });
     const observer = new ResizeObserver(updateRects);
     [$('compact-bubble'), $('chat-form')].forEach(element => observer.observe(element));
   }
@@ -526,7 +554,7 @@
     return;
   }
   bindEvents();
-  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
+  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { bubbleQueue?.configure(prefs); motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeechCapabilities();
