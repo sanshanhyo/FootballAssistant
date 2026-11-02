@@ -37,7 +37,7 @@ lists native runtime files for release review: collecting notices does not itsel
 verify every native-library obligation or satisfy all corresponding-source duties.
 Electron/Chromium/Node notices and production npm module licenses must additionally
 be checked in the final target-platform application; this document cannot replace
-them. No Doorstop, BepInEx or Dobby binary is included by this configuration. Windows now includes the self-contained .NET reader runtime described below.
+them. Windows includes the self-contained offseason .NET reader and the separately pinned BepInEx match-loader payload described below; each retains its own licenses.
 
 
 ## Bundled local speech recognition
@@ -63,3 +63,24 @@ relicensing under our MIT license. See upstream distribution guidance:
 https://github.com/dotnet/core/blob/main/license-information.md .
 The manifest's `realGameAcceptance: pending` is deliberate: packaging and offline
 self-tests cannot prove compatibility with the user's actual game build.
+
+## Windows optional match loader (0.0.1-alpha.3)
+
+`resources/match-windows-x64` contains the fixed official BepInEx Unity IL2CPP
+win-x64 build 6.0.0-be.785+6abdba4, our compiled MatchReader and a SHA-256/size
+inventory. `source-provenance.json` maps the distributed binaries to exact
+components and `licenses/` retains their original full texts; no component is
+relicensed under the application's MIT license. The builder rejects unmapped DLLs.
+LGPL BepInEx/Il2CppInterop/Doorstop corresponding source archives are retained under
+`sources/`, with any separately licensed external Unity reference binaries explicitly
+excluded and recorded in provenance. Original source URLs/commits/hashes remain
+available to obtain dependencies lawfully; these exclusions are not a claim that
+Unity reference binary redistribution has been authorized.
+
+No game binary, game-derived interop, memory snapshot, user path or credentials are
+in this payload. BepInEx generates interop on the user's machine from that user's
+game. Its first run may download matching Unity base libraries from its upstream
+service; this is an external runtime dependency, not proof of offline completeness.
+BepInEx's pinned .NET 6.0.7 compatibility runtime is older than the separate .NET 10
+offseason reader runtime; no automatic security-support or game-compatibility claim
+is made. Deployment and actual loading remain distinct from resource integrity.

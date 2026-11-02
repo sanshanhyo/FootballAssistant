@@ -1,6 +1,6 @@
 {
   "name": "football-assistant-companion",
-  "version": "0.0.1-alpha.2",
+  "version": "0.0.1-alpha.3",
   "private": true,
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
@@ -78,6 +78,13 @@
         {
           "from": "../../build/reader-windows-x64",
           "to": "reader-windows-x64",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "../../build/match-windows-x64",
+          "to": "match-windows-x64",
           "filter": [
             "**/*"
           ]
