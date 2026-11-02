@@ -64,7 +64,10 @@ test('unconfigured real backend reports actual short configuration error without
   const result = await done;
   assert.equal(result.status, 'error'); assert.match(result.error, /需要配置模型服务/);
   assert.equal(runtime.state().mode, 'real'); assert.equal(runtime.state().synthetic, false);
-  assert.equal(runtime.state().messages.some(item => item.role === 'assistant'), false);
+  const failure = runtime.state().messages.find(item => item.role === 'assistant');
+  assert.equal(failure.metadata.source, 'error');
+  assert.equal(failure.metadata.synthetic, false);
+  assert.match(failure.text, /需要配置模型服务/);
   assert.equal(mockCalls(), 0);
 });
 

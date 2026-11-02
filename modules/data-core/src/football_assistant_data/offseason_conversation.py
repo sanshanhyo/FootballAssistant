@@ -18,9 +18,17 @@ class OffseasonConversation:
         self.lock = asyncio.Lock()
 
     async def reply(self, body, read, agent):
-        # Serial selection updates avoid two concurrent confirmations changing scope.
-        async with self.lock:
+        # Serial selection updates avoid conflicting confirmations, but a slow
+        # model must not leave later user messages queued without a bounded reply.
+        try:
+            await asyncio.wait_for(self.lock.acquire(), timeout=1)
+        except TimeoutError:
+            from football_assistant_agent.service import ModelUnavailable
+            raise ModelUnavailable("上一条读取或回复仍在处理，请稍后再试。") from None
+        try:
             return await self._reply(body, read, agent)
+        finally:
+            self.lock.release()
 
     async def _reply(self, body, read, agent):
         conversation = body.conversation_id or str(uuid4())
@@ -52,7 +60,8 @@ class OffseasonConversation:
             state['question'] = message
         def answer(text, context=initial):
             return {'status': 'partial', 'source_status': 'partial_native_candidates', 'reply': text,
-                    'conversation_id': conversation, 'context': context}
+                    'conversation_id': conversation, 'context': context,
+                    **({'character_context': {name: scope[name] for name in ('save_id', 'character_id')}} if supplied else {})}
         def same(value):
             checked = prepare_offseason_advice(value)
             return checked is not None and checked['session_id'] == session

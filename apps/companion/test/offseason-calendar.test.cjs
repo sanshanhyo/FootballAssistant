@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -42,7 +42,7 @@ test('transport allows only validated calendar URL, attaches auth, and cancels',
 
 test('calendar advice sends only explicit selection and question, not caller supplied facts', async () => {
   let called;
-  const client = new RealReaderClient({ request: async (...args) => { called = args; return {status:'partial', context:{status:'partial'}}; } });
+  const client = new RealReaderClient({ request: async (...args) => { called = args; return {status:'partial', reply:'Synthetic calendar reply', context:{status:'partial'}}; } });
   const result = await client.calendarAdvice({ message:'What is the schedule?', clubUid:42, start:'2026-02-01', end:'2026-02-10', fixtures:[{name:'injected'}] });
   assert.equal(result.status, 'partial');
   assert.equal(called[0], '/v1/agent/calendar-advice');

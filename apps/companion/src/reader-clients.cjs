@@ -187,6 +187,7 @@ class RealReaderClient {
   }
   async agentRequest(endpoint, body, options) {
     const result = await this.request(endpoint, body, options);
+    if (!result || typeof result.reply !== 'string' || !result.reply.trim()) throw Error('后端未返回可显示的回复，请重试。');
     const expected = body.character_context;
     // Deterministic blocked advice need not carry a model scope, generated output must.
     if (expected && (endpoint === '/v1/chat' || result?.character_context || ['generated', 'partial'].includes(result?.status))) {
@@ -341,7 +342,7 @@ class RealReaderClient {
         metadata: { ...meta, sampledAt: result.context?.observed_at ?? null, selectedClubUid: clubUid,
           limitations: [...meta.limitations, `未加载范围：${result.context?.unloaded ?? '未知'}；未知项：${result.context?.unknown ?? '未知'}。`] } };
     }
-    if (typeof message === 'string' && /(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) {
+    if (typeof message === 'string' && ((/(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) || /(?:下场|下一场|下一轮).{0,12}(?:打谁|对谁|对阵|对手)|(?:who|whom).{0,20}(?:play|playing).{0,10}next/i.test(message))) {
       const meta = { source: 'native_calendar_candidate', synthetic: false, freshness: 'unknown', partial: true,
         limitations: ['仅包含已加载赛程候选，可能不完整；经理关联候选不代表已确认当前执教球队。'] };
       const result = await this.agentRequest('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null, ...(characterContext ? { character_context: characterContext } : {}) }, { signal, timeoutMs: 120_000 });

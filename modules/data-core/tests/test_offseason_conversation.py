@@ -60,3 +60,20 @@ def test_keeper_question_followup_confirmation_names_and_bounded_attributes():
         finally:
             agent.close()
     asyncio.run(scenario())
+
+
+def test_busy_reader_does_not_queue_later_messages_indefinitely():
+    from football_assistant_agent.service import ModelUnavailable
+    async def scenario():
+        reader = OffseasonConversation()
+        await reader.lock.acquire()
+        try:
+            try:
+                await reader.reply(SimpleNamespace(), None, None)
+            except ModelUnavailable as error:
+                assert '仍在处理' in str(error)
+            else:
+                raise AssertionError('Busy request did not fail promptly')
+        finally:
+            reader.lock.release()
+    asyncio.run(asyncio.wait_for(scenario(), timeout=2))

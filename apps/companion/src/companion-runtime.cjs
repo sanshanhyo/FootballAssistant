@@ -376,6 +376,7 @@ class CompanionRuntime extends EventEmitter {
         ? await this.realClient.reply({ message: request.text, conversationId: request.conversationId, capability: request.capability, adviceMode: request.adviceMode, characterContext: request.characterContext, signal: request.controller.signal })
         : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
+      if (request.mode === 'real' && (typeof result?.text !== 'string' || !result.text.trim())) throw Error('后端未返回可显示的回复，请重试。');
       if (request.mode === 'real') {
         this.connectionController?.abort();
         this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: request.capability ? result.metadata.limitations.join('、') || null : null, readiness: request.capability ? result.metadata.readiness : this.realConnection?.readiness };
@@ -390,6 +391,10 @@ class CompanionRuntime extends EventEmitter {
       this.tool(request, 'error');
       if (request.mode === 'real') this.realConnection = { state: 'unavailable', label: '真实模式 · 请求失败', reason: error.message };
       this.pending.delete(request.id);
+      // Keep a concise visible reply for this request instead of a stranded user
+      // row. This follows the existing history preference; no diagnostic UI/log.
+      this.addMessage({ id: randomUUID(), role: 'assistant', origin: 'error', text: `这次请求未完成：${String(error.message || '请稍后重试。').slice(0, 400)}`, createdAt: new Date().toISOString(), requestId: request.id, sessionId: request.sessionId, epoch: request.epoch,
+        metadata: { ...businessMetadata(), source: 'error', sourceLabel: '请求未完成', limitations: [], synthetic: false, freshness: 'unknown' }, cards: [] });
       this.publish({ type: 'request', requestId: request.id, status: 'error', error: error.message, sessionId: request.sessionId, epoch: request.epoch });
       this.changed();
     }
