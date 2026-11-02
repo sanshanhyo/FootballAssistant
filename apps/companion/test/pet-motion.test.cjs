@@ -61,3 +61,33 @@ test('initial system reduction and missing Web Animations API are safe', () => {
   const image = { dataset: {} }; const motion = bind({ image }); motion.setState('happy');
   assert.equal(image.dataset.motion, 'idle'); motion.dispose();
 });
+test('sad reaction and bounded idle pulse obey cancellation, reduced motion and disable', async () => {
+  const f = fixture(); f.motion.setState('idle'); f.motion.pulseIdle(); f.motion.pulseIdle();
+  assert.equal(f.animations.length, 1); assert.equal(f.animations[0].timing.iterations, 1);
+  f.motion.setState('sad'); assert.equal(f.animations[0].cancelled, true);
+  f.motion.pulseIdle(); assert.equal(f.animations.length, 2);
+  f.motion.reset(); f.motion.pulseIdle(); assert.equal(f.animations.length, 3);
+  f.reduce(true); assert.equal(f.animations[2].cancelled, true);
+  f.motion.pulseIdle(); assert.equal(f.animations.length, 3);
+  f.reduce(false); f.motion.setEnabled(false); f.motion.pulseIdle(); assert.equal(f.animations.length, 3);
+  f.motion.dispose();
+});
+
+test('companionship schedules only confirmed idle, stays bounded and clears timers on interruption', async () => {
+  let next = 0; const pending = new Map();
+  const timers = { setTimeout(fn, delay) { assert.equal(delay, 45000); pending.set(++next, fn); return next; }, clearTimeout(id) { pending.delete(id); } };
+  const f = fixture({ timers }); assert.equal(pending.size, 0);
+  f.motion.setState('idle'); assert.equal(pending.size, 1);
+  const fire = () => { const [id, fn] = [...pending][0]; pending.delete(id); fn(); };
+  fire(); assert.equal(f.animations.length, 1); assert.equal(pending.size, 0);
+  f.animations[0].finish(); await Promise.resolve(); assert.equal(pending.size, 1);
+  f.motion.setState('thinking'); assert.equal(pending.size, 0);
+  f.motion.reset(); assert.equal(pending.size, 1);
+  f.motion.setVisible(false); assert.equal(pending.size, 0);
+  f.motion.setVisible(true); assert.equal(pending.size, 1);
+  f.reduce(true); assert.equal(pending.size, 0);
+  f.reduce(false); assert.equal(pending.size, 1);
+  f.motion.setEnabled(false); assert.equal(pending.size, 0);
+  f.motion.setEnabled(true); assert.equal(pending.size, 1);
+  f.motion.dispose(); assert.equal(pending.size, 0);
+});
