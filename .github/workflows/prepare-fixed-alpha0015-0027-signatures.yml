@@ -1,0 +1,158 @@
+name: Prepare fixed new Alpha 0015 and 0027 signatures only
+on:
+  push:
+    branches: ['prepare/fixed-alpha0015-0027-signatures-20261102']
+    paths: ['.github/workflows/prepare-fixed-alpha0015-0027-signatures.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    if: github.repository == 'sanshanhyo/FootballAssistant' && github.ref == 'refs/heads/prepare/fixed-alpha0015-0027-signatures-20261102' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Verify successful packaged-smoke source, fixed installer and prior new attestation
+        shell: python {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import os,json,urllib.request,urllib.error,urllib.parse,hashlib,zipfile,base64,pathlib,re,shutil
+          root=pathlib.Path('verified-inputs'); root.mkdir()
+          repo='sanshanhyo/FootballAssistant'; api='https://api.github.com/repos/'+repo
+          items=[{'version': '0.0.2-alpha.7', 'run': 41473933250, 'head': '5cd87dba084c8b07f272b419c1add888eae115e5', 'branch': 'integration/alpha-0.0.2', 'setup': 13157457380, 'metadata': 13157347282, 'setupDigest': '94b2769319c580ebeeed9c5c461e1039189c3419117952470271ab6c4df8c43e', 'metadataDigest': '37b7046eea83133f4f34cc7f37f8ab3c48ec2ca4a1f73739f4f07f609e42f321', 'size': 252250438, 'sha256': '5a7929de2d8a6d20cb081f9c7dcf51675c19138e73addc0cfa49634a1d7f9ec2', 'sha512': '1tx3bXlRnGQ4pRAiUdimSA4BVIQm3OFw6tpw43fqUnswg990ByuYZQ4/HjlGVmreyuAQ+/Tf/cjkx7uCBAbwVQ=='}]
+          def request(url):
+           assert url.startswith(api+'/')
+           return urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+          def get(path):
+           with urllib.request.urlopen(request(api+path),timeout=60) as r: return json.load(r)
+          # Any newly published release requires renewed monotonic/channel review, not a silent rebase.
+          assert get('/releases?per_page=100')==[], 'Published release baseline changed; review required'
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+           def redirect_request(self,req,fp,code,msg,headers,newurl): return None
+          def download(artifact,target):
+           try: urllib.request.build_opener(NoRedirect()).open(request(api+f'/actions/artifacts/{artifact}/zip'),timeout=60)
+           except urllib.error.HTTPError as e:
+            assert e.code==302
+            url=e.headers['Location']; parsed=urllib.parse.urlparse(url)
+            assert parsed.scheme=='https' and (parsed.hostname.endswith('.blob.core.windows.net') or parsed.hostname.endswith('.actions.githubusercontent.com'))
+            # Do not forward the API bearer credential to the signed blob URL.
+            with urllib.request.urlopen(url,timeout=120) as src,open(target,'wb') as dst: shutil.copyfileobj(src,dst)
+           else: raise RuntimeError('Expected bounded artifact redirect')
+          for item in items:
+           run=get(f"/actions/runs/{item['run']}")
+           assert run['status']=='completed' and run['conclusion']=='success' and run['head_sha']==item['head'] and run['head_branch']==item['branch'] and run['path']=='.github/workflows/desktop.yml'
+           jobs=get(f"/actions/runs/{item['run']}/jobs")['jobs']
+           assert len(jobs)==1 and jobs[0]['conclusion']=='success'
+           assert any(step['name']=='Smoke distributed Windows portable EXE (cold start with embedded backend)' and step['conclusion']=='success' for step in jobs[0]['steps'])
+           name=f"FootballAssistant-{item['version']}-Setup-x64.exe"; item['name']=name
+           dest=root/item['version'];dest.mkdir()
+           for kind in ['setup','metadata']:
+            info=get(f"/actions/artifacts/{item[kind]}")
+            assert not info['expired'] and info['workflow_run']['id']==item['run'] and info['workflow_run']['head_sha']==item['head']
+            assert info['name']==('companion-windows-setup-x64' if kind=='setup' else 'companion-windows-update-metadata-x64')
+            assert info['digest']=='sha256:'+item[kind+'Digest']
+            archive=dest/(kind+'.zip');download(item[kind],archive)
+            assert hashlib.file_digest(open(archive,'rb'),'sha256').hexdigest()==item[kind+'Digest']
+           with zipfile.ZipFile(dest/'setup.zip') as z:
+            assert z.namelist()==[name]
+            zi=z.getinfo(name);assert zi.file_size==item['size'] and zi.file_size<2*1024**3
+            h=hashlib.sha256(); h512=hashlib.sha512();size=0
+            with z.open(name) as src:
+             while chunk:=src.read(1024*1024):h.update(chunk);h512.update(chunk);size+=len(chunk)
+            assert size==item['size'] and h.hexdigest()==item['sha256'] and base64.b64encode(h512.digest()).decode()==item['sha512']
+           with zipfile.ZipFile(dest/'metadata.zip') as z:
+            expected={'dist/build-identity.json','dist/builder-debug.yml','dist/'+name+'.blockmap','dist/latest.yml'}
+            assert set(z.namelist())==expected and len(z.namelist())==len(expected)
+            assert all(i.file_size<4*1024**2 for i in z.infolist())
+            identity=json.loads(z.read('dist/build-identity.json'))
+            assert identity['schema']==1 and identity['version']==item['version'] and identity['commit']==item['head'] and identity['runId']==str(item['run']) and identity['runAttempt']=='1' and identity['ref']=='refs/heads/'+item['branch'] and identity['releasePublished'] is False
+            latest=z.read('dist/latest.yml').decode()
+            expected_lines=[f"version: {item['version']}",'files:',f'  - url: {name}',f"    sha512: {item['sha512']}",f"    size: {size}",f'path: {name}',f"sha512: {item['sha512']}"]
+            assert latest.splitlines()[:7]==expected_lines and len(latest.splitlines())==8 and re.fullmatch(r"releaseDate: '[0-9T:.Z-]+'",latest.splitlines()[7])
+            (dest/'build-identity.json').write_text(json.dumps(identity,indent=2)+'\n')
+            (dest/(name+'.blockmap')).write_bytes(z.read('dist/'+name+'.blockmap'))
+            (dest/'alpha.yml').write_text(latest)
+           item['url']=f'https://github.com/{repo}/releases/download/'+item['version']+'/'+name
+           item['originalMetadataName']='latest.yml'
+          (root/'evidence.json').write_text(json.dumps(items,indent=2)+'\n')
+          print('The immutable installer archive, exact EXE hashes, native metadata and source identities verified; no executable launched.')
+          
+          # Preserve the already-verified new historical attestation, never an old 0014/0023 proof.
+          prior=get('/actions/artifacts/13139093362')
+          assert not prior['expired'] and prior['workflow_run']['id']==41441969384 and prior['workflow_run']['head_sha']=='3752b4f8989b165c7d9f914b37b76aeb4ec6988f'
+          assert prior['digest']=='sha256:eab073ec97716d4610bc88d105e6799204f0a6e7480aaf8cc4f5e987a2505182'
+          archive=root/'historical-0015.zip';download(13139093362,archive)
+          assert hashlib.file_digest(open(archive,'rb'),'sha256').hexdigest()=='eab073ec97716d4610bc88d105e6799204f0a6e7480aaf8cc4f5e987a2505182'
+          dest=pathlib.Path('signed-release-metadata/0.0.1-alpha.5');dest.mkdir(parents=True)
+          with zipfile.ZipFile(archive) as z:
+           expected={'installer-attestation.json','build-identity.json','alpha.yml','FootballAssistant-0.0.1-alpha.5-Setup-x64.exe.blockmap','reviewed-public-key.pem','release-plan.json','verification-evidence.json'}
+           assert set(z.namelist())==expected and len(z.namelist())==7
+           for file in ['installer-attestation.json','build-identity.json','alpha.yml','FootballAssistant-0.0.1-alpha.5-Setup-x64.exe.blockmap']:
+            assert z.getinfo(file).file_size<4*1024**2
+            (dest/file).write_bytes(z.read(file))
+      - name: Sign only fixed new 0027 channel candidate
+        shell: node {0}
+        env:
+          FA_ALPHA_UPDATE_SIGNING_KEY: ${{ secrets.FA_ALPHA_UPDATE_SIGNING_KEY }}
+        run: |
+          'use strict';
+          const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');
+          try {
+           const version='0.0.2-alpha.7',size=252250438,sha256='5a7929de2d8a6d20cb081f9c7dcf51675c19138e73addc0cfa49634a1d7f9ec2';
+           const name=`FootballAssistant-${version}-Setup-x64.exe`,url=`https://github.com/sanshanhyo/FootballAssistant/releases/download/${version}/${name}`;
+           const pin='-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqkem81H85RqVbk63GZSRR+FirweOMbMvUwsXkNmByf0=\n-----END PUBLIC KEY-----\n';
+           const pinned=crypto.createPublicKey(pin),der=pinned.export({type:'spki',format:'der'});
+           if(crypto.createHash('sha256').update(der).digest('hex')!=='9e686e777a355634920d5dbf6e63bc282dfc8622ff480a75803b9040538bccfb')throw Error();
+           const key=crypto.createPrivateKey(process.env.FA_ALPHA_UPDATE_SIGNING_KEY||'');delete process.env.FA_ALPHA_UPDATE_SIGNING_KEY;
+           if(key.asymmetricKeyType!=='ed25519'||!crypto.createPublicKey(key).export({type:'spki',format:'der'}).equals(der))throw Error();
+           const evidence=JSON.parse(fs.readFileSync('verified-inputs/evidence.json','utf8'));
+           if(evidence.length!==1)throw Error();const item=evidence[0];
+           if(item.version!==version||item.sha256!==sha256||item.size!==size||item.name!==name||item.url!==url||item.head!=='5cd87dba084c8b07f272b419c1add888eae115e5'||item.run!==41473933250)throw Error();
+           const expiresAt=new Date(Date.now()+14*86400000).toISOString();
+           const payload=JSON.stringify({schema:1,channel:'alpha',version,expiresAt,configSchemas:[1],backendProtocol:1,bridgeProtocol:1,artifacts:[{platform:'win32',arch:'x64',format:'exe',installerType:'nsis',size,sha256,url}]});
+           const signature=crypto.sign(null,Buffer.from(payload),key).toString('base64');if(!crypto.verify(null,Buffer.from(payload),pinned,Buffer.from(signature,'base64')))throw Error();
+           const root='signed-release-metadata',dest=path.join(root,version);fs.mkdirSync(dest);
+           fs.writeFileSync(path.join(dest,'alpha-update.json'),JSON.stringify({payload,signature})+'\n');
+           for(const file of ['build-identity.json','alpha.yml',name+'.blockmap'])fs.copyFileSync(path.join('verified-inputs',version,file),path.join(dest,file));
+           fs.writeFileSync(path.join(root,'reviewed-public-key.pem'),pin);
+           fs.writeFileSync(path.join(root,'release-plan.json'),JSON.stringify({schema:1,published:false,publishedBaseline:[],historicalVersion:'0.0.1-alpha.5',channelVersion:version,channelTag:'alpha-channel',channelAsset:'alpha-update.json',expiresAt,publicationGate:'Only after explicit owner acceptance following local debugging; no Release, tag, channel update or main change performed',publicationOrder:['Historical 0.0.1-alpha.5 immutable prerelease assets','0.0.2-alpha.7 immutable prerelease assets','Verify public exact-byte hashes','Update alpha-channel to 0.0.2-alpha.7 last, only if explicitly authorized'],neverPublishHistoricalAttestationAsChannel:true,supersedesPreparedVersions:['0.0.1-alpha.4','0.0.2-alpha.3','0.0.2-alpha.4','0.0.2-alpha.5','0.0.2-alpha.6'],oldSignaturesCannotAuthenticateNewInstallerBytes:true,canonicalAssetUrlsAreFutureUnpublishedLocations:true,previousVersion:null,previousVersionReason:'No fabricated preparation record: 0015 is a non-feed historical attestation, 0027 is the only channel candidate, newer than historical 0015 and all published versions (none)',signature:'Ed25519 metadata; not Windows Authenticode',source:item,historicalAttestationSource:{run:41441969384,artifact:13139093362,archiveSha256:'eab073ec97716d4610bc88d105e6799204f0a6e7480aaf8cc4f5e987a2505182'}},null,2)+'\n');
+           console.log('Fixed new 0027 Alpha manifest signed; new 0015 historical attestation retained; nothing published.');
+          }catch{process.stderr.write('Fixed new artifact signing failed.\n');process.exitCode=1;}finally{delete process.env.FA_ALPHA_UPDATE_SIGNING_KEY;}
+      - name: Independently verify both new signed metadata without secret
+        shell: node {0}
+        run: |
+          'use strict';
+          const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');
+          const root='signed-release-metadata';
+          const key=crypto.createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqkem81H85RqVbk63GZSRR+FirweOMbMvUwsXkNmByf0=\n-----END PUBLIC KEY-----\n');
+          const plan=JSON.parse(fs.readFileSync(path.join(root,'release-plan.json')));
+          if(plan.published!==false||plan.channelVersion!=='0.0.2-alpha.7'||plan.previousVersion!==null||!plan.neverPublishHistoricalAttestationAsChannel)throw Error('Plan gate failed');
+          const expected=[['0.0.1-alpha.5',250837834,'061611945b3448973629772d38ea292ddc8d7ccd55406adf0c0736739f37291e'],['0.0.2-alpha.7',252250438,'5a7929de2d8a6d20cb081f9c7dcf51675c19138e73addc0cfa49634a1d7f9ec2']];
+          const evidence=[];
+          for(let i=0;i<2;i++){
+           const [version,size,sha256]=expected[i],file=i===0?'installer-attestation.json':'alpha-update.json';
+           const envelope=JSON.parse(fs.readFileSync(path.join(root,version,file)));
+           if(Object.keys(envelope).sort().join(',')!=='payload,signature'||typeof envelope.payload!=='string'||!crypto.verify(null,Buffer.from(envelope.payload),key,Buffer.from(envelope.signature,'base64')))throw Error('Signature gate failed');
+           const payload=JSON.parse(envelope.payload);
+           if(payload.version!==version)throw Error('Version gate failed');
+           if(i===0){if(payload.schema!=='footballassistant-artifact-attestation/1'||'channel' in payload||'artifacts' in payload)throw Error('Historical non-feed gate failed');}
+           else{
+            if(payload.schema!==1||payload.channel!=='alpha'||JSON.stringify(payload.configSchemas)!=='[1]'||payload.backendProtocol!==1||payload.bridgeProtocol!==1||payload.artifacts.length!==1)throw Error('Update schema gate failed');
+            const ttl=Date.parse(payload.expiresAt)-Date.now();if(!Number.isFinite(ttl)||ttl<13*86400000||ttl>14*86400000||plan.expiresAt!==payload.expiresAt)throw Error('Expiry gate failed');
+           }
+           const a=i===0?payload.artifact:payload.artifacts[0];
+           if(a.size!==size||a.sha256!==sha256||a.platform!=='win32'||a.arch!=='x64'||a.format!=='exe'||a.installerType!=='nsis'||a.url!==`https://github.com/sanshanhyo/FootballAssistant/releases/download/${version}/FootballAssistant-${version}-Setup-x64.exe`)throw Error('Artifact gate failed');
+           const native=fs.readFileSync(path.join(root,version,'alpha.yml'),'utf8');
+           if(!native.startsWith(`version: ${version}\n`)||!native.includes(`    size: ${size}\n`)||!native.includes(`    sha512: ${['sj5FP4f6wCC0eikaoIEBpeErWbeCZHa34+tRhqd5BFQq63Mli9CigG6IPLAw79KXcLR5qroqdJYJse9Q1L7V0g==','1tx3bXlRnGQ4pRAiUdimSA4BVIQm3OFw6tpw43fqUnswg990ByuYZQ4/HjlGVmreyuAQ+/Tf/cjkx7uCBAbwVQ=='][i]}\n`))throw Error('Native metadata gate failed');
+           evidence.push({version,signatureVerified:true,exactByteSourceVerified:true,installerSha256:sha256,installerSize:size,channelEligible:i===1,signedFile:file});
+          }
+          const report={verifiedAt:new Date().toISOString(),publicKeySpkiSha256:crypto.createHash('sha256').update(key.export({type:'spki',format:'der'})).digest('hex'),published:false,sourceExecutablesExecuted:false,rebuilt:false,expiresAt:plan.expiresAt,evidence};
+          fs.writeFileSync(path.join(root,'verification-evidence.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
+      - name: Upload public signatures and provenance only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: footballassistant-signed-alpha-metadata-0015-0027
+          path: signed-release-metadata/
+          if-no-files-found: error
+          retention-days: 14
