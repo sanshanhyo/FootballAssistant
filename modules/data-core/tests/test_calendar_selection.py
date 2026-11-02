@@ -54,6 +54,7 @@ def test_server_resolves_twice_and_rejects_changed_manager(tmp_path, monkeypatch
     async def fake_advice(message, conversation_id, data, club_uid, start, end):
         advice.append((club_uid, start, end))
         return {"status":"partial", "reply":"候选", "context":{"status":"partial"}}
+    monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_CONSENT", "1")
     monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_EXE", str(tmp_path / "fake.exe"))
     monkeypatch.setattr(offseason_snapshot, "read_offseason", fake_read)
     app = create_app(settings(tmp_path), enable_agent=True)

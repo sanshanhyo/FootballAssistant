@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPref
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createWindowsReaderSetup, validateReaderPayload } = require('./windows-reader-setup.cjs');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { controlSettingsWindow } = require('./settings-window.cjs');
 const { createSettingsContent } = require('./settings-content.cjs');
@@ -41,6 +42,7 @@ let backendOptions;
 let credentials;
 let modelDiscovery;
 let personaAccess;
+let windowsReaderSetup;
 let bridgeDeployment;
 let savingModel = false;
 let updateController;
@@ -183,6 +185,10 @@ function registerIpc() {
   handle('contributors-open', () => settingsContent.openContributors());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
+  handle('reader-onboarding-inspect', (...args) => { if (args.length) throw Error('此操作不接受路径参数。'); return windowsReaderSetup.inspect(); });
+  handle('reader-onboarding-select', (...args) => { if (args.length) throw Error('请使用系统文件选择框。'); return windowsReaderSetup.selectGame(); });
+  handle('reader-onboarding-enable', input => windowsReaderSetup.enable(input));
+  handle('reader-onboarding-verify', (...args) => { if (args.length) throw Error('此操作不接受参数。'); return windowsReaderSetup.status({ verify: true }); });
   handle('game-status', () => detectGame());
   handle('bootstrap-status', async () => {
     const backend = { ...backendSupervisor.status };
@@ -379,7 +385,11 @@ async function main() {
   const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
   credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
   modelDiscovery = createModelDiscovery({ credentials });
-  backendOptions = { userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
+  let readerExecutable = '';
+  if (process.platform === 'win32' && app.isPackaged && settings.windowsReaderEnabled === true) {
+    try { readerExecutable = (await validateReaderPayload(process.resourcesPath)).executable; } catch { /* Fail closed; onboarding exposes the error. */ }
+  }
+  backendOptions = { readerExecutable, userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
   installedUpdates = createInstalledUpdater({ platform: process.platform,
     distribution: distribution({ packaged: app.isPackaged, executable: app.getPath('exe') }),
@@ -392,7 +402,7 @@ async function main() {
     configSchema: 1, backendProtocol: 1, bridgeProtocol: 1, cacheDir: path.join(app.getPath('userData'), 'updates'),
     feedUrl: process.platform === 'win32' ? updateTrust.feedUrl : undefined, publicKey: process.platform === 'win32' ? updateTrust.productionTrust?.publicKey : undefined, installedUpdater: installedUpdates, onStatus: state => emit({ type: 'update-status', state: { ...state, installation: installedUpdates.status, recovery: updateRecovery.status } }) }); // Signed downloads need a reviewed feed/key; public GitHub checks remain read-only.
   // Start updates only after initial backend and renderer health is established.
-  bootstrapStatus = { backend: await backendSupervisor.start(), game: await detectGame(), readerPlatformSupported: process.platform === 'darwin', bridgeConfigured: external || settings.backendEnvFile || !backendSupervisor.status.owned ? null : Boolean(settings.bridgePrivateRoot) };
+  bootstrapStatus = { backend: await backendSupervisor.start(), game: await detectGame(), readerPlatformSupported: ['darwin', 'win32'].includes(process.platform), bridgeConfigured: external || settings.backendEnvFile || !backendSupervisor.status.owned ? null : Boolean(settings.bridgePrivateRoot) };
   if (app.isPackaged && bootstrapStatus.backend.state !== 'ready') dialog.showErrorBox('FootballAssistant 后端未连接', bootstrapStatus.backend.message);
 
   bridgeDeployment = createBridgeDeployment({
@@ -423,6 +433,18 @@ async function main() {
     getMetadata: () => request(runtimeFile, '/v1/agent/persona'), openPath: target => shell.openPath(target) });
   runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
   await initializeCompanion(runtime); runtime.on('event', emit);
+  windowsReaderSetup = createWindowsReaderSetup({ userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
+    chooseGame: async () => { const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name: 'Football Manager 27', extensions: ['exe'] }] }); return result.canceled ? null : result.filePaths[0]; },
+    requestStatus: verify => request(runtimeFile, `/v1/reader/onboarding-status${verify ? '?verify=true' : ''}`, undefined, { timeoutMs: verify ? 45000 : 5000 }),
+    onConfigured: async ({ executable }) => {
+      backendOptions.settings = await loadSettings(app.getPath('userData')); backendOptions.readerExecutable = executable;
+      if (backendSupervisor.external || (backendSupervisor.status.state === 'ready' && !backendSupervisor.status.owned)) return { restartRequired: true };
+      await backendSupervisor.stop();
+      backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+      bootstrapStatus.backend = await backendSupervisor.start(); runtime.refreshConnection();
+      return { restartRequired: bootstrapStatus.backend.state !== 'ready', backendReady: bootstrapStatus.backend.state === 'ready' };
+    },
+  });
   registerIpc();
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
     { label: '显示桌宠', click: showPet }, { label: '隐藏桌宠', click: hidePet },
@@ -430,6 +452,7 @@ async function main() {
     { type: 'separator' }, { role: 'quit', label: '退出' },
   ] }]) : null);
   await buildWindow();
+  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable)) await openSettings();
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
