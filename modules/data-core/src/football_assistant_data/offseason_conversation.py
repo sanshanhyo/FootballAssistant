@@ -27,6 +27,9 @@ class OffseasonConversation:
         supplied = body.character_context.model_dump(exclude_none=True) if body.character_context else None
         scope = supplied or {}
         key = (scope.get('save_id', 'legacy'), scope.get('character_id', 'official.eckera'), conversation)
+        # A new character/conversation must not resurrect a previous selection.
+        for old in [k for k in self.sessions if k[0] == key[0] and k != key]:
+            self.sessions.pop(old, None)
         now = time.monotonic()
         for expired in [k for k, v in self.sessions.items() if now - v['touched'] > 600]:
             self.sessions.pop(expired)
