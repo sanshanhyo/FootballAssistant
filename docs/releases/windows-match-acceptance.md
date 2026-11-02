@@ -1,10 +1,21 @@
-# Windows match-reader acceptance (not satisfied by CI)
+# Windows match-reader technical acceptance reference
+
+The checklist below is retained technical reference, not a request for further
+user testing. Following the user's latest instruction, this delivery does not
+add onsite validation or use this checklist to block packaging. Prior automated
+results remain recorded; unverified live-game behavior must not be presented as
+verified. CI build success is not live-game acceptance.
 
 Transport: plugin `io.footballassistant.matchreader` version `0.1.0`, snapshot
 `fa-match-snapshot/0.1`. Deployment creates `<userData>/match-reader/active`.
 BepInEx `[Output] SnapshotPath` and backend `FOOTBALL_ASSISTANT_MATCH_FILE` must
 both be the absolute path `<userData>/match-reader/active/match.json`.
-The plugin environment override, if present, must equal that same path.
+The plugin uses configured `Output.SnapshotPath` first. Only an empty setting
+falls back to ambient `FOOTBALL_ASSISTANT_MATCH_FILE`; a conflicting environment
+value is ignored with a warning. An invalid nonempty configured path disables
+reading rather than silently using another location. `Config.SaveOnConfigSet`
+is disabled before binding: the plugin must not rewrite the installer's config
+bytes or invalidate the rollback ownership receipt.
 `status.json` is derived from its directory, never a separately supplied URL.
 No game data or saved-game identity is inferred from the process session.
 
@@ -24,7 +35,7 @@ release acceptance. Same-user tampering with files is not prevented by this
 transport. The supplied binary hash is checked against the fixed supported
 build; the backend does not re-read game memory or independently inspect modules.
 
-## Minimal local checklist
+## Retained local checklist (not scheduled for this delivery)
 
 1. Exit the game. Use the installer backup/consent flow. Check the two absolute
    output paths agree; no token or provider secret belongs in plugin config.
