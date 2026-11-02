@@ -1,0 +1,43 @@
+name: One-time Alpha signing-key verification
+on:
+  push:
+    branches: ['audit/alpha-signing-key-20261102']
+    paths: ['.github/workflows/verify-alpha-signing-key-once.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: github.repository == 'sanshanhyo/FootballAssistant' && github.ref == 'refs/heads/audit/alpha-signing-key-20261102' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify existing secret against reviewed public pin
+        shell: node {0}
+        env:
+          FA_ALPHA_UPDATE_SIGNING_KEY: ${{ secrets.FA_ALPHA_UPDATE_SIGNING_KEY }}
+        run: |
+          'use strict';
+          const crypto = require('node:crypto');
+          const result = { ed25519: false, matchesPinned: false, signatureVerified: false,
+            publicKeySpkiSha256: '9e686e777a355634920d5dbf6e63bc282dfc8622ff480a75803b9040538bccfb' };
+          try {
+            // Public pin reviewed at main 758463f5bd7bf63dce51539110d14523c837ba44.
+            const pinned = crypto.createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqkem81H85RqVbk63GZSRR+FirweOMbMvUwsXkNmByf0=\n-----END PUBLIC KEY-----\n');
+            const privateKey = crypto.createPrivateKey(process.env.FA_ALPHA_UPDATE_SIGNING_KEY || '');
+            delete process.env.FA_ALPHA_UPDATE_SIGNING_KEY;
+            result.ed25519 = privateKey.asymmetricKeyType === 'ed25519';
+            if (!result.ed25519) throw new Error();
+            const derived = crypto.createPublicKey(privateKey).export({type:'spki', format:'der'});
+            const expected = pinned.export({type:'spki', format:'der'});
+            result.matchesPinned = derived.equals(expected);
+            if (!result.matchesPinned || crypto.createHash('sha256').update(expected).digest('hex') !== result.publicKeySpkiSha256) throw new Error();
+            const message = Buffer.from('FootballAssistant key possession check only; not a release or update manifest; 2026-11-02', 'utf8');
+            result.signatureVerified = crypto.verify(null, message, pinned, crypto.sign(null, message, privateKey));
+            if (!result.signatureVerified) throw new Error();
+          } catch {
+            process.stderr.write('Signing-key verification failed.\n');
+            process.exitCode = 1;
+          } finally {
+            delete process.env.FA_ALPHA_UPDATE_SIGNING_KEY;
+            process.stdout.write(JSON.stringify(result) + '\n');
+          }
