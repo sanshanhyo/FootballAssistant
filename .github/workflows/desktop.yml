@@ -76,7 +76,7 @@ jobs:
       - name: Prepare monotonic Alpha version without publishing
         if: github.event_name == 'workflow_dispatch' && inputs.prepare_alpha
         run: |
-          if (process.env.GITHUB_REF !== 'refs/heads/integration/alpha-reader-ui') throw new Error('Alpha preparation is restricted to integration/alpha-reader-ui');
+          if (process.env.GITHUB_REF !== 'refs/heads/main') throw new Error('Alpha preparation is restricted to main');
           require(process.cwd() + '/packaging/prepare-alpha.cjs').prepare({ appRoot: process.cwd(), version: process.env.FA_ALPHA_VERSION, previousVersion: process.env.FA_ALPHA_PREVIOUS_VERSION }).catch(error => { console.error(error.message); process.exitCode = 1; });
         shell: node {0}
         env:
@@ -154,7 +154,7 @@ jobs:
           node test/update-native-fixture.cjs
           node test/assert-update-fixture.cjs
       - name: Prepare signed Alpha manifest without publishing
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.prepare_alpha && github.ref == 'refs/heads/integration/alpha-reader-ui'
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && inputs.prepare_alpha && github.ref == 'refs/heads/main'
         run: node packaging/sign-alpha-update.cjs
         env:
           FA_ALPHA_UPDATE_SIGNING_KEY: ${{ secrets.FA_ALPHA_UPDATE_SIGNING_KEY }}
@@ -235,8 +235,8 @@ jobs:
             apps/companion/dist/*.blockmap
             apps/companion/dist/*.yml
             apps/companion/dist/alpha-update.json
-              apps/companion/dist/alpha-release-plan.json
-              apps/companion/alpha-preparation.json
+            apps/companion/dist/alpha-release-plan.json
+            apps/companion/alpha-preparation.json
           if-no-files-found: error
           retention-days: 7
       - name: Upload Windows smoke diagnostics

@@ -20,3 +20,36 @@ test('native metadata and publication plan bind one exact installer, with channe
  assert.ok(value.nativeMetadata.includes(`version: ${version}\n`));assert.ok(value.nativeMetadata.includes(`sha512: ${sha512}`));assert.equal(value.plan.installer.sha256,sha256);
  assert.equal(value.plan.prerelease,true);assert.equal(value.plan.published,false);assert.equal(value.plan.publicationOrder.at(-1),'Replace channel manifest last');assert.match(value.plan.signature,/not Windows Authenticode/);
 });
+
+test('manual Alpha workflow accepts only main and keeps signing isolated from push and PR events',()=>{
+ const vm=require('node:vm');
+ const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8');
+ const prepareStep=workflow.split('      - name: Prepare monotonic Alpha version without publishing\n')[1].split('      - run: npm ci')[0];
+ assert.match(prepareStep,/if: github\.event_name == 'workflow_dispatch' && inputs\.prepare_alpha\n/);
+ const guard=prepareStep.split('\n').find(line=>line.includes('process.env.GITHUB_REF'))?.trim();
+ assert.ok(guard,'preparation must fail closed for a non-main ref');
+ assert.doesNotThrow(()=>vm.runInNewContext(guard,{process:{env:{GITHUB_REF:'refs/heads/main'}}}));
+ for(const ref of ['refs/heads/integration/alpha-reader-ui','refs/heads/feature/example','refs/tags/0.0.1-alpha.2','refs/pull/2/merge',undefined]) {
+  assert.throws(()=>vm.runInNewContext(guard,{process:{env:{GITHUB_REF:ref}}}),/restricted to main/);
+ }
+ const signingStep=workflow.split('      - name: Prepare signed Alpha manifest without publishing\n')[1].split('      - name:')[0];
+ const condition=signingStep.split('\n').find(line=>line.trim().startsWith('if:')).trim().slice(4);
+ for(const osName of ['Windows','macOS']) for(const event of ['workflow_dispatch','push','pull_request']) for(const prepareAlpha of [true,false]) for(const ref of ['refs/heads/main','refs/heads/integration/alpha-reader-ui','refs/tags/0.0.1-alpha.2']) {
+  assert.equal(vm.runInNewContext(condition,{runner:{os:osName},github:{event_name:event,ref},inputs:{prepare_alpha:prepareAlpha}}),osName==='Windows'&&event==='workflow_dispatch'&&prepareAlpha&&ref==='refs/heads/main');
+ }
+ assert.match(signingStep,/FA_ALPHA_UPDATE_SIGNING_KEY: \$\{\{ secrets\.FA_ALPHA_UPDATE_SIGNING_KEY \}\}/);
+ assert.equal((workflow.match(/secrets\.FA_ALPHA_UPDATE_SIGNING_KEY/g)||[]).length,1);
+ assert.match(workflow,/permissions:\n  contents: read\n/);
+ assert.doesNotMatch(workflow,/contents: write|gh release|softprops\/action-gh-release/);
+});
+
+test('Windows metadata artifact includes each preparation file as a separate unindented path',()=>{
+ const workflow=fs.readFileSync(path.resolve(__dirname,'../../../.github/workflows/desktop.yml'),'utf8');
+ const upload=workflow.split('      - name: Upload Windows update metadata\n')[1].split('      - name:')[0];
+ const lines=upload.split('          path: |\n')[1].split('          if-no-files-found:')[0].trimEnd().split('\n');
+ assert.deepEqual(lines.map(line=>{assert.match(line,/^ {12}\S/);return line.slice(12);}),[
+  'apps/companion/dist/*.blockmap','apps/companion/dist/*.yml','apps/companion/dist/alpha-update.json',
+  'apps/companion/dist/alpha-release-plan.json','apps/companion/alpha-preparation.json'
+ ]);
+ assert.match(upload,/if-no-files-found: error/);
+});

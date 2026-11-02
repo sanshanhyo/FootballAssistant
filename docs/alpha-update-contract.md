@@ -62,7 +62,7 @@ GitHub and its exact release-assets host. No embedded GitHub token is used.
 checks the secret's derived public key matches the pinned client key, and writes a
 14-day signed manifest. It never creates keys, logs private material, or publishes.
 The desktop workflow runs signing **only on explicit workflow_dispatch of the
-reviewed integration branch**, using `FA_ALPHA_UPDATE_SIGNING_KEY`. It does not expose
+reviewed `main` branch**, using `FA_ALPHA_UPDATE_SIGNING_KEY`. It does not expose
 that secret to the pull_request path. Workflow permissions remain contents:read and
 build commands use `--publish never`. Artifact preparation is not Release permission;
 creating/updating the version release and alpha-channel release requires separate
