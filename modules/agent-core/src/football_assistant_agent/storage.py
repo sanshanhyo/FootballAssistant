@@ -1,6 +1,8 @@
 """Single service owns the companion database; explicit user memories only."""
 from __future__ import annotations
 
+from contextlib import closing
+
 import os
 from pathlib import Path
 import sqlite3
@@ -42,7 +44,7 @@ class CompanionStore:
             if backup_path.exists():
                 if backup_path.is_symlink() or not backup_path.is_file():
                     raise ValueError("Unsafe character migration backup")
-                with sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True) as backup:
+                with closing(sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)) as backup:
                     if backup.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                         raise ValueError("Invalid character migration backup")
             else:
@@ -50,7 +52,7 @@ class CompanionStore:
                 fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 os.close(fd)
                 try:
-                    with sqlite3.connect(temporary) as backup:
+                    with closing(sqlite3.connect(temporary)) as backup:
                         self._db.backup(backup)
                     # Publish a complete backup without replacing an existing one.
                     try:
