@@ -6,18 +6,10 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or -not $en
 }
 $root = Join-Path $env:RUNNER_TEMP ('fa-nsis-' + [Guid]::NewGuid().ToString('N'))
 $install = Join-Path $root 'application'
-$profile = Join-Path $root 'user-data'
-New-Item -ItemType Directory -Path $profile -Force | Out-Null
+New-Item -ItemType Directory -Path $root -Force | Out-Null
 $installer = Get-ChildItem (Join-Path $PSScriptRoot '..\dist\FootballAssistant-*-Setup-x64.exe') | Select-Object -First 1
 if (-not $installer) { throw 'NSIS Setup.exe artifact missing' }
-# Synthetic profile sentinels: rejection must not modify user settings or persona.
-$settings = Join-Path $profile 'settings.json'
-$persona = Join-Path $profile 'persona.md'
-[IO.File]::WriteAllText($settings, '{"fixture":"preserve-on-rejected-install"}', (New-Object Text.UTF8Encoding($false)))
-[IO.File]::WriteAllText($persona, 'CI-only persona preservation marker.', (New-Object Text.UTF8Encoding($false)))
-$settingsHash = (Get-FileHash $settings).Hash
-$personaHash = (Get-FileHash $persona).Hash
-$env:FA_COMPANION_USER_DATA_DIR = $profile
+# The production helper uses Electron's real user-data location, not a test override.
 # No /FM_DIR, no game assets, no production bypass flag. /D must remain last.
 $process = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$install" -WindowStyle Hidden -PassThru
 if (-not $process.WaitForExit(120000)) {
@@ -28,9 +20,6 @@ if ($process.ExitCode -ne 3) { throw "Expected missing-game-path exit 3, got $($
 if (Test-Path (Join-Path $install 'installation.json')) {
   throw 'Incomplete installation wrote a successful channel marker'
 }
-if ((Get-FileHash $settings).Hash -ne $settingsHash -or (Get-FileHash $persona).Hash -ne $personaHash) {
-  throw 'Rejected installation changed user settings/persona'
-}
 @{
   schema = 2
   silentMissingGamePathRejected = $true
@@ -38,8 +27,7 @@ if ((Get-FileHash $settings).Hash -ne $settingsHash -or (Get-FileHash $persona).
   appFilesMayRemain = $true
   applicationFilesPresent = (Test-Path (Join-Path $install 'FootballAssistant.exe'))
   successfulChannelMarkerAbsent = $true
-  settingsPreservedOnRejection = $true
-  personaPreservedOnRejection = $true
+  profilePreservation = 'not_run'
   fullInstallation = 'not_run'
   reinstallUninstallLifecycle = 'not_run'
   actualGameDeployment = 'not_run'
