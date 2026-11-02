@@ -85,3 +85,19 @@ test('rejects linked user roots and PNG overrides', t => {
   const { root, library } = setup(t); assert.throws(() => library.setOverrides(DEFAULT_CHARACTER_ID, { portraitPng: Buffer.from('not png') }));
   if (process.platform !== 'win32') { const linked = path.join(root, 'linked'); fs.symlinkSync(root, linked); assert.throws(() => new CharacterLibrary({ root: linked })); }
 });
+test('trusted root tolerates OS ancestor aliases but package and override links remain forbidden', t => {
+  if (process.platform === 'win32') return;
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'fa-os-alias-')); t.after(() => fs.rmSync(outer, { recursive: true, force: true }));
+  const physical = path.join(outer, 'physical'); fs.mkdirSync(physical); const alias = path.join(outer, 'os-alias'); fs.symlinkSync(physical, alias);
+  const root = path.join(alias, 'user-data', 'characters'); const library = new CharacterLibrary({ root });
+  assert.equal(library.root, fs.realpathSync(root)); assert.equal(library.resolve().characterId, DEFAULT_CHARACTER_ID);
+  const original = path.join(alias, 'user-data', 'old-persona.md'); fs.writeFileSync(original, 'Keep my legacy persona');
+  migrateLegacyCharacter({ library, personaFile: original }); assert.equal(library.resolve().persona, 'Keep my legacy persona');
+  const overrideFile = path.join(library.root, 'overrides', DEFAULT_CHARACTER_ID, 'override.json'); fs.unlinkSync(overrideFile); fs.symlinkSync(original, overrideFile);
+  assert.equal(library.resolve().warnings.includes('override_unavailable'), true);
+  assert.throws(() => library.setOverrides(DEFAULT_CHARACTER_ID, { persona: 'Do not follow inner link' }));
+  assert.equal(fs.readFileSync(original, 'utf8'), 'Keep my legacy persona');
+  const symlinkRoot = path.join(alias, 'linked-root'); fs.symlinkSync(library.root, symlinkRoot); assert.throws(() => new CharacterLibrary({ root: symlinkRoot }));
+  const { readTrustedFile } = require('../src/character-library.cjs');
+  const linkedFile = path.join(alias, 'linked-persona.md'); fs.symlinkSync(original, linkedFile); assert.throws(() => readTrustedFile(linkedFile, 16384));
+});

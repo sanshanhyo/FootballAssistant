@@ -67,6 +67,23 @@ function atomic(file, bytes) {
   try { const fd = fs.openSync(tmp, 'wx', 0o600); try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); } fs.renameSync(tmp, file); }
   finally { fs.rmSync(tmp, { force: true }); }
 }
+// Only for main-process configured roots/native file-picker selections. Resolve OS
+// ancestor aliases (macOS /var and /tmp), never a symlink at the selected boundary.
+function trustedDirectory(directory) {
+  const absolute = path.resolve(directory);
+  let info;
+  try { info = fs.lstatSync(absolute); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (info && (!info.isDirectory() || info.isSymbolicLink())) throw Error('Unsafe character root');
+  if (!info) fs.mkdirSync(absolute, { recursive: true, mode: 0o700 });
+  info = fs.lstatSync(absolute);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw Error('Unsafe character root');
+  const canonical = fs.realpathSync(absolute); safeParents(canonical); return canonical;
+}
+function readTrustedFile(file, limit) {
+  const absolute = path.resolve(file), info = fs.lstatSync(absolute);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw Error('Unsafe selected character file');
+  return read(path.join(fs.realpathSync(path.dirname(absolute)), path.basename(absolute)), limit);
+}
 function decode(bytes) { return text(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
 function scopeFor(saveId, characterId) {
   text(saveId, 512);
@@ -75,8 +92,7 @@ function scopeFor(saveId, characterId) {
 }
 class CharacterLibrary {
   constructor({ root, builtinRoot = BUILTIN_ROOT }) {
-    this.root = path.resolve(root); this.builtinRoot = builtinRoot;
-    mkdir(this.root);
+    this.configuredRoot = path.resolve(root); this.root = trustedDirectory(root); this.builtinRoot = builtinRoot;
     this.registryFile = path.join(this.root, 'registry.json');
   }
   registry() {
@@ -204,4 +220,4 @@ class CharacterLibrary {
     this.saveRegistry(registry); // Keep versions, overrides and conversation data recoverable.
   }
 }
-module.exports = { CharacterLibrary, DEFAULT_CHARACTER_ID, normalizeCharacterId, validateManifest, validateVoice, scopeFor, atomic, read, json, mkdir };
+module.exports = { CharacterLibrary, DEFAULT_CHARACTER_ID, normalizeCharacterId, validateManifest, validateVoice, scopeFor, atomic, read, readTrustedFile, json, mkdir };

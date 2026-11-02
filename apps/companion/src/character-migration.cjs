@@ -16,7 +16,10 @@ function migrateLegacyCharacter({ library, personaFile, settingsFile, verifiedSa
     const backup = path.join(directory, name);
     if (fs.existsSync(backup)) saved[name] = read(backup, limit);
     else if (file) {
-      try { saved[name] = read(file, limit); atomic(backup, saved[name]); }
+      try { const relative = path.relative(path.dirname(library.configuredRoot || library.root), path.resolve(file));
+        if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw Error('Legacy source is outside configured application data');
+        // Resolve only the trusted app-data boundary, retaining link checks inside it.
+        saved[name] = read(path.join(path.dirname(library.root), relative), limit); atomic(backup, saved[name]); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
