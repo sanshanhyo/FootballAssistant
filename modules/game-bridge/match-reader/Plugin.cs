@@ -14,6 +14,7 @@ public sealed class Plugin : BasePlugin
     private RealtimeMatchTimeline? timeline;
     private Timer? retry;
     private int installing;
+    private long installStarted;
 
     public override void Load()
     {
@@ -28,7 +29,8 @@ public sealed class Plugin : BasePlugin
         }
         timeline = new RealtimeMatchTimeline(path);
         hook = new GameMatchTickHook(timeline);
-        retry = new Timer(_ => Install(), null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+        installStarted = Environment.TickCount64;
+        retry = new Timer(_ => Install(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private void Install()
@@ -36,6 +38,12 @@ public sealed class Plugin : BasePlugin
         if (Interlocked.Exchange(ref installing, 1) != 0) return;
         try
         {
+            if (Environment.TickCount64 - installStarted > 120_000)
+            {
+                timeline?.SetLoadState("hook_timeout");
+                Interlocked.Exchange(ref retry, null)?.Dispose();
+                return;
+            }
             if (hook is not null && (hook.IsStarted || hook.Start(false)))
                 Interlocked.Exchange(ref retry, null)?.Dispose();
         }
