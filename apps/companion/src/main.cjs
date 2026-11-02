@@ -327,6 +327,25 @@ async function buildWindow() {
   if (smokePath) {
     await openSettings();
     const settingsRenderer = await settingsWindow.webContents.executeJavaScript("(async () => ({ipcOk: (await window.companion.getState()).ok, aboutOk: (await window.companion.getAbout()).ok, customControls: Boolean(document.getElementById('window-close'))}))()");
+    const settingsLayout = await settingsWindow.webContents.executeJavaScript(`(async () => {
+      const hidden = document.getElementById('page-companion');
+      if (document.querySelector('[data-page="companion"], #match-deployment, #reader-onboarding, #model-save')) throw new Error('Removed settings controls remain');
+      if (hidden && (!hidden.hidden || !hidden.inert)) throw new Error('Character configuration is not hidden');
+      const panel = document.getElementById('tts-settings');
+      if (panel) {
+        const deadline = Date.now() + 5000;
+        while (!document.getElementById('tts-provider') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+        document.querySelector('[data-page="voice"]').click();
+        const provider = document.getElementById('tts-provider');
+        if (!provider || JSON.stringify(Array.from(provider.options, item => item.value)) !== '["edge","openai"]') throw new Error('Unexpected speech providers');
+        if (document.getElementById('tts-networkConsent') || panel.querySelector('button[type="submit"]')) throw new Error('Redundant speech save or consent control');
+        const speed = document.getElementById('tts-speed'), volume = document.getElementById('tts-volume');
+        if (speed?.type !== 'range' || volume?.type !== 'range' || Math.abs(speed.getBoundingClientRect().y - volume.getBoundingClientRect().y) > 2) throw new Error('Speech sliders are not aligned');
+      }
+      return { maintenanceHidden: true, characterSettingsHidden: true, speechControls: Boolean(panel) };
+    })()`);
+    await fs.mkdir(path.dirname(smokePath), { recursive: true });
+    await settingsWindow.webContents.capturePage().then(image => fs.writeFile(smokePath.replace(/\.json$/, '-settings.png'), image.toPNG()));
     settingsWindow.close();
     // Validate the actual Chromium image, not just a transparent DOM placeholder.
     await win.webContents.executeJavaScript(`(async () => {
@@ -343,7 +362,7 @@ async function buildWindow() {
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
       runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status, recovery: updateRecovery.status },
       renderer: await win.webContents.executeJavaScript('(async () => ({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet")), ipcOk: (await window.companion.getState()).ok}))()'),
-      settingsRenderer,
+      settingsRenderer, settingsLayout,
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
     await fs.writeFile(smokePath, JSON.stringify(report, null, 2));

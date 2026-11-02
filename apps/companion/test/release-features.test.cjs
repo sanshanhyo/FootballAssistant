@@ -13,7 +13,7 @@ test('Alpha 0.0.1 rejects speech before invoking the provider', () => {
 
 test('desktop artifact excludes local runtime, credentials, captures, logs and saves', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.0.1-alpha.4');
+  assert.equal(manifest.version, '0.0.1-alpha.5');
   const files = manifest.build.files;
   assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png', 'build-identity.json']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));
