@@ -72,6 +72,7 @@ test('trusted character voice is only a default for the already consented provid
   assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'zh-CN-YunxiNeural' }).voice, 'zh-CN-YunxiNeural');
   assert.equal(config.authorizeSpeak({}, { provider: 'openai', voice_id: 'alloy' }).voice, undefined);
   assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: '<xml>' }).voice, undefined);
+  assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'default' }).voice, undefined);
   await config.save({ ...defaults, enabled: true, provider: 'edge', networkConsent: true, voice: 'zh-CN-XiaoxiaoNeural' });
   assert.equal(config.authorizeSpeak({}, { provider: 'edge', voice_id: 'zh-CN-YunxiNeural' }).voice, 'zh-CN-XiaoxiaoNeural');
 });
