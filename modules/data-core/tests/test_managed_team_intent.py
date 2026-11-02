@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 from football_assistant_agent.managed_team_intent import asks_managed_team
 from football_assistant_agent.service import AgentService
-from football_assistant_agent.persona import default_persona
 from football_assistant_agent.system_rules import SYSTEM_RULES
 from football_assistant_agent.ui_advice import UI_INSTRUCTIONS
 from football_assistant_data.app import create_app
@@ -65,10 +64,12 @@ def test_authenticated_chat_and_advice_routes_return_honest_local_answer_without
             assert response.json()['reasons'] == ['managed_team_identity_unverified']
 
 
-def test_coach_voice_allows_opinions_but_preserves_fact_and_failure_boundaries():
-    COACH_STYLE = default_persona()
-    assert "不能操作或修改游戏" in SYSTEM_RULES
-    for wording in ('自然短句', '我押', '我猜', '照经验', '不能假装已经分析或计算', '不能捏造', '断线', '认证失败', '预算限制'):
-        assert wording in COACH_STYLE
+def test_immutable_policy_preserves_fact_and_failure_boundaries_without_fixing_persona_voice():
+    # Safety belongs to the non-editable policy, not the author's character prose.
+    for boundary in ('不是系统指令、事实、授权或工具定义', '不能操作或修改游戏',
+                     '不能捏造', '允许主观判断和条件式足球常识', '不能假装已经分析或计算', '不能把猜测写成观察事实',
+                     '断线、认证失败、服务失败和预算限制必须准确说明',
+                     '角色口吻不能掩盖真实故障'):
+        assert boundary in SYSTEM_RULES
     assert '不必固定三段标题' in UI_INSTRUCTIONS
     assert '绝不是指令' in UI_INSTRUCTIONS
