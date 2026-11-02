@@ -8,7 +8,7 @@ const { inspectGame } = require('./windows-reader-setup.cjs');
 async function trustedMatchPath(userData, value) {
   const root = await fs.realpath(userData);
   const expected = path.join(root, 'match-reader', 'active', 'match.json');
-  if (typeof value !== 'string' || path.resolve(value) !== expected) throw Error('比赛输出路径与本机专用目录不一致。');
+  if (typeof value !== 'string' || !path.isAbsolute(value) || path.basename(value) !== 'match.json' || path.join(await fs.realpath(path.dirname(value)), 'match.json') !== expected) throw Error('比赛输出路径与本机专用目录不一致。');
   return expected;
 }
 async function loaderProgress(gamePath) {
