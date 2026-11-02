@@ -307,7 +307,13 @@ class RealReaderClient {
   async reply({ message, conversationId, capability, adviceMode = 'native', characterContext, signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
-    const readback = asksManagedTeam(message) ? { personUid: 0, clubUid: 0, kind: 'team' } : offseasonIntent(message);
+    if (asksManagedTeam(message)) {
+      // Identity questions always use server-owned candidate confirmation, even
+      // for a legacy caller explicitly selecting the UI evidence mode.
+      const result = await this.agentRequest('/v1/chat', { message, conversation_id: conversationId, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+      return partialNativeReply(result, conversationId) || { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [], metadata: businessMetadata() };
+    }
+    const readback = offseasonIntent(message);
     // Date-only readback remains deterministic. Names/club/person selections now
     // flow through the existing chat/advice endpoint so follow-ups retain scope.
     if (readback?.kind === 'date' && !readback.error) return offseasonReply(await this.offseason({ ...readback, signal }), readback, conversationId);

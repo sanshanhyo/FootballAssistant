@@ -27,8 +27,8 @@ async function startup(t, { configured = true } = {}) {
     res.setHeader('Content-Type', 'application/json');
     if (req.method === 'GET') return res.end(JSON.stringify({ status: 'unavailable', production_ready: false, source: null, reasons: ['fixture_no_native_data'] }));
     if (!configured) { res.statusCode = 503; return res.end(JSON.stringify({ detail: { code: 'model_not_configured', message: '需要配置模型服务地址、模型名和 API Key。' } })); }
-    res.end(JSON.stringify({ status: 'generated', reply: '本机 fixture 回复，不是真实模型。', limitations: [],
-      provenance: { platform: 'windows-x64', adapter_id: 'footballassistant.windows-finite-ui' } }));
+    res.end(JSON.stringify({ status: 'partial', source_status: 'partial_native_candidates', reply: '本机 fixture 回复，不是真实模型。',
+      context: { observed_at: new Date().toISOString(), limitations: ['Synthetic fixture only'] } }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const runtimeFile = path.join(directory, 'runtime.json');
@@ -42,17 +42,19 @@ async function startup(t, { configured = true } = {}) {
   return { runtime, calls, mockCalls: () => mockCalls };
 }
 
-test('normal desktop startup routes current-page question to real authenticated UI-advice, not mock', async t => {
+test('normal desktop startup uses authenticated native advice, never mock or implicit legacy UI', async t => {
   const { runtime, calls, mockCalls } = await startup(t);
   assert.equal(runtime.state().mode, 'real'); assert.equal(runtime.state().synthetic, false);
   const done = terminal(runtime); runtime.sendMessage({ text: '当前页面属性' });
   assert.equal((await done).status, 'completed');
   const posted = calls.filter(call => call.method === 'POST');
-  assert.equal(posted.length, 1); assert.equal(posted[0].path, '/v1/agent/ui-advice');
+  assert.equal(posted.length, 1); assert.equal(posted[0].path, '/v1/agent/business-advice');
   assert.equal(posted[0].body.capability, 'player_info');
   const reply = runtime.state().messages.find(item => item.role === 'assistant');
   assert.equal(reply.text, '本机 fixture 回复，不是真实模型。');
-  assert.equal(reply.metadata.freshness, 'capture_summary');
+  assert.equal(reply.metadata.source, 'native_offseason_reader');
+  assert.equal(reply.metadata.readiness.production_ready, false);
+  assert.equal(reply.metadata.partial, true);
   assert.equal(mockCalls(), 0);
 });
 
