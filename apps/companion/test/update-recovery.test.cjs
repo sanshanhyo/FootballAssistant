@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { createUpdateRecovery } = require('../src/update-recovery.cjs');
+const { DEFAULT_SETTINGS, loadSettings, validateSettings } = require('../src/bootstrap.cjs');
 const oldVersion = '0.0.1-alpha.1', targetVersion = '0.0.2-alpha.1';
 const settings = { version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '' };
 async function fixture(t) {
@@ -229,4 +230,50 @@ test('failed upgraded launch never restores old history or persona over newer ed
   await restarted.fail('synthetic repeated failure');
   for (const [name, bytes] of Object.entries(newer)) assert.equal(await fs.readFile(path.join(f.userData, name), 'utf8'), bytes);
   for (const entry of prepared.snapshots) assert.equal(await fs.readFile(path.join(path.dirname(prepared.journalPath), entry.backup), 'utf8'), original[entry.source]);
+});
+
+test('actual first-run defaults prepare and complete an upgrade without losing Windows reader fields', async t => {
+  const f = await fixture(t);
+  await fs.rm(path.join(f.userData, 'settings.json'));
+  assert.deepEqual(await loadSettings(f.userData), DEFAULT_SETTINGS);
+  const original = await fs.readFile(path.join(f.userData, 'settings.json'));
+  const prepared = await f.create().prepare({ targetVersion });
+  assert.equal(prepared.state, 'prepared');
+  assert.deepEqual(await fs.readFile(prepared.backupPath), original);
+  const updated = f.create(targetVersion);
+  assert.equal((await updated.beginLaunch()).state, 'awaiting_health');
+  assert.equal((await updated.acknowledgeHealthy()).state, 'healthy');
+  assert.deepEqual(await fs.readFile(path.join(f.userData, 'settings.json')), original);
+});
+
+test('installed reader configuration is backed up byte-for-byte and retained on failed upgrade', async t => {
+  const f = await fixture(t);
+  const installed = validateSettings({ ...DEFAULT_SETTINGS,
+    windowsReaderEnabled: true, windowsReaderGamePath: path.join(f.userData, 'game', 'fm.exe'),
+    windowsMatchEnabled: true, windowsMatchGamePath: path.join(f.userData, 'game', 'fm.exe') });
+  const original = JSON.stringify(installed, null, 2) + '\n';
+  await fs.writeFile(path.join(f.userData, 'settings.json'), original);
+  const prepared = await f.create().prepare({ targetVersion });
+  assert.equal(prepared.state, 'prepared');
+  assert.equal(await fs.readFile(prepared.backupPath, 'utf8'), original);
+  const updated = f.create(targetVersion);
+  assert.equal((await updated.beginLaunch()).state, 'awaiting_health');
+  assert.equal((await updated.fail('synthetic startup failure')).state, 'recovery_required');
+  assert.equal(await fs.readFile(path.join(f.userData, 'settings.json'), 'utf8'), original);
+  assert.equal(await fs.readFile(prepared.backupPath, 'utf8'), original);
+});
+
+test('invalid Windows reader fields or added secrets remain blocked and never snapshotted', async t => {
+  for (const patch of [
+    { windowsReaderEnabled: 'true' }, { windowsMatchEnabled: 1 },
+    { windowsReaderGamePath: 'relative/fm.exe' }, { windowsMatchGamePath: null },
+    { apiKey: 'synthetic-secret' }, { backend: { port: 17827, token: 'synthetic-secret' } },
+  ]) {
+    const f = await fixture(t);
+    const original = JSON.stringify({ ...DEFAULT_SETTINGS, ...patch });
+    await fs.writeFile(path.join(f.userData, 'settings.json'), original);
+    assert.equal((await f.create().prepare({ targetVersion })).state, 'recovery_required');
+    assert.equal(await fs.readFile(path.join(f.userData, 'settings.json'), 'utf8'), original);
+    assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates', 'recovery')), []);
+  }
 });
