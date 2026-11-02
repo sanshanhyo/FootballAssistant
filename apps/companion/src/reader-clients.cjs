@@ -1,6 +1,6 @@
 'use strict';
 const { matchView, matchCard } = require('./match-reader.cjs');
-const { calendarEndpoint } = require('./offseason-calendar.cjs');
+const { calendarEndpoint, offseasonEndpoint, offseasonIntent, offseasonReply } = require('./offseason-calendar.cjs');
 const { validateImport, asksImportedDiagnostic, diagnosticReply } = require('./windows-discovery.cjs');
 
 const MOCK_LIMITATIONS = Object.freeze([
@@ -212,6 +212,20 @@ class RealReaderClient {
   async match({ signal } = {}) {
     return this.request('/v1/reader/match', undefined, { signal });
   }
+  async offseason({ clubUid = 0, personUid = 0, signal } = {}) {
+    const endpoint = offseasonEndpoint(clubUid, personUid);
+    if (this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
+    this.offseasonPending = true;
+    try { return await this.request(endpoint, undefined, { signal, timeoutMs: 45_000 }); }
+    finally { this.offseasonPending = false; }
+  }
+  async onboardingStatus({ verify = false, signal } = {}) {
+    if (typeof verify !== 'boolean') throw Error('Invalid verification request');
+    if (verify && this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
+    if (verify) this.offseasonPending = true;
+    try { return await this.request('/v1/reader/onboarding-status' + (verify ? '?verify=true' : ''), undefined, { signal, timeoutMs: 45_000 }); }
+    finally { if (verify) this.offseasonPending = false; }
+  }
   async offseasonCalendar({ clubUid, start, end, signal } = {}) {
     return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
   }
@@ -283,6 +297,8 @@ class RealReaderClient {
   async reply({ message, conversationId, capability, adviceMode = 'native', characterContext, signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
+    const readback = asksManagedTeam(message) ? { personUid: 0, clubUid: 0, kind: 'team' } : offseasonIntent(message);
+    if (readback) return offseasonReply(readback.error ? null : await this.offseason({ ...readback, signal }), readback, conversationId);
     // Never infer a selected club or range from a conversation or current save.
     if (typeof message === 'string' && /(?:赛程|schedule|fixtures?)/i.test(message) && /(?:俱乐部\s*UID|club\s*UID)/i.test(message)) {
       const markers = [...message.matchAll(/(?:俱乐部\s*UID|club\s*UID)/gi)];

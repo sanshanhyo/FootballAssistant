@@ -21,6 +21,8 @@ on:
       - modules/agent-core/**
       - contracts/**
       - scripts/*desktop_backend.py
+      - scripts/build_windows_reader.py
+      - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
       - .github/workflows/desktop.yml
@@ -32,6 +34,8 @@ on:
       - modules/agent-core/**
       - contracts/**
       - scripts/*desktop_backend.py
+      - scripts/build_windows_reader.py
+      - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
       - .github/workflows/desktop.yml
@@ -88,6 +92,25 @@ jobs:
         if: runner.os == 'Windows'
         with:
           dotnet-version: '10.0.x'
+      - name: Build self-contained Windows offseason reader (no game input)
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          python scripts/test_windows_reader_payload.py
+          dotnet run --project modules/game-bridge/offseason-reader/tests/DecoderTest.csproj
+          dotnet run --project modules/game-bridge/offseason-reader/manager-tests/ManagerCandidateReaderTests.csproj
+          python scripts/build_windows_reader.py
+          python scripts/build_windows_reader.py --verify
+      - name: Exercise packaged reader offline protocol without a game
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          $reader = Resolve-Path 'build/reader-windows-x64/OffseasonReaderCli.exe'
+          $version = & $reader --version | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $version.schema -ne 'fa-offseason-producer/1' -or $version.producer.id -ne 'footballassistant.offseason-reader' -or $version.producer.protocol -ne 'fa-offseason/0.1') { throw 'Unexpected reader producer identity' }
+          $probe = & $reader --self-test | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $probe.schema -ne 'fa-offseason/0.1' -or $probe.status -ne 'offline_self_test' -or $probe.synthetic -ne $true -or $null -ne $probe.process) { throw 'Reader offline protocol self-test failed' }
       - name: Verify GameBridge offline transport on Windows
         if: runner.os == 'Windows'
         working-directory: .
@@ -106,10 +129,18 @@ jobs:
           if ((Get-Item $outputPath).Length -le 44) { throw 'TTS output is empty' }
       - name: Build and verify bundled local Whisper (CPU-only, 31 MiB multilingual model)
         run: python packaging/build-local-stt.py
+      - name: Record exact test-build identity
+        run: node packaging/write-build-identity.cjs
       - name: Package desktop
         run: npm run pack:${{ matrix.target }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Preserve build identity with download metadata
+        run: node -e "require('node:fs').copyFileSync('build-identity.json', 'dist/build-identity.json')"
+      - name: Verify actual packaged Windows reader inventory
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: python scripts/build_windows_reader.py --verify --output apps/companion/dist/win-unpacked/resources/reader-windows-x64
       - name: Audit actual packaged notices and retained license hashes
         shell: bash
         run: node packaging/audit-notices.cjs "" "$RUNNER_TEMP/companion-notices.json"
@@ -234,6 +265,7 @@ jobs:
           path: |
             apps/companion/dist/*.blockmap
             apps/companion/dist/*.yml
+            apps/companion/dist/build-identity.json
             apps/companion/dist/alpha-update.json
             apps/companion/dist/alpha-release-plan.json
             apps/companion/alpha-preparation.json

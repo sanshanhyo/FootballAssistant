@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { adviceCapability, RealReaderClient } = require('../src/reader-clients.cjs');
 
-test('managed team acceptance question routes to current UI advice, never ordinary chat', async () => {
+test('managed team identity question routes to bounded native candidates, never UI or ordinary chat', async () => {
   const messages = ['现在我在执掌哪支球队', '我现在执教哪支球队？', '我们管理的是哪个俱乐部？',
     '我在哪个球队当主教练', '我的球队叫什么名字', '我目前是哪支队的主教练？',
     'Which team am I managing?', 'What club do we coach?', 'What is my team?'];
@@ -17,7 +17,7 @@ test('managed team acceptance question routes to current UI advice, never ordina
     assert.equal(capability, 'player_info');
     await client.reply({ message, capability, adviceMode: 'ui_evidence' });
   }
-  assert.ok(calls.every(call => call.endpoint === '/v1/agent/ui-advice'));
+  assert.ok(calls.every(call => call.endpoint === '/v1/reader/offseason?club_uid=0&person_uid=0' && call.body === undefined));
   assert.equal(adviceCapability('我想知道瓜迪奥拉执教哪支球队'), null);
   assert.equal(adviceCapability('什么是战术'), null);
   assert.equal(adviceCapability('哪支球队适合我执教'), null);

@@ -15,15 +15,16 @@ test('Alpha 0.0.2 exposes speech capability; main additionally enforces explicit
 
 test('desktop artifact excludes local runtime, credentials, captures, logs and saves', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.0.1-alpha.1');
+  assert.equal(manifest.version, '0.0.2-alpha.1');
   const files = manifest.build.files;
-  assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png']);
+  assert.deepEqual(files.filter(item => !item.startsWith('!')), ['src/**/*', 'THIRD_PARTY.md', 'package.json', 'packaging/assets/icon.png', 'build-identity.json']);
   for (const excluded of ['!**/.env*', '!**/runtime.json', '!**/local-data/**', '!**/local-game/**', '!**/*.db', '!**/*.sqlite*', '!**/*.log', '!**/*.fm', '!**/*.fms']) assert.ok(files.includes(excluded));
   assert.equal(manifest.build.extraResources.length, 4);
   assert.deepEqual(manifest.build.extraResources.slice(0, 2), [
     { from: '../../LICENSE', to: 'LICENSE' },
     { from: '../../LICENSE-SCOPE.md', to: 'LICENSE-SCOPE.md' },
   ]);
+  assert.deepEqual(manifest.build.win.extraResources, [{ from: '../../build/reader-windows-x64', to: 'reader-windows-x64', filter: ['**/*'] }]);
   const backend = manifest.build.extraResources[2];
   assert.equal(backend.from, '../../build/desktop-backend/football-assistant-backend');
   assert.equal(backend.to, 'backend');

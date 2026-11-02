@@ -59,3 +59,12 @@ test('trusted pet can read game status but not full bootstrap or model settings'
   for (const method of ['bootstrap-status', 'model-config-get', 'model-config-save']) assert.equal(allowsWindowIpc(trusted, method), false);
   assert.equal(allowsWindowIpc({ ...trusted, trustedMainFrame: false }, 'game-status'), false);
 });
+test('bundled reader env is gated by explicit settings and never ambient executable', async t => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'fa-reader-env-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  await fs.mkdir(path.join(dir,'backend'));await fs.writeFile(path.join(dir,'backend',process.platform==='win32'?'football-assistant-backend.exe':'football-assistant-backend'),'');
+  for (const enabled of [false,true]) {
+    let probes=0,options; const child=new EventEmitter();child.exitCode=null;child.signalCode=null;child.kill=()=>{child.exitCode=0;setImmediate(()=>child.emit('exit'));};
+    const supervisor=new BackendSupervisor({userData:dir,resourcesPath:dir,packaged:true,runtimeFile:path.join(dir,'runtime.json'),settings:{backend:{port:17827},windowsReaderEnabled:enabled},readerExecutable:'/trusted/OffseasonReaderCli.exe',backendEnv:{FOOTBALL_ASSISTANT_OFFSEASON_EXE:'/untrusted.exe',FOOTBALL_ASSISTANT_OFFSEASON_CONSENT:'1'},probe:async()=>{if(++probes===1)throw Error();return {modelConfigured:false};},spawnProcess:(_binary,_args,opts)=>{options=opts;return child;}});
+    await supervisor.start();assert.equal(options.env.FOOTBALL_ASSISTANT_OFFSEASON_EXE,enabled?'/trusted/OffseasonReaderCli.exe':undefined);assert.equal(options.env.FOOTBALL_ASSISTANT_OFFSEASON_CONSENT,enabled?'1':'0');await supervisor.stop();
+  }
+});

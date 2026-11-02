@@ -10,6 +10,7 @@
   let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false, modelSaving = false;
   let characterSettings;
   let speechSettings;
+  let readerOnboarding;
   let personaRevision = null, personaDirty = false, personaLoad = 0;
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -373,13 +374,14 @@
     for (const id of ['bubble-duration-mode','bubble-duration-seconds']) $(id).addEventListener('change',saveBubbleDuration);
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
     $('light-motion').addEventListener('change',saveLightMotion);
-    window.addEventListener('beforeunload',event => { if(personaDirty || characterSettings?.hasUnsavedChanges()) {event.preventDefault();event.returnValue='';return;} stopped=true;characterSettings?.dispose();speechSettings?.dispose?.();api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
+    window.addEventListener('beforeunload',event => { if(personaDirty || characterSettings?.hasUnsavedChanges()) {event.preventDefault();event.returnValue='';return;} stopped=true;readerOnboarding?.dispose();characterSettings?.dispose();speechSettings?.dispose?.();api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
   }
   try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}')); } catch { applyAppearance({}); }
   if (!api || !UI) { showError('设置服务未连接'); return; }
   bind(); unsubscribe=api.subscribe(onEvent);
   characterSettings = window.FootballCharacterSettings?.bind({ root: $('character-library'), api, onState: applyState, onError: showError, onNotice: notice });
   speechSettings = window.FootballSpeechSettings?.bind({ root: $('tts-settings'), api, onError: showError, onNotice: notice });
+  readerOnboarding = window.FootballReaderOnboarding?.bind({ root: $('reader-onboarding'), api, onError: showError });
   perform(() => api.getState()).then(value => {if(value)applyState(value);});
   loadModelConfiguration(); refreshSpeech();
   perform(() => api.getAbout()).then(value => { if(value?.version) $('app-version').textContent=value.version; });

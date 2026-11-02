@@ -48,7 +48,7 @@ test('Windows metadata artifact includes each preparation file as a separate uni
  const upload=workflow.split('      - name: Upload Windows update metadata\n')[1].split('      - name:')[0];
  const lines=upload.split('          path: |\n')[1].split('          if-no-files-found:')[0].trimEnd().split('\n');
  assert.deepEqual(lines.map(line=>{assert.match(line,/^ {12}\S/);return line.slice(12);}),[
-  'apps/companion/dist/*.blockmap','apps/companion/dist/*.yml','apps/companion/dist/alpha-update.json',
+  'apps/companion/dist/*.blockmap','apps/companion/dist/*.yml','apps/companion/dist/build-identity.json','apps/companion/dist/alpha-update.json',
   'apps/companion/dist/alpha-release-plan.json','apps/companion/alpha-preparation.json'
  ]);
  assert.match(upload,/if-no-files-found: error/);

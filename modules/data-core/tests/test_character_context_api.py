@@ -147,6 +147,7 @@ def test_every_generation_route_forwards_context(tmp_path, monkeypatch, route, e
     monkeypatch.setattr(offseason_snapshot, 'read_offseason', read)
     monkeypatch.setattr(calendar_selection, 'choose_calendar_scope', lambda *a: {'club_uid': 1, 'manager_uid': 2, 'club_name': 'fixture', 'selection': 'fixture', 'start': '2026-01-01', 'end': '2026-01-02'})
     monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_EXE', '/not-executed/fixture')
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
     app = create_app(settings(tmp_path))
     with TestClient(app, base_url='http://127.0.0.1') as client:
         monkeypatch.setattr(app.state.agent, method, fake)

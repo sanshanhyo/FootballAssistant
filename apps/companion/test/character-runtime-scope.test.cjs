@@ -140,3 +140,17 @@ test('persisted scope restores backend conversation ID from message metadata', a
   assert.equal(r.backendConversationId,'retained-conversation');
   await r.clearHistory(); assert.notEqual(r.backendConversationId,'retained-conversation');
 });
+test('integrated native readback cancels on character switch without binding process identity as save', async t => {
+  let finish, readSignal; const calls=[];
+  const client=new RealReaderClient({request:async (url,body,options)=>{
+    calls.push(url);
+    if(url.startsWith('/v1/reader/offseason?')) { readSignal=options.signal; return new Promise(resolve=>finish=resolve); }
+    return {};
+  }});
+  const {runtime:r,cancelled}=await fixture(t,{realClient:client}); r.setMode('real'); const save=r.saveId;
+  r.sendMessage({text:'当前游戏日期'}); await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(calls.includes('/v1/reader/offseason?club_uid=0&person_uid=0')); assert.equal(typeof finish,'function');
+  r.selectCharacter('test.other'); assert.equal(readSignal.aborted,true);
+  finish({status:'unavailable',reason:'no_data'}); await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(r.messages.length,0); assert.equal(r.saveId,save); assert.match(save,/^session:/); assert.ok(cancelled()>0);
+});
