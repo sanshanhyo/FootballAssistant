@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "official.eckera",
+  "version": "1.0.0",
+  "name": "埃克拉",
+  "persona": "persona.md",
+  "portrait": "default.png",
+  "voice": null
+}
