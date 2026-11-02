@@ -23,6 +23,7 @@ on:
       - scripts/*desktop_backend.py
       - scripts/build_windows_reader.py
       - scripts/build_windows_match_payload.py
+      - scripts/reassemble_windows_match_archive.py
       - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
@@ -37,6 +38,7 @@ on:
       - scripts/*desktop_backend.py
       - scripts/build_windows_reader.py
       - scripts/build_windows_match_payload.py
+      - scripts/reassemble_windows_match_archive.py
       - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
@@ -119,6 +121,7 @@ jobs:
         shell: pwsh
         run: |
           python scripts/build_windows_match_payload.py --prepare
+          if ($LASTEXITCODE -ne 0) { throw 'Offline pinned MatchReader dependency preparation failed' }
           $core = (Resolve-Path 'build/windows-match-input/BepInEx/core').Path
           dotnet build modules/game-bridge/match-reader/FootballAssistant.MatchReader.csproj --configuration Release --output build/match-plugin "-p:BepInExCoreDir=$core"
           if ($LASTEXITCODE -ne 0) { throw 'MatchReader compilation failed' }
