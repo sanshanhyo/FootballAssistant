@@ -15,7 +15,7 @@ button:disabled { opacity:.35; cursor:default; }
 .bubble-outline { object-fit:contain; -webkit-user-drag:none; }
 #bubble-content { position:absolute; inset:19% 13% 23%; display:flex; flex-direction:column; min-height:0; }
 #bubble-body { min-height:0; flex:1; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#c7c3b9 transparent; padding-right:4px; }
-#compact-text { margin:0 0 5px; font-family:var(--bubble-font,"851 GBai Marker",sans-serif); font-size:clamp(12px, calc(5cqw * var(--font-scale,1)), calc(18px * var(--font-scale,1))); font-weight:400; font-synthesis:none; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; }
+#compact-text { margin:0 0 5px; font-family:var(--bubble-font,"851 GBai Marker",sans-serif); font-size:var(--bubble-font-size,14px); font-weight:400; font-synthesis:none; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; }
 #compact-bubble:focus-visible { outline:1px dotted #8a867d; outline-offset:-1px; }
 #input-dock { flex-shrink:0; min-height:110px; max-height:160px; display:flex; flex-direction:column; justify-content:flex-start; padding-top:5px; }
 #interaction-feedback { display:flex; align-items:center; gap:8px; margin:5px 12px 0; font-size:10px; line-height:1.45; color:#d1cfc8; }
