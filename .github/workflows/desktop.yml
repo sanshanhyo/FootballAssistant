@@ -53,9 +53,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
-            target: mac
-            artifact: macos-arm64
           - os: windows-latest
             target: win
             artifact: windows-x64
