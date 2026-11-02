@@ -13,7 +13,7 @@
     const rollbackConsent = checkbox('确认回滚本次部署并恢复备份（须退出游戏）');
     const actions = make('div'); actions.className = 'row-actions';
     const select = make('button','选择游戏',actions), inspect = make('button','检查部署',actions), prepare = make('button','生成部署计划',actions), deploy = make('button','确认部署',actions), connect = make('button','连接后台',actions), verify = make('button','检查加载',actions), rollback = make('button','回滚部署',actions);
-    const labels = { deployed:'组件已部署，请启动游戏后检查加载', deployed_unconfigured:'组件已部署，尚未连接后台', disabled:'比赛组件未部署', not_installed:'比赛组件未部署', not_deployed:'比赛组件未部署', payload_unavailable:'安装包缺少完整比赛组件', recovery_required:'上次部署中断，请回滚恢复', different_game_deployment:'已为另一游戏目录部署，请先回滚', absent:'比赛组件未部署', planned:'请检查部署文件并明确确认', conflict:'发现加载器或 Mod 冲突，未修改游戏', modified:'部署文件已变更，不能自动覆盖', waiting_game:'组件已部署，等待启动游戏', loading:'首次加载中，最多检查 180 秒；不会停止游戏', loading_timeout:'180 秒内尚未完成加载；游戏仍运行，可继续等待后重试', loaded_waiting_match:'组件已加载，等待真实比赛数据', live:'已收到当前进程的新鲜比赛数据', hook_timeout:'比赛挂钩等待超时，请检查日志后重新启动游戏', plugin_stopped:'比赛组件已停止', backend_unavailable:'后台未连接', game_state_unknown:'无法确认游戏进程状态', deployment_error:'部署状态检查失败', rolled_back:'已回滚比赛组件', rollback_complete:'已回滚比赛组件' };
+    const labels = { deployed:'组件已部署，请启动游戏后检查加载', deployed_unconfigured:'组件已部署，尚未连接后台', disabled:'比赛组件未部署', not_installed:'比赛组件未部署', not_deployed:'比赛组件未部署', payload_unavailable:'安装包缺少完整比赛组件', recovery_required:'上次部署中断，请回滚恢复', different_game_deployment:'已为另一游戏目录部署，请先回滚', absent:'比赛组件未部署', planned:'请检查部署文件并明确确认', conflict:'发现加载器或 Mod 冲突，未修改游戏', modified:'部署文件已变更，不能自动覆盖', waiting_game:'组件已部署，等待启动游戏', loading:'首次加载中，最多检查 180 秒；不会停止游戏', loading_timeout:'180 秒内尚未完成加载；游戏仍运行。可继续等待并重新检查；下载失败需自行退出游戏后重新启动', loaded_waiting_match:'组件已加载，等待真实比赛数据', live:'已收到当前进程的新鲜比赛数据', hook_timeout:'比赛挂钩等待超时，请检查日志后重新启动游戏', plugin_stopped:'比赛组件已停止', backend_unavailable:'后台未连接', game_state_unknown:'无法确认游戏进程状态', deployment_error:'部署状态检查失败', rolled_back:'已回滚比赛组件', rollback_complete:'已回滚比赛组件' };
     function buttons() {
       for (const e of [select,inspect,prepare,connect,verify,rollback,deploy,download,migration,confirmation,rollbackConsent]) e.disabled = busy;
       deploy.disabled = busy || !plan || plan.canDeploy === false && !plan.needsMigrationConsent || !confirmation.checked || !download.checked || plan.needsMigrationConsent && !migration.checked;
@@ -23,6 +23,7 @@
     function render(next) {
       value = next; container.hidden = next.supported === false; if (container.hidden) return;
       status.textContent = labels[next.state] || next.message || next.state || '状态未确认';
+      verify.textContent = next.state === 'loading_timeout' ? '重新检查加载' : '检查加载';
       if (next.restartRequired) status.textContent += ' · 请重启外部后台';
       game.textContent = next.gamePath || next.gameRoot || '';
       const log = next.loaderProgress;
