@@ -16,7 +16,7 @@ async function fixture(t) {
   const save = () => fs.writeFile(path.join(folder,'manifest.json'),JSON.stringify(manifest)); await save(); return {root,folder,manifest,save};
 }
 test('bundled producer inventory is exact and hashed; never calls executable', async t => {
-  const f=await fixture(t); assert.equal((await validateReaderPayload(f.root)).executable,path.join(f.folder,'OffseasonReaderCli.exe'));
+  const f=await fixture(t); assert.equal((await validateReaderPayload(f.root)).executable,await fs.realpath(path.join(f.folder,'OffseasonReaderCli.exe')));
   await fs.writeFile(path.join(f.folder,'injected.dll'),'x'); await assert.rejects(validateReaderPayload(f.root),/未列出/);
   await fs.unlink(path.join(f.folder,'injected.dll')); await fs.writeFile(path.join(f.folder,'runtime.dll'),'changed'); await assert.rejects(validateReaderPayload(f.root),/校验失败/);
 });
