@@ -101,3 +101,27 @@ test('trusted root tolerates OS ancestor aliases but package and override links 
   const { readTrustedFile } = require('../src/character-library.cjs');
   const linkedFile = path.join(alias, 'linked-persona.md'); fs.symlinkSync(original, linkedFile); assert.throws(() => readTrustedFile(linkedFile, 16384));
 });
+test('missing override portrait preserves valid persona, name and voice without rewriting user data', t => {
+  const {root,library}=setup(t),directory=path.join(root,'overrides',DEFAULT_CHARACTER_ID);
+  fs.mkdirSync(directory,{recursive:true});const file=path.join(directory,'override.json');
+  const original=JSON.stringify({name:'Custom fixture',persona:'Fixture persona',voice:{provider:'edge',voice_id:'test'},portraitHash:'a'.repeat(64)});
+  fs.writeFileSync(file,original);const result=library.resolve();
+  assert.equal(result.name,'Custom fixture');assert.equal(result.persona,'Fixture persona');assert.deepEqual(result.voice,{provider:'edge',voice_id:'test'});
+  assert.equal(result.portraitPath,library.builtin().portraitPath);assert.ok(result.warnings.includes('override_unavailable'));
+  assert.equal(fs.readFileSync(file,'utf8'),original);
+});
+test('invalid override portrait paths and hashes still reject the override without rewriting it', t => {
+  const {root,library}=setup(t),directory=path.join(root,'overrides',DEFAULT_CHARACTER_ID);fs.mkdirSync(directory,{recursive:true});
+  for(const portraitHash of ['../portrait','z'.repeat(64),{toString:null}]) {
+    const file=path.join(directory,'override.json'),original=JSON.stringify({persona:'Fixture persona',portraitHash});fs.writeFileSync(file,original);
+    const result=library.resolve();assert.ok(result.warnings.includes('override_unavailable'));assert.notEqual(result.persona,'Fixture persona');assert.equal(fs.readFileSync(file,'utf8'),original);
+  }
+});
+test('present but corrupt or hash-mismatched portrait still rejects the override', t => {
+  const {root,library}=setup(t),directory=path.join(root,'overrides',DEFAULT_CHARACTER_ID);fs.mkdirSync(directory,{recursive:true});
+  const portraitHash='b'.repeat(64),file=path.join(directory,'override.json'),original=JSON.stringify({persona:'Fixture persona',portraitHash});fs.writeFileSync(file,original);
+  for(const bytes of [Buffer.from('not png'),png]) {
+    fs.writeFileSync(path.join(directory,`${portraitHash}.png`),bytes);const result=library.resolve();
+    assert.ok(result.warnings.includes('override_unavailable'));assert.notEqual(result.persona,'Fixture persona');assert.equal(fs.readFileSync(file,'utf8'),original);
+  }
+});

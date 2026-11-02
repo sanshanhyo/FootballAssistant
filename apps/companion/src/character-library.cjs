@@ -139,9 +139,16 @@ class CharacterLibrary {
       if (override.portraitHash !== undefined) {
         if (!/^[a-f0-9]{64}$/.test(override.portraitHash)) throw Error('Invalid portrait hash');
         const portrait = path.join(this.root, 'overrides', id, `${override.portraitHash}.png`);
-        const bytes = read(portrait, 16 * 1024 * 1024); validatePng(bytes);
-        if (hash(bytes) !== override.portraitHash) throw Error('Portrait changed');
-        base.portraitPath = portrait;
+        try {
+          const bytes = read(portrait, 16 * 1024 * 1024); validatePng(bytes);
+          if (hash(bytes) !== override.portraitHash) throw Error('Portrait changed');
+          base.portraitPath = portrait;
+        } catch (error) {
+          // A missing optional portrait must not replace a valid user persona.
+          // Invalid paths, links, PNGs and hashes still reject the entire override.
+          if (error.code !== 'ENOENT') throw error;
+          warnings.push('override_unavailable');
+        }
       }
     } catch { override = {}; warnings.push('override_unavailable'); }
     return { characterId: id, requestedCharacterId: requestedId, version: base.manifest.version, name: override.name ?? base.manifest.name, persona: override.persona ?? base.persona, voice: override.voice === undefined ? base.manifest.voice : override.voice, portraitPath: base.portraitPath, fallback, warnings };

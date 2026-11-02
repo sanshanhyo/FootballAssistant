@@ -25,3 +25,12 @@ test('bubble duration defaults and malformed values are bounded',()=>{
   Appearance.bindPet({...f,onChange:value=>prefs=value});assert.equal(prefs.bubbleDurationSeconds,60);
   f.set(JSON.stringify({bubbleDurationMode:'auto'}));f.events.get('storage')({key:Appearance.KEY});assert.equal(prefs.bubbleDurationMode,'auto');
 });
+test('JSON objects and arrays in appearance fields fall back without breaking pet initialization or rewriting storage',()=>{
+  for(const field of ['fontFamily','fontSize','bubbleDurationSeconds']) for(const value of [{toString:null},{toString:0,valueOf:null},[],[18]]) {
+    const raw=JSON.stringify({[field]:value}),f=fixture(raw);let prefs;
+    assert.doesNotThrow(()=>Appearance.bindPet({...f,onChange:value=>prefs=value}));
+    assert.equal(prefs.fontFamily,'system');assert.equal(prefs.fontSize,14);assert.equal(prefs.bubbleDurationSeconds,8);
+    assert.equal(f.storage.getItem(Appearance.KEY),raw);
+    f.set(raw);assert.doesNotThrow(()=>f.events.get('storage')({key:Appearance.KEY}));
+  }
+});
