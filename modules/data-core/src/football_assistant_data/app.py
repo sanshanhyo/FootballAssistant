@@ -482,6 +482,17 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        async def partial_offseason_reply(body):
+            # Read the consented server-owned producer, never client-supplied facts.
+            # This is a partial observation channel, not a business-store publication.
+            from .offseason_snapshot import read_offseason, consent_enabled
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            if not consent_enabled() or not configured:
+                return None
+            envelope = await read_offseason(Path(configured), 0, 0, require_current_producer=True)
+            return await app.state.agent.offseason_advice(body.message, body.conversation_id, envelope,
+                **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+
         @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
         def persona_metadata():
             from football_assistant_agent.persona import load_persona
@@ -495,7 +506,12 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             # override provenance, readiness or provide their own snapshot.
             snapshot = app.state.business_snapshots.read()["snapshot"]
             try:
-                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                result = await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                if result.get("status") == "blocked":
+                    partial = await partial_offseason_reply(body)
+                    if partial is not None:
+                        return partial
+                return result
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
@@ -574,6 +590,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
+                partial = await partial_offseason_reply(body)
+                if partial is not None:
+                    return partial
                 return await app.state.agent.chat(body.message,body.conversation_id, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None

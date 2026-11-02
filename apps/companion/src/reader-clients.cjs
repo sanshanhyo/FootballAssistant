@@ -114,6 +114,16 @@ function adviceCapability(message, explicit) {
   if (/球员|属性|存档|页面|界面|这页|这一页|player|squad/i.test(message)) return 'player_info';
   return null;
 }
+function partialNativeReply(result, conversationId) {
+  if (result?.source_status !== 'partial_native_candidates' || result.status !== 'partial' || typeof result.reply !== 'string') return null;
+  return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [], metadata: {
+    source: 'native_offseason_reader', sourceLabel: '赛外读取 · 部分事实', synthetic: false, partial: true,
+    freshness: 'observed_for_request', sampledAt: result.context?.observed_at ?? null,
+    sessionId: result.context?.session_id ?? null,
+    limitations: Array.isArray(result.context?.limitations) ? result.context.limitations : ['候选不等于当前执教身份；未读取字段保持未知。'],
+    readiness: { production_ready: false, mode: 'partial_native_candidates' },
+  } };
+}
 const PREVIEWS = Object.freeze([
   { id: 'schedule', title: '实验性 UI 赛程', key: 'schedule_projection', status: 'experimental_ui_schedule' },
   { id: 'tactics', title: '实验性 UI 战术', key: 'tactics_projection', status: 'experimental_ui_tactics' },
@@ -360,6 +370,8 @@ class RealReaderClient {
     }
     if (capability) {
       const result = await this.agentRequest('/v1/agent/business-advice', { message, conversation_id: conversationId, capability, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+      const partial = partialNativeReply(result, conversationId);
+      if (partial) return partial;
       const meta = businessMetadata(result.readiness);
       meta.snapshotId = result.facts?.[0]?.snapshot_id ?? null;
       meta.limitations.push(...(result.missing_requirements || []));
@@ -369,6 +381,8 @@ class RealReaderClient {
           fields: facts.slice(0, 100).map(fact => ({ label: `${fact.snapshot_id} ${fact.field_ref}`, value: fact.value, status: 'observed' })) }] : [] };
     }
     const result = await this.agentRequest('/v1/chat', { message, conversation_id: conversationId, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+    const partial = partialNativeReply(result, conversationId);
+    if (partial) return partial;
     return { text: result.reply, conversationId: result.conversation_id, metadata: { ...businessMetadata(), source: 'agent', sourceLabel: 'AI 对话 · 非当前存档事实', limitations: ['普通对话不代表已读取当前存档业务数据。'] }, cards: [] };
   }
 }
