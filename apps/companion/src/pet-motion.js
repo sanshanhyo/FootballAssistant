@@ -16,7 +16,7 @@
     puzzled: ['none', 'rotate(2deg)', 'rotate(-.6deg)', 'none'],
     notice: ['none', 'translateY(-3px)', 'none'],
   };
-  function bind({ image, media, enabled = true, timers = { setTimeout, clearTimeout } }) {
+  function bind({ image, media, enabled = true, timers = { setTimeout: (...args) => globalThis.setTimeout(...args), clearTimeout: id => globalThis.clearTimeout(id) } }) {
     let current = null, idleTimer = null, animation = null, generation = 0, visible = true, disposed = false;
     const allowed = () => enabled && visible && !media?.matches && !disposed;
     function cancel() {
