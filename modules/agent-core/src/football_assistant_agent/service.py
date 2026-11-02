@@ -100,13 +100,18 @@ class AgentService:
             result["persona"] = persona
         return result
 
+    def response_scope(self, character_context=None):
+        """Echo only validated routing identity, never editable persona text."""
+        selected = self.character_context(character_context)
+        return {key: selected[key] for key in ("save_id", "character_id")}
+
     async def business_advice(self, message: str, conversation_id: str | None,
                               capability: str, snapshot=None, *, character_context: dict | None = None) -> dict:
         if asks_managed_team(message):
-            return managed_team_unconfirmed(conversation_id, mode='native')
+            return {**managed_team_unconfirmed(conversation_id, mode='native'), "character_context": self.response_scope(character_context)}
         prepared = prepare_business_advice(capability, snapshot)
         if prepared["status"] != "ready":
-            return {**prepared, "conversation_id": conversation_id,
+            return {**prepared, "conversation_id": conversation_id, "character_context": self.response_scope(character_context),
                     "source_status": "unavailable",
                     "reply": "当前没有经过验证且新鲜的完整业务数据，不能提供基于当前存档的足球建议。"
                              + "缺少输入：" + "、".join(prepared["missing_requirements"] or
@@ -144,7 +149,7 @@ class AgentService:
             coverage = "本次实际读取覆盖：" + names + "。未读取人员不参与比较；raw 是原始值，不是 20 分评级，位置仍未由读取确认。\n"
             if not isinstance(related_people, (tuple, list)) or len(related_people) > 2 or len(people) != len(related_people):
                 return {"reply": coverage + "本次请求的球员信息未全部通过校验，暂不作完整比较。请确认要比较的人名后重试。",
-                        "conversation_id": conversation_id, "source_status": "partial_native_candidates", "status": "partial", "context": prepared}
+                        "conversation_id": conversation_id, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
         if asks_managed_team(message):
             response = managed_team_unconfirmed(conversation_id, mode="native")
         else:
@@ -164,25 +169,25 @@ class AgentService:
                 response["reply"] = coverage + "本次采样在生成期间已过期，未展示生成结论；请重新提问以读取新的数据。"
             else:
                 response["reply"] = "【实验性赛外读取 · 部分候选】仅为本次请求的采样，并非持续实时或完整存档数据，未确认当前执教身份。\n" + coverage + response["reply"]
-        return {**response, "source_status": "partial_native_candidates", "status": "partial", "context": prepared}
+        return {**response, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
 
     async def calendar_advice(self, message, conversation_id, envelope, club_uid, start, end, *, character_context=None):
         prepared = prepare_calendar_advice(envelope, club_uid, start, end)
         if prepared is None:
-            return {"status": "unavailable", "conversation_id": conversation_id,
+            return {"status": "unavailable", "conversation_id": conversation_id, "character_context": self.response_scope(character_context),
                     "reply": "当前赛程候选不可用或已过期，请重新读取。", "context": None}
         context = {"source_status": "partial_calendar_candidates", "calendar": prepared}
         response = await self._chat(message, conversation_id, context, calendar=True, **({"character_context": character_context} if character_context is not None else {}))
         response["reply"] = "以下基于所选俱乐部的已加载赛程候选，可能不完整；未确认它是当前执教球队。\n" + response["reply"]
-        return {**response, "status": "partial", "context": prepared}
+        return {**response, "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
 
     async def ui_advice(self, message, conversation_id, capability, snapshot, *, refresh=None, character_context=None):
         if asks_managed_team(message):
-            return managed_team_unconfirmed(conversation_id, mode='ui_evidence')
+            return {**managed_team_unconfirmed(conversation_id, mode='ui_evidence'), "character_context": self.response_scope(character_context)}
         prepared = prepare_ui_advice(capability, snapshot)
         def blocked(data):
             return {**data, "status": "blocked", "evidence": [], "schedule_projection": None, "tactics_projection": None, "conversation_id": conversation_id,
-                    "source_status": "ui_unavailable", "reply": "当前没有可用的新鲜 UI 文本。请打开相关游戏页面后重新提问。"}
+                    "character_context": self.response_scope(character_context), "source_status": "ui_unavailable", "reply": "当前没有可用的新鲜 UI 文本。请打开相关游戏页面后重新提问。"}
         if prepared["status"] != "ready":
             return blocked(prepared)
         if capability == "schedule_analysis" and (prepared.get("schedule_projection") or {}).get("status") not in ("experimental_ui_schedule", "experimental_ui_next_match"):
@@ -243,7 +248,7 @@ class AgentService:
 
     async def chat(self, message: str, conversation_id: str | None, context: dict | None = None, *, character_context: dict | None = None) -> dict:
         if asks_managed_team(message):
-            return managed_team_unconfirmed(conversation_id, mode='companionship')
+            return {**managed_team_unconfirmed(conversation_id, mode='companionship'), "character_context": self.response_scope(character_context)}
         # Keep the optional argument for older callers, but never forward a legacy
         # snapshot (even one claiming to be verified) to ordinary companionship.
         return await self._chat(message, conversation_id, {"source_status": "not_used"}, **({"character_context": character_context} if character_context is not None else {}))
