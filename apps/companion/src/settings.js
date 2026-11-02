@@ -305,11 +305,29 @@
   function applyAppearance(value) {
     const prefs = Appearance.apply(document, value);
     $('font-family').value = prefs.fontFamily; $('font-size').value = String(prefs.fontSize); $('dark-mode').checked = prefs.darkMode; $('light-motion').checked = prefs.lightMotion;
+    $('bubble-duration-mode').value = prefs.bubbleDurationMode;
+    $('bubble-duration-seconds').value = String(prefs.bubbleDurationSeconds);
+    $('bubble-duration-row').hidden = prefs.bubbleDurationMode !== 'fixed';
   }
   function saveAppearance() {
-    const value = { fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked, lightMotion:$('light-motion').checked };
+    const value = { ...Appearance.normalize(readAppearance()), fontFamily:$('font-family').value, fontSize:Number($('font-size').value), darkMode:$('dark-mode').checked, lightMotion:$('light-motion').checked };
     try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value); }
     catch { showError('外观保存失败'); }
+  }
+  function readAppearance() {
+    try { return JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}') || {}; } catch { return {}; }
+  }
+  function saveBubbleDuration() {
+    let seconds = Number($('bubble-duration-seconds').value);
+    const fixed = $('bubble-duration-mode').value === 'fixed';
+    if (fixed && (!Number.isInteger(seconds) || seconds < 2 || seconds > 60)) {
+      showError('对白停留时间请输入 2–60 的整数秒数'); return;
+    }
+    try {
+      if (!fixed) seconds = Appearance.normalize(readAppearance()).bubbleDurationSeconds;
+      const value = { ...readAppearance(), bubbleDurationMode:fixed ? 'fixed' : 'auto', bubbleDurationSeconds:seconds };
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(value)); applyAppearance(value); showError('');
+    } catch { showError('外观保存失败'); }
   }
   function saveLightMotion() {
     try {
@@ -350,6 +368,7 @@
     $('update-open-release').addEventListener('click',() => perform(() => api.openUpdateRelease()));
     $('open-repository').addEventListener('click',() => perform(() => api.openRepository()));
     $('open-contributors').addEventListener('click',() => perform(() => api.openContributors()));
+    for (const id of ['bubble-duration-mode','bubble-duration-seconds']) $(id).addEventListener('change',saveBubbleDuration);
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
     $('light-motion').addEventListener('change',saveLightMotion);
     window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });

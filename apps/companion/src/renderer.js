@@ -462,6 +462,12 @@
 
   function bindEvents() {
     $('chat-form').addEventListener('submit', send);
+    let bubbleHovered = false, bubbleFocused = false;
+    const reading = () => bubbleQueue?.setReading(bubbleHovered || bubbleFocused);
+    $('compact-bubble').addEventListener('pointerenter', () => { bubbleHovered = true; reading(); });
+    $('compact-bubble').addEventListener('pointerleave', () => { bubbleHovered = false; reading(); });
+    $('compact-bubble').addEventListener('focus', () => { bubbleFocused = true; reading(); });
+    $('compact-bubble').addEventListener('blur', () => { bubbleFocused = false; reading(); });
     let bubblePointer = null;
     $('compact-bubble').addEventListener('pointerdown', event => {
       bubblePointer = event.button === 0 ? { id:event.pointerId, x:event.clientX, y:event.clientY, moved:false } : null;
@@ -526,7 +532,7 @@
     return;
   }
   bindEvents();
-  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
+  disposeAppearance = window.CompanionAppearance?.bindPet({window, document, storage: window.localStorage, onChange: prefs => { bubbleQueue?.configure(prefs); motion?.setEnabled(prefs.lightMotion); resizeComposer(); updateRects(); }});
   unsubscribe = api.subscribe(onRuntimeEvent);
   call(() => api.getState()).then(value => { if (value) applyState(value); });
   refreshSpeechCapabilities();
