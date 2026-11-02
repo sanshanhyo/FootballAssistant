@@ -370,6 +370,7 @@ class CompanionRuntime extends EventEmitter {
     return { requestId: request.id, sessionId: request.sessionId, epoch: request.epoch };
   }
   async complete(request) {
+    if (!this.active(request)) return;
     try {
       this.tool(request, 'running');
       const result = request.mode === 'real'

@@ -79,6 +79,9 @@ class OffseasonConversation:
             state.update(club=int(club_markers[0]), roster=[], team=None, people={}, last_selected=[], pending=[])
         elif state['pending']:
             allowed = {row['clubUid']: row for row in candidates if any(old['clubUid'] == row['clubUid'] for old in state['pending'])}
+            if not allowed:
+                state['pending'] = []
+                return answer('上次待确认的球队候选已变化或不可用，请重新提出要查看的球队；不会沿用旧候选。')
             named = [row for row in allowed.values() if row['clubName'] in message]
             affirmative = re.fullmatch(r'(?:是|是的|对|对的|确认|就是这个|就是这支队|yes)[。！!，,\s]*', message, re.I)
             choice = named[0] if len(named) == 1 else next(iter(allowed.values())) if affirmative and len(allowed) == 1 else None

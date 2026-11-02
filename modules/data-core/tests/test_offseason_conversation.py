@@ -77,3 +77,24 @@ def test_busy_reader_does_not_queue_later_messages_indefinitely():
         finally:
             reader.lock.release()
     asyncio.run(asyncio.wait_for(scenario(), timeout=2))
+
+
+def test_removed_pending_team_cannot_leave_an_empty_confirmation_loop():
+    async def scenario():
+        data = envelope()
+        reader = OffseasonConversation()
+        agent = AgentService(None, None)
+        async def read(*args):
+            return deepcopy(data)
+        def body(message):
+            return SimpleNamespace(message=message, conversation_id='changed-candidates', character_context=None)
+        try:
+            first = await reader.reply(body('谁当门将最合适'), read, agent)
+            assert '哪支球队' in first['reply']
+            data['snapshot']['managerCandidates']['candidates'] = []
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert '已变化或不可用' in result['reply']
+            assert not next(iter(reader.sessions.values()))['pending']
+        finally:
+            agent.close()
+    asyncio.run(scenario())

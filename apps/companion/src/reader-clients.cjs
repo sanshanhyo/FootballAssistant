@@ -223,19 +223,31 @@ class RealReaderClient {
   async match({ signal } = {}) {
     return this.request('/v1/reader/match', undefined, { signal });
   }
-  async offseason({ clubUid = 0, personUid = 0, signal } = {}) {
-    const endpoint = offseasonEndpoint(clubUid, personUid);
+  async boundedNativeRead(endpoint, { signal } = {}) {
+    const deadline = AbortSignal.timeout(45_000);
+    const activeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    activeSignal.throwIfAborted();
     if (this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
-    this.offseasonPending = true;
-    try { return await this.request(endpoint, undefined, { signal, timeoutMs: 45_000 }); }
-    finally { this.offseasonPending = false; }
+    const token = {}; this.offseasonPending = token;
+    const release = () => { if (this.offseasonPending === token) this.offseasonPending = null; };
+    let abort;
+    const cancelled = new Promise((_resolve, reject) => {
+      abort = () => { release(); reject(activeSignal.reason); };
+      activeSignal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      return await Promise.race([this.request(endpoint, undefined, { signal: activeSignal, timeoutMs: 45_000 }), cancelled]);
+    } finally {
+      activeSignal.removeEventListener('abort', abort); release();
+    }
+  }
+  async offseason({ clubUid = 0, personUid = 0, signal } = {}) {
+    return this.boundedNativeRead(offseasonEndpoint(clubUid, personUid), { signal });
   }
   async onboardingStatus({ verify = false, signal } = {}) {
     if (typeof verify !== 'boolean') throw Error('Invalid verification request');
-    if (verify && this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
-    if (verify) this.offseasonPending = true;
-    try { return await this.request('/v1/reader/onboarding-status' + (verify ? '?verify=true' : ''), undefined, { signal, timeoutMs: 45_000 }); }
-    finally { if (verify) this.offseasonPending = false; }
+    const endpoint = '/v1/reader/onboarding-status' + (verify ? '?verify=true' : '');
+    return verify ? this.boundedNativeRead(endpoint, { signal }) : this.request(endpoint, undefined, { signal, timeoutMs: 45_000 });
   }
   async offseasonCalendar({ clubUid, start, end, signal } = {}) {
     return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
