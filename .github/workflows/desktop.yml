@@ -195,11 +195,11 @@ jobs:
           if ($report.bootstrap.backend.state -ne 'ready') { throw 'Embedded backend did not become ready' }
           if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
           if (-not $report.renderer.ipcOk -or -not $report.settingsRenderer.ipcOk -or -not $report.settingsRenderer.aboutOk -or -not $report.settingsRenderer.customControls) { throw 'Packaged window IPC/controls check failed' }
-      - name: Verify NSIS installation, reinstall and uninstall preserve user data
+      - name: Verify NSIS rejects silent fresh installation without a game path
         if: runner.os == 'Windows'
         shell: powershell
         run: ./test/nsis-smoke.ps1
-      - name: Verify real two-version NSIS automatic upgrade (disposable fixture)
+      - name: Verify isolated updater primitive (not production game deployment)
         if: runner.os == 'Windows'
         run: |
           node test/update-native-fixture.cjs

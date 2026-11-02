@@ -41,3 +41,7 @@ The inspected installation had neither `fm_Data/Managed` nor `BepInEx/unity-libs
 ## Delivery limits
 
 Offline deployment and local-generation behavior are the intended package design. Compilation and resource/hash/license checks are necessary build evidence. Actual custom-build interop generation, match plugin startup and match data are not newly verified by these checks. Production signing, Release publication and main merges remain separate actions.
+
+## Existing CI scope after the installation contract changes
+
+Hosted Windows runners contain no authorized FM game directory. The production Setup check now requires silent fresh installation without a game path to exit with code 3 before installing application files and to preserve synthetic profile sentinels. Its report explicitly marks full installation, reinstall/uninstall lifecycle and actual game deployment `not_run`; a successful rejection is not installation success. The separately built two-version updater fixture retains its existing checks but does not include the production installer/game-path flow. Its success is evidence about the updater primitive only, not full product deployment or real-game acceptance. No production bypass flag or fake game directory is introduced.
