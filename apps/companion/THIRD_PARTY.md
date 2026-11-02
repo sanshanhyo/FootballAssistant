@@ -84,3 +84,7 @@ service; this is an external runtime dependency, not proof of offline completene
 BepInEx's pinned .NET 6.0.7 compatibility runtime is older than the separate .NET 10
 offseason reader runtime; no automatic security-support or game-compatibility claim
 is made. Deployment and actual loading remain distinct from resource integrity.
+
+### Offline Windows match-loader build input
+
+The original, previously acquired official BepInEx ZIP is stored as binary transport parts identified by `offlineManifest` in `modules/game-bridge/packaging/windows-match-sources.json`. Its source URL is provenance only; loader preparation reassembles the fixed ordered repository parts, validates every part hash/size and the original full ZIP SHA-256, with no network fallback. Component licenses and corresponding-source provenance remain in the sibling `windows-match-licenses` and `windows-match-native-licenses` inventories and are included in the assembled distribution. The original ZIP contains no private game-generated interop.

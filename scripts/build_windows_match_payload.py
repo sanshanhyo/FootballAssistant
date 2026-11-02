@@ -13,6 +13,7 @@ import tarfile
 import urllib.parse
 import urllib.request
 import zipfile
+from reassemble_windows_match_archive import reassemble
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / 'modules/game-bridge/packaging/windows-match-sources.json'
@@ -87,8 +88,9 @@ def inventory(root):
     return result, sizes
 
 def prepare(cache, staging):
-    pin = json.loads(PIN.read_text()); archive = cache / 'bepinex.zip'
-    download(pin['loader']['url'], archive, pin['loader']['sourceSha256'])
+    pin = json.loads(PIN.read_text())
+    # Offline official dependency: never fall back to the upstream download service.
+    archive = reassemble(ROOT / relative(pin['loader']['offlineManifest']), cache / 'bepinex.zip', pin['loader']['sourceSha256'])
     extract(pin, archive, staging)
 
 def assemble(cache, staging, plugin, output):
