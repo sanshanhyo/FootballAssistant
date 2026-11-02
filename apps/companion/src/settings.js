@@ -345,7 +345,6 @@
     }
     document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
     Object.entries(UI.EXPRESSIONS).forEach(([value,label]) => { if (value === 'auto') return; const option=node('option','',label); option.value=value; $('expression').append(option); });
-    $('result-reactions-enabled').addEventListener('change', async () => { const result = await perform(() => api.setResultReactions($('result-reactions-enabled').checked)); if (!result) $('result-reactions-enabled').checked = false; });
     $('proactivity').addEventListener('input', () => { proactivityEditing=true; $('proactivity-value').textContent=`${$('proactivity').value}%`; });
     $('proactivity').addEventListener('change', async () => { const result=await perform(() => api.setProactivity(Number($('proactivity').value))); proactivityEditing=false; if(result) applyState(result); else if(state) renderPreferences(); });
     for (const [id,key] of [['expression','expression'],['stt-provider','sttProvider']]) $(id).addEventListener('change',async () => { const result=await perform(() => api.setPreferences({[key]:$(id).value})); if(result) applyState(result); else if(state) renderPreferences(); });
@@ -383,7 +382,6 @@
   speechSettings = window.FootballSpeechSettings?.bind({ root: $('tts-settings'), api, onError: showError, onNotice: notice });
   perform(() => api.getState()).then(value => {if(value)applyState(value);});
   loadModelConfiguration(); refreshSpeech();
-  if (api.getResultReactions) perform(() => api.getResultReactions()).then(value => { $('result-reactions-enabled').checked = value?.enabled === true; });
   perform(() => api.getAbout()).then(value => { if(value?.version) $('app-version').textContent=value.version; });
   perform(() => api.updateStatus()).then(renderUpdate);
 })();

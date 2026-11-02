@@ -6,7 +6,7 @@ async function setup(t, reply) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fa-reaction-integration-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const runtime = new EventEmitter(), motions = [], messages = []; let calls = 0;
   Object.assign(runtime, { epoch: 1, sessionId: 'conversation', characterId: 'official.eckera', verifiedSave: true, state() { return { mode: 'real', epoch: this.epoch, sessionId: this.sessionId, proactivity: 80, characterScope: { verifiedSave: this.verifiedSave } }; }, characterContext() { return { save_id: 'verified-save', character_id: this.characterId, persona: 'fixture' }; }, realClient: { reply: async input => { calls++; return reply ? reply(input) : { text: 'A bounded fixture response', metadata: {}, cards: [] }; } }, addMessage(value) { messages.push(value); }, changed() { this.emit('event', { type: 'state' }); } });
-  const adapter = await createPetReactionRuntime({ runtime, journalFile: path.join(root, 'journal.json'), preferencesFile: path.join(root, 'preferences.json'), emit: event => motions.push(event) }); t.after(() => adapter.dispose());
+  const adapter = await createPetReactionRuntime({ available: true, runtime, journalFile: path.join(root, 'journal.json'), preferencesFile: path.join(root, 'preferences.json'), emit: event => motions.push(event) }); t.after(() => adapter.dispose());
   return { runtime, adapter, messages, motions, calls: () => calls };
 }
 function observation(phase) { const now = Date.now(); return { verified: true, saveId: 'verified-save', matchId: 'fixture-match', playerTeamId: 'home', homeTeamId: 'home', awayTeamId: 'away', phase, homeScore: 2, awayScore: 1, observedAt: now, ...(phase === 'final' ? { finishedAt: now } : {}) }; }
@@ -27,4 +27,18 @@ test('character generation change rejects a late model result and settles old mo
   while (!resolve) await new Promise(r => setImmediate(r));
   f.runtime.epoch++; f.runtime.characterId = 'example.other'; f.runtime.changed(); resolve({ text: 'Must not appear', metadata: {} });
   assert.equal((await task).status, 'cancelled'); assert.equal(f.messages.length, 0); assert.equal(f.motions.at(-1).state, 'idle');
+});
+
+test('production default defers win-loss reactions even with an existing enabled preference', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fa-reaction-deferred-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const preferencesFile = path.join(root, 'preferences.json'); const original = JSON.stringify({ schema_version: 1, enabled: true }); fs.writeFileSync(preferencesFile, original);
+  const runtime = new EventEmitter(); let calls = 0;
+  Object.assign(runtime, { epoch: 1, sessionId: 'test', characterId: 'official.eckera', state: () => ({ mode: 'real', epoch: 1, sessionId: 'test', proactivity: 80, characterScope: { verifiedSave: true } }), characterContext: () => ({ save_id: 'verified-save', character_id: 'official.eckera' }), realClient: { reply() { calls++; } } });
+  const adapter = await createPetReactionRuntime({ runtime, journalFile: path.join(root, 'journal.json'), preferencesFile, emit() {} });
+  assert.equal(adapter.status().available, false); assert.equal(adapter.status().enabled, false);
+  await assert.rejects(adapter.setEnabled(true), /本版范围/);
+  await adapter.observeVerified(observation('live')); await adapter.observeVerified(observation('final'));
+  assert.equal(calls, 0); assert.equal(fs.readFileSync(preferencesFile, 'utf8'), original); assert.equal(fs.existsSync(path.join(root, 'journal.json')), false); adapter.dispose();
+  const html = fs.readFileSync(path.join(__dirname, '../src/settings.html'), 'utf8');
+  assert.doesNotMatch(html, /result-reactions-enabled|启用可信赛果主动对话/);
 });

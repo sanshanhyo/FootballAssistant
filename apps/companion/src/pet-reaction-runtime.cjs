@@ -3,7 +3,7 @@ const { randomUUID } = require('node:crypto');
 const { PetReactions } = require('./pet-reactions.cjs');
 const { FileResultJournal, ResultEventGate } = require('./pet-events.cjs');
 const { readStateFile, writeStateFile } = require('./state-file.cjs');
-async function createPetReactionRuntime({ runtime, journalFile, preferencesFile, emit }) {
+async function createPetReactionRuntime({ runtime, journalFile, preferencesFile, emit, available = false }) {
   const stored = await readStateFile(preferencesFile, 16384);
   let enabled = false;
   if (stored.bytes) { const value = JSON.parse(stored.bytes); if (value.schema_version !== 1 || typeof value.enabled !== 'boolean') throw Error('Invalid reaction preferences'); enabled = value.enabled; }
@@ -23,15 +23,15 @@ async function createPetReactionRuntime({ runtime, journalFile, preferencesFile,
   function configure() {
     const state = runtime.state(); const key = JSON.stringify([enabled, state.mode, state.epoch, state.sessionId, runtime.characterId, state.proactivity]);
     if (key === contextKey) return; contextKey = key;
-    reactions.configure({ enabled: enabled && state.mode === 'real', muted: state.proactivity === 0, proactivity: state.proactivity, characterId: runtime.characterId, sessionGeneration: state.epoch });
+    reactions.configure({ enabled: available && enabled && state.mode === 'real', muted: state.proactivity === 0, proactivity: state.proactivity, characterId: runtime.characterId, sessionGeneration: state.epoch });
   }
   const listener = event => { if (event.type === 'state') configure(); };
   runtime.on('event', listener); configure();
   return {
-    status() { return { enabled, readerEvidence: 'unavailable', reason: '当前读取器没有可信终场、存档和玩家球队身份，不会从比分猜测赛果。' }; },
-    async setEnabled(value) { if (typeof value !== 'boolean') throw Error('Invalid reaction switch'); revision = await writeStateFile(preferencesFile, JSON.stringify({ schema_version: 1, enabled: value }), revision); enabled = value; configure(); return this.status(); },
+    status() { return { enabled: available && enabled, available, readerEvidence: 'unavailable', reason: '当前读取器没有可信终场、存档和玩家球队身份，不会从比分猜测赛果。' }; },
+    async setEnabled(value) { if (!available) throw Error('赛果主动反应不在本版范围内。'); if (typeof value !== 'boolean') throw Error('Invalid reaction switch'); revision = await writeStateFile(preferencesFile, JSON.stringify({ schema_version: 1, enabled: value }), revision); enabled = value; configure(); return this.status(); },
     // Internal trusted-adapter ingress only, never exposed through renderer IPC.
-    observeVerified(observation) { if (observation?.saveId !== runtime.characterContext()?.save_id || runtime.state().characterScope?.verifiedSave !== true) return Promise.resolve({ status: 'unknown' }); return reactions.observe(observation); },
+    observeVerified(observation) { if (!available) return Promise.resolve({ status: 'deferred' }); if (observation?.saveId !== runtime.characterContext()?.save_id || runtime.state().characterScope?.verifiedSave !== true) return Promise.resolve({ status: 'unknown' }); return reactions.observe(observation); },
     cancel() { reactions.cancel(); },
     dispose() { runtime.off('event', listener); reactions.dispose(); },
   };
