@@ -8,7 +8,7 @@
   let history = [], historyLimit = 40, historyLoad = 0, memoryLoad = 0;
   let recordsTimer, noticeTimer, unsubscribe, stopped = false, proactivityEditing = false;
   let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false, modelSaving = false;
-  let modelSaveTimer, modelSavePending, modelDirty = false;
+  let modelSaveTimer, modelSavePending, modelDirty = false, modelEditRevision = 0;
   let characterSettings;
   let speechSettings;
   let readerOnboarding;
@@ -251,14 +251,18 @@
     } catch (error) { if (generation === modelGeneration) showError(error.message); }
     finally { delete input.apiKey; modelBusy = false; $('model-fetch').disabled = false; }
   }
-  function scheduleModelSave() { modelDirty = true; clearTimeout(modelSaveTimer); modelSaveTimer = setTimeout(() => saveModelConfig(), 350); }
+  function scheduleModelSave() { modelEditRevision++; modelDirty = true; clearTimeout(modelSaveTimer); modelSaveTimer = setTimeout(() => saveModelConfig(), 350); }
   async function saveModelConfig(removeKey = false) {
     clearTimeout(modelSaveTimer);
-    if (modelSavePending) { const ok = await modelSavePending; return ok && (modelDirty || removeKey) ? saveModelConfig(removeKey) : ok; }
+    if (modelSavePending) {
+      const waitingRevision = modelEditRevision, ok = await modelSavePending;
+      if (modelSavePending) return saveModelConfig(removeKey);
+      return (ok || modelEditRevision > waitingRevision) && (modelDirty || removeKey) ? saveModelConfig(removeKey) : ok;
+    }
     if (!modelDirty && !removeKey) return true;
     if (removeKey && !savedCredentialSelected()) return true;
     if (!removeKey && (modelBusy || modelReadyGeneration !== modelGeneration || !$('model-name').value)) return false;
-    const generation = modelGeneration, password = $('model-api-key').value;
+    const revision = modelEditRevision, generation = modelGeneration, password = $('model-api-key').value;
     const provider = $('model-provider').value;
     const input = { provider, baseUrl: provider === 'openai-compatible' ? $('model-base-url').value.trim() : selectedProvider()?.baseUrl || '', model: $('model-name').value || savedConfig?.model || '' };
     if (removeKey) input.removeKey = true; else if (password) input.apiKey = password;
@@ -272,7 +276,7 @@
       finally { delete input.apiKey; modelSaving = false; modelSavePending = null; renderCredentialStatus(); }
     })();
     const ok = await modelSavePending;
-    return ok && modelDirty ? saveModelConfig() : ok;
+    return modelDirty && (ok || modelEditRevision > revision) ? saveModelConfig() : ok;
   }
   async function flushSettings() {
     const speechOK = await speechSettings?.flush?.() ?? true;
@@ -370,11 +374,11 @@
     $('history-more').addEventListener('click',() => { historyLimit+=40; renderHistory(); });
     $('clear-history').addEventListener('click',async () => { if(!window.confirm('清除全部聊天历史？')) return; const result=await perform(() => api.clearHistory(),{button:$('clear-history'),success:'已清除'}); if(result!==undefined) refreshHistory(); });
     $('save-memory').addEventListener('click',async () => { const input=$('memory-text'), text=input.value.trim(); if(!text) {input.focus();return;} const result=await perform(() => api.saveMemory({text}),{button:$('save-memory'),success:'已保存'}); if(result!==undefined) {if(input.value.trim()===text)input.value='';refreshMemories();} });
-    $('model-provider').addEventListener('change',() => { updateProvider(); modelDirty = true; });
+    $('model-provider').addEventListener('change',() => { updateProvider(); modelEditRevision++; modelDirty = true; });
     $('model-name').addEventListener('change',scheduleModelSave);
     for (const id of ['model-api-key','model-name']) $(id).addEventListener('blur',() => { if (modelDirty && modelReadyGeneration === modelGeneration) saveModelConfig(); });
     $('model-api-key').addEventListener('input',() => { renderCredentialStatus(); scheduleModelSave(); });
-    $('model-base-url').addEventListener('input',() => { invalidateModels(); renderCredentialStatus(); modelDirty = true; });
+    $('model-base-url').addEventListener('input',() => { invalidateModels(); renderCredentialStatus(); modelEditRevision++; modelDirty = true; });
     $('model-fetch').addEventListener('click',fetchModels);
     $('model-config-form').addEventListener('submit',event => {event.preventDefault();saveModelConfig();});
     $('model-remove-key').addEventListener('click',() => saveModelConfig(true));

@@ -155,3 +155,23 @@ test('late initial read preserves a key typed without changing provider', async(
  resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true}});await flush();
  assert.equal(h.$('model-api-key').value,'TEST-draft');
 });
+test('newer API key edit is saved when the older in-flight request fails', async()=>{
+ let resolve;const calls=[];const h=await harness({saveModelConfig:input=>{calls.push({...input});return calls.length===1?new Promise(r=>resolve=r):Promise.resolve({ok:true,value:{...input,hasApiKey:true}});}});
+ h.$('model-api-key').value='TEST-first';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ h.$('model-api-key').value='TEST-newer';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ resolve({ok:false});await flush();await flush();assert.equal(calls.length,2);assert.equal(calls[1].apiKey,'TEST-newer');assert.equal(h.$('model-api-key').value,'');
+});
+test('close waits for latest API draft after an earlier save failure', async()=>{
+ const resolvers=[],calls=[];let closed=0;
+ const h=await harness({saveModelConfig:input=>{calls.push({...input});return new Promise(r=>resolvers.push(r));},controlSettingsWindow:()=>{closed++;return Promise.resolve({ok:true});}});
+ h.$('model-api-key').value='TEST-first';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ h.$('model-api-key').value='TEST-last';await h.$('model-api-key').fire('input');const closing=h.$('window-close').fire('click');
+ resolvers.shift()({ok:false});await flush();assert.equal(closed,0);assert.equal(calls.length,2);
+ resolvers.shift()({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true}});
+ await closing;assert.equal(closed,1);assert.equal(h.$('model-api-key').value,'');
+});
+test('unchanged failing API draft is retained without an automatic retry loop', async()=>{
+ let count=0;const h=await harness({saveModelConfig:()=>{count++;return Promise.resolve({ok:false});}});
+ h.$('model-api-key').value='TEST-retained';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');await flush();await flush();
+ assert.equal(count,1);assert.equal(h.$('model-api-key').value,'TEST-retained');
+});

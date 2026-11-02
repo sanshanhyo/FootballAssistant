@@ -2,7 +2,7 @@
   'use strict';
   function bind({ root: container, api, onError = () => {} }) {
     const document = container.ownerDocument;
-    let disposed = false, loading = true, dirty = false, timer, pending, revision = 0;
+    let disposed = false, loading = true, dirty = false, timer, pending, revision = 0, credentialConfig = null;
     const elements = {};
     const make = (tag, text, className) => { const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; return node; };
     const form = make('form', '', 'card tts-form');
@@ -28,7 +28,9 @@
     const actions = make('div', '', 'card-actions'); const stop = make('button', '停止朗读', 'secondary-button'); stop.type = 'button'; actions.append(stop); form.append(actions);
     container.append(form);
     const unwrap = result => { if (!result?.ok) throw Error('语音设置保存失败'); return result.value; };
+    const normalizedUrl = value => (value || '').trim().replace(/\/+$/, '');
     function state() {
+      key.placeholder = select.value === 'openai' && credentialConfig?.hasApiKey && normalizedUrl(elements.baseUrl.value) === normalizedUrl(credentialConfig.baseUrl) ? '••••••••' : '';
       for (const input of Object.values(elements)) input.disabled = loading;
       for (const name of ['voice', 'baseUrl', 'model', 'apiKey', 'removeKey']) elements[name].parentElement.hidden = select.value !== 'openai';
     }
@@ -38,7 +40,7 @@
       elements.enabled.checked = online && value.enabled === true && value.networkConsent === true;
       select.value = online ? value.provider : 'edge';
       for (const name of ['voice', 'speed', 'volume', 'baseUrl', 'model']) elements[name].value = value[name] ?? '';
-      key.placeholder = value.hasApiKey ? '••••••••' : '';
+      credentialConfig = value;
       state();
     }
     async function load() {
@@ -59,23 +61,26 @@
     }
     function flush() {
       clearTimeout(timer);
-      if (pending) return pending.then(ok => dirty && ok ? flush() : ok);
+      if (pending) {
+        const waitingRevision = revision;
+        return pending.then(ok => pending || (dirty && (ok || revision > waitingRevision)) ? flush() : ok);
+      }
       if (!dirty || disposed || loading) return Promise.resolve(true);
       dirty = false; const version = revision, input = snapshot(), password = key.value;
       pending = (async () => {
         try {
           const value = unwrap(await api.saveSpeechConfig(input));
           if (!disposed) {
-            if (key.value === password && (input.apiKey || input.removeKey)) key.value = '';
+            if (select.value === input.provider && normalizedUrl(elements.baseUrl.value) === normalizedUrl(input.baseUrl) && key.value === password && (input.apiKey || input.removeKey)) key.value = '';
             if (version === revision) elements.removeKey.checked = false;
-            key.placeholder = value.hasApiKey ? '••••••••' : '';
+            credentialConfig = value; state();
             onError('');
           }
           return true;
         } catch { if (!disposed) { dirty = true; onError('语音设置保存失败'); } return false; }
         finally { delete input.apiKey; pending = null; }
       })();
-      return pending.then(ok => dirty && ok ? flush() : ok);
+      return pending.then(ok => dirty && (ok || revision > version) ? flush() : ok);
     }
     function changed() { if (loading || disposed) return; dirty = true; revision++; clearTimeout(timer); timer = setTimeout(flush, 350); }
     for (const [name, input] of Object.entries(elements)) {

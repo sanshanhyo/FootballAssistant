@@ -68,3 +68,21 @@ test('explicit online switch grants consent; changing provider revokes it', asyn
   h.byId.get('tts-provider').value='openai';h.byId.get('tts-provider').listeners.change();await h.ui.flush();
   assert.equal(calls[1].enabled,false);assert.equal(calls[1].networkConsent,false);h.ui.dispose();
 });
+test('old destination response cannot clear current draft or show its key mask', async () => {
+  const calls=[], resolvers=[];
+  const h=harness({getSpeechConfig:async()=>({ok:true,value:{...saved,provider:'openai',baseUrl:'https://a.example/v1'}}),saveSpeechConfig:input=>{calls.push({...input});return new Promise(r=>resolvers.push(r));}});
+  await h.ui.ready;const key=h.byId.get('tts-apiKey'),url=h.byId.get('tts-baseUrl');
+  key.value='fake-only';key.listeners.input();const first=h.ui.flush();
+  url.value='https://b.example/v1';url.listeners.input();
+  resolvers.shift()({ok:true,value:{...saved,baseUrl:'https://a.example/v1',hasApiKey:true}});
+  await new Promise(r=>setImmediate(r));
+  assert.equal(calls[1].apiKey,'fake-only');assert.equal(key.placeholder,'');
+  resolvers.shift()({ok:true,value:{...saved,baseUrl:url.value,hasApiKey:true}});await first;h.ui.dispose();
+});
+test('newer speech edits are saved after an older request fails, without retrying unchanged failure', async () => {
+  const calls=[];let resolve;
+  const h=harness({getSpeechConfig:async()=>({ok:true,value:saved}),saveSpeechConfig:input=>{calls.push({...input});return calls.length===1?new Promise(r=>resolve=r):Promise.resolve({ok:true,value:input});}});
+  await h.ui.ready;const speed=h.byId.get('tts-speed');speed.value='1.1';speed.listeners.input();const first=h.ui.flush();
+  speed.value='1.5';speed.listeners.input();const second=h.ui.flush();
+  resolve({ok:false});assert.deepEqual(await Promise.all([first,second]),[true,true]);assert.equal(calls.length,2);assert.equal(calls[1].speed,1.5);h.ui.dispose();
+});
