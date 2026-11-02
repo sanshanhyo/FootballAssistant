@@ -328,6 +328,16 @@ async function buildWindow() {
     await openSettings();
     const settingsRenderer = await settingsWindow.webContents.executeJavaScript("(async () => ({ipcOk: (await window.companion.getState()).ok, aboutOk: (await window.companion.getAbout()).ok, customControls: Boolean(document.getElementById('window-close'))}))()");
     settingsWindow.close();
+    // Validate the actual Chromium image, not just a transparent DOM placeholder.
+    await win.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const image = document.getElementById('character-image');
+        if (image && !image.hidden && image.complete && image.naturalWidth > 0 && getComputedStyle(image).display !== 'none') return true;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error('Pet character did not become visible');
+    })()`);
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },

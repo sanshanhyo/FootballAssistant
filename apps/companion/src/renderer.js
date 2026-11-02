@@ -5,7 +5,10 @@
   const UI = window.CompanionUI;
   const Bubbles = window.CompanionBubbles;
   const Scenes = window.CompanionScenes;
-  const motion = window.CompanionMotion?.bind({ image: $('character-image'), media: window.matchMedia?.('(prefers-reduced-motion: reduce)') });
+  // Optional motion must never prevent the base character from rendering.
+  let motion;
+  try { motion = window.CompanionMotion?.bind({ image: $('character-image'), media: window.matchMedia?.('(prefers-reduced-motion: reduce)') }); }
+  catch { $('character-image').dataset.motion = 'off'; }
   let gameStatus = { state: 'unknown' };
   let gamePollTimer;
   let sceneClosed = false;
