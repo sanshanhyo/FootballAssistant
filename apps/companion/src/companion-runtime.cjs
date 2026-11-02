@@ -166,7 +166,7 @@ class CompanionRuntime extends EventEmitter {
       readerPreviews: mock ? [] : this.readerPreviews.map(card => card.status === 'available' && Date.now() - Date.parse(card.metadata?.sampledAt) > 15_000
         ? { ...card, status: 'stale', fields: [], metadata: { ...card.metadata, freshness: 'stale' } } : card),
       historyEnabled: this.historyEnabled, capabilities: this.client().capabilities(this.realConnection?.readiness), synthetic: mock,
-      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据。', 'Alpha 默认依据部分 UI 采样文本给出有条件建议；页面与可见性未验证，可能含隐藏或缓存文本，不代表后台全量事实。', '原生业务建议仍须通过独立的服务端业务就绪检查；UI 采样不会使原生能力就绪。'],
+      limitations: mock ? [...MOCK_LIMITATIONS] : ['真实模式不会自动回退到模拟数据。', '默认使用已授权赛外读取的部分候选；用户选择的球队不等于已验证执教身份，未知字段不会补全。', '完整业务建议仍须通过独立的服务端业务就绪检查；部分候选不会使完整能力就绪。'],
       messages: this.messages.filter(item => item.sessionId === this.sessionId),
       pendingRequests: [...this.pending.values()].map(item => ({ requestId: item.id, sessionId: item.sessionId, epoch: item.epoch, text: item.text })),
       tools: [...this.tools.values()].filter(item => item.sessionId === this.sessionId && item.epoch === this.epoch),
@@ -356,7 +356,7 @@ class CompanionRuntime extends EventEmitter {
     if (this.pending.size >= 4) throw new Error('已有 4 个请求在处理，请稍候或取消。');
     const diagnostic = this.mode === 'real' && asksImportedDiagnostic(message);
     const capability = this.mode === 'real' && !diagnostic ? adviceCapability(message, input?.capability) : null;
-    const adviceMode = input?.adviceMode ?? 'ui_evidence';
+    const adviceMode = input?.adviceMode ?? 'native';
     if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
     const request = { conversationId: this.characterLibrary ? this.backendConversationId : this.sessionId, characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {

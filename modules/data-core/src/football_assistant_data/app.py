@@ -482,6 +482,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        from .offseason_conversation import OffseasonConversation
+        offseason_conversations = OffseasonConversation()
+
         async def partial_offseason_reply(body):
             # Read the consented server-owned producer, never client-supplied facts.
             # This is a partial observation channel, not a business-store publication.
@@ -489,9 +492,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
             if not consent_enabled() or not configured:
                 return None
-            envelope = await read_offseason(Path(configured), 0, 0, require_current_producer=True)
-            return await app.state.agent.offseason_advice(body.message, body.conversation_id, envelope,
-                **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+            async def read_selected(club, person):
+                return await read_offseason(Path(configured), club, person, require_current_producer=True)
+            return await offseason_conversations.reply(body, read_selected, app.state.agent)
 
         @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
         def persona_metadata():

@@ -114,29 +114,23 @@ test('successful retry restores connection state after a real transport failure'
   failed = false; done = terminal(runtime); runtime.sendMessage({ text: '你好' }); assert.equal((await done).status, 'completed'); assert.equal(runtime.state().connection.state, 'connected');
   await runtime.close();
 });
-test('Alpha defaults current-game questions to explicit partial UI advice, no native promotion or fallback', async () => {
+test('current-game questions default to existing native advice route, retaining partial limitations', async () => {
   const calls = [];
   const client = new RealReaderClient({ request: async (url, body) => {
     calls.push({ url, body });
     if (url.endsWith('/status')) return readiness;
-    return { status: 'generated', reply: 'TEST UI only', conversation_id: body.conversation_id,
-      provenance: { session_id: 'TEST-game', event_id: 'TEST-event', captured_at: 'TEST-time' },
-      limitations: ['TEST partial UI'], page: { name: null, verified: false } };
+    return { status: 'partial', source_status: 'partial_native_candidates', reply: 'TEST partial native', conversation_id: body.conversation_id,
+      context: { session_id: 'TEST-process', observed_at: new Date().toISOString(), limitations: ['Unknowns remain unknown'] } };
   } });
   const runtime = new CompanionRuntime({ realClient: client }); runtime.setMode('real');
   const done = terminal(runtime); runtime.sendMessage({ text: '看看我的赛程' }); await done;
-  assert.equal(calls.filter(call => call.url === '/v1/agent/ui-advice').length, 1);
-  assert.equal(calls.some(call => ['/v1/chat', '/v1/agent/business-advice'].includes(call.url)), false);
+  assert.equal(calls.filter(call => call.url === '/v1/agent/business-advice').length, 1);
+  assert.equal(calls.some(call => call.url === '/v1/agent/ui-advice'), false);
   const reply = runtime.state().messages.find(item => item.role === 'assistant');
-  assert.equal(reply.metadata.source, 'ui'); assert.equal(reply.metadata.partial, true);
+  assert.equal(reply.metadata.source, 'native_offseason_reader'); assert.equal(reply.metadata.partial, true);
   assert.equal(reply.metadata.readiness.production_ready, false); assert.deepEqual(reply.cards, []);
-  assert.equal(reply.metadata.sessionId, 'TEST-game');
-  assert.match(runtime.state().limitations.join(' '), /部分 UI 采样文本/);
-  assert.match(runtime.state().limitations.join(' '), /隐藏或缓存/);
-  assert.match(runtime.state().limitations.join(' '), /不会使原生能力就绪/);
-  assert.equal(runtime.state().limitations.join(' ').includes('业务建议只使用服务端验证事实'), false);
+  assert.match(runtime.state().limitations.join(' '), /未知字段不会补全/);
   assert.throws(() => runtime.sendMessage({ text: 'TEST', adviceMode: 'fake' }), /不支持/);
-  await runtime.close();
 });
 
 test('explicit next-match decisions route to schedule advice before possessive-word gate', async () => {
@@ -147,11 +141,11 @@ test('explicit next-match decisions route to schedule advice before possessive-w
   const client = new RealReaderClient({ request: async (url, body) => {
     calls.push({ url, body });
     if (url.endsWith('/status')) return readiness;
-    return { status: 'blocked', reply: 'TEST need current schedule', reasons: ['ui_snapshot_missing'] };
+    return { status: 'blocked', reply: 'TEST need current schedule', reasons: ['no_business_snapshot'] };
   } });
   const runtime = new CompanionRuntime({ realClient: client }); runtime.setMode('real');
   for (const text of decisions) { const done = terminal(runtime); runtime.sendMessage({ text }); await done; }
-  assert.equal(calls.filter(call => call.url === '/v1/agent/ui-advice').length, decisions.length);
+  assert.equal(calls.filter(call => call.url === '/v1/agent/business-advice').length, decisions.length);
   assert.ok(calls.filter(call => call.body).every(call => call.body.capability === 'schedule_analysis'));
   assert.equal(calls.some(call => call.url === '/v1/chat'), false);
   assert.equal(calls.some(call => call.url.includes('fixture_analysis')), false);

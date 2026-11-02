@@ -118,7 +118,7 @@ function partialNativeReply(result, conversationId) {
   if (result?.source_status !== 'partial_native_candidates' || result.status !== 'partial' || typeof result.reply !== 'string') return null;
   return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [], metadata: {
     source: 'native_offseason_reader', sourceLabel: '赛外读取 · 部分事实', synthetic: false, partial: true,
-    freshness: 'observed_for_request', sampledAt: result.context?.observed_at ?? null,
+    freshness: result.context?.freshness === 'expired_during_generation' ? 'stale' : 'observed_for_request', sampledAt: result.context?.observed_at ?? null,
     sessionId: result.context?.session_id ?? null,
     limitations: Array.isArray(result.context?.limitations) ? result.context.limitations : ['候选不等于当前执教身份；未读取字段保持未知。'],
     readiness: { production_ready: false, mode: 'partial_native_candidates' },
@@ -308,7 +308,9 @@ class RealReaderClient {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
     const readback = asksManagedTeam(message) ? { personUid: 0, clubUid: 0, kind: 'team' } : offseasonIntent(message);
-    if (readback) return offseasonReply(readback.error ? null : await this.offseason({ ...readback, signal }), readback, conversationId);
+    // Date-only readback remains deterministic. Names/club/person selections now
+    // flow through the existing chat/advice endpoint so follow-ups retain scope.
+    if (readback?.kind === 'date' && !readback.error) return offseasonReply(await this.offseason({ ...readback, signal }), readback, conversationId);
     // Never infer a selected club or range from a conversation or current save.
     if (typeof message === 'string' && /(?:赛程|schedule|fixtures?)/i.test(message) && /(?:俱乐部\s*UID|club\s*UID)/i.test(message)) {
       const markers = [...message.matchAll(/(?:俱乐部\s*UID|club\s*UID)/gi)];

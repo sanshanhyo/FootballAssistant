@@ -9,7 +9,8 @@ def test_partial_readback_reaches_chat_and_blocked_advice_without_business_promo
     monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
     monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_EXE', str(tmp_path / 'reader.exe'))
     calls = []
-    envelope = {'test_only': 'server-owned'}
+    from test_offseason_advice_context import envelope as fixture
+    envelope = fixture()
     async def read(executable, club, person, **kwargs):
         calls.append((club, person, kwargs)); return envelope
     monkeypatch.setattr(offseason_snapshot, 'read_offseason', read)
