@@ -193,3 +193,40 @@ def test_related_people_require_primary_roster_same_session_and_club():
         assert result["context"]["facts"]["player_candidates"] == []
     finally:
         agent.close()
+
+
+def test_incomplete_comparison_lists_actual_coverage_without_model():
+    data = selected_envelope()
+    good = {"person_uid": 101, "envelope": deepcopy(data)}
+    bad = {"person_uid": 102, "envelope": deepcopy(data)}  # Returned person UID is 101, not requested 102.
+    agent = AgentService(None, None)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("incomplete comparison must not reach model")
+    agent._chat = forbidden
+    try:
+        response = asyncio.run(agent.offseason_advice("比较两人", None, data, club_uid=34, related_people=[good, bad]))
+        assert "Player 101" in response["reply"] and "未全部通过校验" in response["reply"]
+        assert "不是 20 分评级" in response["reply"] and "未读取人员不参与比较" in response["reply"]
+    finally:
+        agent.close()
+
+
+def test_expiration_during_generation_suppresses_conclusion(monkeypatch):
+    from football_assistant_agent import service
+    original = service.prepare_offseason_advice
+    expired = False
+    def project(*args, **kwargs):
+        return None if expired else original(*args, **kwargs)
+    monkeypatch.setattr(service, "prepare_offseason_advice", project)
+    agent = AgentService(None, None)
+    async def delayed(*args, **kwargs):
+        nonlocal expired
+        expired = True
+        return {"reply": "MUST NOT DISPLAY"}
+    agent._chat = delayed
+    try:
+        result = asyncio.run(agent.offseason_advice("日期", None, envelope()))
+        assert result["context"]["freshness"] == "expired_during_generation"
+        assert "已过期" in result["reply"] and "MUST NOT DISPLAY" not in result["reply"]
+    finally:
+        agent.close()

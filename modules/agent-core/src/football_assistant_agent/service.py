@@ -136,15 +136,34 @@ class AgentService:
                 seen.add(uid)
                 candidates.append(item["facts"]["player_candidate"])
             prepared["facts"]["player_candidates"] = candidates
+        coverage = ""
+        prepared["freshness"] = "observed_for_request"
+        if related_people:
+            people = prepared["facts"].get("player_candidates", [])
+            names = "、".join(person["name"] or "姓名未知的已选球员" for person in people) or "无人（本次没有通过校验的球员字段）"
+            coverage = "本次实际读取覆盖：" + names + "。未读取人员不参与比较；raw 是原始值，不是 20 分评级，位置仍未由读取确认。\n"
+            if not isinstance(related_people, (tuple, list)) or len(related_people) > 2 or len(people) != len(related_people):
+                return {"reply": coverage + "本次请求的球员信息未全部通过校验，暂不作完整比较。请确认要比较的人名后重试。",
+                        "conversation_id": conversation_id, "source_status": "partial_native_candidates", "status": "partial", "context": prepared}
         if asks_managed_team(message):
             response = managed_team_unconfirmed(conversation_id, mode="native")
         else:
             # Process IDs, session hashes, producer identity and timestamps stay local.
             context = {"source_status": "partial_native_candidates",
-                       "facts": prepared["facts"], "limitations": prepared["limitations"]}
+                       "facts": prepared["facts"], "limitations": prepared["limitations"] + ([coverage] if coverage else [])}
             response = await self._chat(message, conversation_id, context, offseason=True,
                 **({"character_context": character_context} if character_context is not None else {}))
-            response["reply"] = "【实验性赛外读取 · 部分候选】并非完整存档数据，未确认当前执教身份。\n" + response["reply"]
+            # A model can take longer than the input freshness window. Do not
+            # display its conclusions as a current observation after that window.
+            still_fresh = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid) is not None
+            if related_people:
+                still_fresh = still_fresh and all(prepare_offseason_advice(item["envelope"], club_uid=club_uid,
+                    person_uid=item["person_uid"]) is not None for item in related_people)
+            if not still_fresh:
+                prepared["freshness"] = "expired_during_generation"
+                response["reply"] = coverage + "本次采样在生成期间已过期，未展示生成结论；请重新提问以读取新的数据。"
+            else:
+                response["reply"] = "【实验性赛外读取 · 部分候选】仅为本次请求的采样，并非持续实时或完整存档数据，未确认当前执教身份。\n" + coverage + response["reply"]
         return {**response, "source_status": "partial_native_candidates", "status": "partial", "context": prepared}
 
     async def calendar_advice(self, message, conversation_id, envelope, club_uid, start, end, *, character_context=None):
@@ -291,7 +310,9 @@ class AgentService:
             reply = result.output
             if not isinstance(reply,str) or not reply.strip():
                 raise ModelUnavailable("模型服务没有返回可用文本。")
-            if not ui:
+            # Partial evidence replies are validated again by their caller. Do
+            # not persist raw conclusions that may be suppressed after expiry.
+            if not ui and not offseason:
                 scoped_store.append_turn(conversation_id,message,reply, **scope)
             self.last_error = False
             return {"reply":reply,"conversation_id":conversation_id,"source_status":context["source_status"], "character_context":scope}
