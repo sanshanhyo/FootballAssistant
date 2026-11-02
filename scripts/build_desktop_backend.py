@@ -28,6 +28,9 @@ command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--one
     "--add-data", str(STAGING / "football_assistant_contracts/schemas") + ":football_assistant_contracts/schemas",
     "--collect-all", "football_assistant_contracts", "--collect-all", "pydantic_ai",
     "--recursive-copy-metadata", "pydantic-ai-slim", "--collect-all", "genai_prices",
+    "--exclude-module", "edge_tts",
+    "--hidden-import", "typing_extensions", "--hidden-import", "xml.sax.saxutils",
+    "--collect-all", "aiohttp", "--collect-all", "certifi", "--collect-all", "tabulate",
     "--collect-all", "uvicorn", "--collect-all", "jsonschema_specifications",
     # format-nongpl loads this grammar at import time (not a Python module).
     "--collect-data", "rfc3987_syntax",
@@ -45,3 +48,7 @@ subprocess.run([sys.executable, str(ROOT / "scripts/collect_backend_licenses.py"
     "--analysis", str(ROOT / "build/pyinstaller/football-assistant-backend/Analysis-00.toc"),
     "--destination", str(ROOT / "build/desktop-backend/football-assistant-backend/third-party-licenses")],
     cwd=ROOT, check=True)
+
+# Keep LGPL adapter source replaceable, outside the frozen executable.
+subprocess.run([sys.executable, str(ROOT / "scripts/package_edge_tts.py"),
+    str(ROOT / "build/desktop-backend/football-assistant-backend")], cwd=ROOT, check=True)
