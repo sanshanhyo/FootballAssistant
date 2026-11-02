@@ -9,6 +9,7 @@
   let recordsTimer, noticeTimer, unsubscribe, stopped = false, proactivityEditing = false;
   let providers = [], savedConfig = null, modelGeneration = 0, modelReadyGeneration = -1, modelBusy = false, modelSaving = false;
   let readerOnboarding;
+  let matchDeployment;
   let personaRevision = null, personaDirty = false, personaLoad = 0;
   function node(tag, className, text) {
     const element = document.createElement(tag);
@@ -353,11 +354,12 @@
     $('open-contributors').addEventListener('click',() => perform(() => api.openContributors()));
     for (const id of ['font-family','font-size','dark-mode']) $(id).addEventListener('change',saveAppearance);
     $('light-motion').addEventListener('change',saveLightMotion);
-    window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;readerOnboarding?.dispose();api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
+    window.addEventListener('beforeunload',event => { if(personaDirty) {event.preventDefault();event.returnValue='';return;} stopped=true;readerOnboarding?.dispose();matchDeployment?.dispose();api.cancelModelList?.().catch(() => {});clearTimeout(recordsTimer);clearTimeout(noticeTimer);unsubscribe?.(); });
   }
   try { applyAppearance(JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}')); } catch { applyAppearance({}); }
   if (!api || !UI) { showError('设置服务未连接'); return; }
   bind(); unsubscribe=api.subscribe(onEvent);
+  matchDeployment = window.FootballMatchDeployment?.bind({ root: $('match-deployment'), api, onError: showError });
   readerOnboarding = window.FootballReaderOnboarding?.bind({ root: $('reader-onboarding'), api, onError: showError });
   perform(() => api.getState()).then(value => {if(value)applyState(value);});
   loadModelConfiguration(); refreshSpeech();

@@ -3,6 +3,8 @@ const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPref
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createWindowsMatchInstaller } = require('./windows-match-installer.cjs');
+const { createWindowsMatchSetup, trustedMatchPath } = require('./windows-match-setup.cjs');
 const { createWindowsReaderSetup, validateReaderPayload } = require('./windows-reader-setup.cjs');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { controlSettingsWindow } = require('./settings-window.cjs');
@@ -43,6 +45,8 @@ let credentials;
 let modelDiscovery;
 let personaAccess;
 let windowsReaderSetup;
+let windowsMatchSetup;
+let windowsMatchInstaller;
 let bridgeDeployment;
 let savingModel = false;
 let updateController;
@@ -185,6 +189,15 @@ function registerIpc() {
   handle('contributors-open', () => settingsContent.openContributors());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
+  const matchNoArgs = action => (...args) => { if (args.length) throw Error('此操作不接受路径参数。'); return action(); };
+  handle('match-deployment-inspect', matchNoArgs(() => windowsMatchSetup.status()));
+  handle('match-deployment-select', matchNoArgs(() => windowsMatchSetup.select()));
+  handle('match-deployment-plan', matchNoArgs(() => windowsMatchSetup.plan()));
+  handle('match-deployment-deploy', input => windowsMatchSetup.deploy(input));
+  handle('match-deployment-connect', matchNoArgs(() => windowsMatchSetup.connect()));
+  handle('match-deployment-verify', matchNoArgs(() => windowsMatchSetup.verify()));
+  handle('match-deployment-retry', matchNoArgs(() => windowsMatchSetup.retry()));
+  handle('match-deployment-rollback', input => windowsMatchSetup.rollback(input));
   handle('reader-onboarding-inspect', (...args) => { if (args.length) throw Error('此操作不接受路径参数。'); return windowsReaderSetup.inspect(); });
   handle('reader-onboarding-select', (...args) => { if (args.length) throw Error('请使用系统文件选择框。'); return windowsReaderSetup.selectGame(); });
   handle('reader-onboarding-enable', input => windowsReaderSetup.enable(input));
@@ -389,7 +402,13 @@ async function main() {
   if (process.platform === 'win32' && app.isPackaged && settings.windowsReaderEnabled === true) {
     try { readerExecutable = (await validateReaderPayload(process.resourcesPath)).executable; } catch { /* Fail closed; onboarding exposes the error. */ }
   }
-  backendOptions = { readerExecutable, userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
+  windowsMatchInstaller = createWindowsMatchInstaller({ userData: app.getPath('userData'), resourcesPath: process.resourcesPath, platform: process.platform,
+    probeGame: async () => { const status = await detectGame(); return status.state === 'not_detected' ? false : status.state === 'running' ? true : null; } });
+  let matchFile = '';
+  if (process.platform === 'win32' && app.isPackaged && settings.windowsMatchEnabled === true) {
+    try { const installed = await windowsMatchInstaller.inspect(settings.windowsMatchGamePath); if (installed.state === 'deployed') matchFile = await trustedMatchPath(app.getPath('userData'), installed.snapshotPath); } catch { /* Deployment UI exposes failure, no unverified snapshot path is enabled. */ }
+  }
+  backendOptions = { matchFile, readerExecutable, userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
   installedUpdates = createInstalledUpdater({ platform: process.platform,
     distribution: distribution({ packaged: app.isPackaged, executable: app.getPath('exe') }),
@@ -445,6 +464,18 @@ async function main() {
       return { restartRequired: bootstrapStatus.backend.state !== 'ready', backendReady: bootstrapStatus.backend.state === 'ready' };
     },
   });
+  windowsMatchSetup = createWindowsMatchSetup({ userData: app.getPath('userData'), installer: windowsMatchInstaller, packaged: app.isPackaged,
+    chooseGame: async () => { const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name: 'Football Manager 27', extensions: ['exe'] }] }); return result.canceled ? null : result.filePaths[0]; },
+    requestMatch: () => request(runtimeFile, '/v1/reader/match'),
+    onConfigured: async ({ matchFile }) => {
+      backendOptions.settings = await loadSettings(app.getPath('userData')); backendOptions.matchFile = matchFile;
+      if (backendSupervisor.external || (backendSupervisor.status.state === 'ready' && !backendSupervisor.status.owned)) return { restartRequired: true };
+      await backendSupervisor.stop();
+      backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+      bootstrapStatus.backend = await backendSupervisor.start(); runtime.refreshConnection();
+      return { restartRequired: bootstrapStatus.backend.state !== 'ready', backendReady: bootstrapStatus.backend.state === 'ready' };
+    },
+  });
   registerIpc();
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ label: 'FootballAssistant', submenu: [
     { label: '显示桌宠', click: showPet }, { label: '隐藏桌宠', click: hidePet },
@@ -452,7 +483,7 @@ async function main() {
     { type: 'separator' }, { role: 'quit', label: '退出' },
   ] }]) : null);
   await buildWindow();
-  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable)) await openSettings();
+  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable || !settings.windowsMatchEnabled || !matchFile)) await openSettings();
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
