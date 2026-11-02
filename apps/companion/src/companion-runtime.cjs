@@ -30,6 +30,7 @@ class CompanionRuntime extends EventEmitter {
     this.cancelCharacterEffects = options.cancelCharacterEffects || (() => {});
     this.saveId = `session:${randomUUID()}`; this.verifiedSave = false;
     this.temporaryScopes = new Map(); this.temporarySelections = new Map();
+    this.scopeConversationIds = new Map(); this.backendConversationId = randomUUID();
     this.memoryControllers = new Set(); this.scopeStorageWarning = null;
     if (this.characterLibrary) {
       const library = this.characterLibrary;
@@ -111,10 +112,12 @@ class CompanionRuntime extends EventEmitter {
   saveCharacterScope() {
     const token = this.characterSession?.current;
     if (!token || this.scopeStorageWarning) return;
-    const value = { messages: this.historyEnabled ? structuredClone(this.messages) : [], memories: structuredClone(this.memories) };
-    if (!this.verifiedSave) this.temporaryScopes.set(token.scope.key, value);
-    else {
-      try { this.characterLibrary.writeScope(token.scope.saveId, token.scope.characterId, value); }
+    const value = { messages: structuredClone(this.messages), memories: structuredClone(this.memories) };
+    // History preference controls restart persistence, never in-process role switching.
+    this.temporaryScopes.set(token.scope.key, value);
+    this.scopeConversationIds.set(token.scope.key, this.backendConversationId);
+    if (this.verifiedSave) {
+      try { this.characterLibrary.writeScope(token.scope.saveId, token.scope.characterId, { ...value, messages: this.historyEnabled ? value.messages : [] }); }
       catch (error) { this.scopeStorageWarning = '角色记录保存失败；原记录保持不变。'; throw error; }
     }
   }
@@ -125,9 +128,15 @@ class CompanionRuntime extends EventEmitter {
     this.characterId = token.scope.characterId; this.scopeStorageWarning = null;
     this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID();
     let saved = { messages: [], memories: [] };
-    try { saved = this.verifiedSave ? this.characterLibrary.readScope(this.saveId, this.characterId) : this.temporaryScopes.get(token.scope.key) || saved; }
+    const inMemory = this.temporaryScopes.get(token.scope.key);
+    try { saved = inMemory || (this.verifiedSave ? this.characterLibrary.readScope(this.saveId, this.characterId) : saved); }
     catch { this.scopeStorageWarning = '角色记录无法读取；不会覆盖原记录。'; }
-    this.messages = this.historyEnabled && Array.isArray(saved.messages) ? saved.messages.filter(item => item && typeof item.text === 'string' && item.text.length <= 12000).slice(-500).map(item => ({ ...item, sessionId: this.sessionId, epoch: this.epoch })) : [];
+    this.messages = (inMemory || this.historyEnabled) && Array.isArray(saved.messages) ? saved.messages.filter(item => item && typeof item.text === 'string' && item.text.length <= 12000).slice(-500).map(item => ({ ...item })) : [];
+    const restoredConversation = this.messages.findLast(item => typeof item.conversationId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(item.conversationId))?.conversationId;
+    this.backendConversationId = this.scopeConversationIds.get(token.scope.key) || restoredConversation || randomUUID();
+    this.scopeConversationIds.set(token.scope.key, this.backendConversationId);
+    this.messages = this.messages.map(item => !item.conversationId || item.conversationId === this.backendConversationId
+      ? { ...item, sessionId: this.sessionId, epoch: this.epoch } : item);
     this.memories = Array.isArray(saved.memories) ? saved.memories.filter(item => item && typeof item.id === 'string' && typeof item.text === 'string' && item.text.length <= 2000).slice(-200).map(item => ({ ...item })) : [];
     this.refreshConnection(); this.changed(); return this.state();
   }
@@ -286,6 +295,8 @@ class CompanionRuntime extends EventEmitter {
   }
   switchSession() {
     if (this.characterLibrary) { this.saveCharacterScope(); this.characterSession.activate(this.saveId, this.characterId); }
+    this.backendConversationId = randomUUID();
+    if (this.characterSession?.current) this.scopeConversationIds.set(this.characterSession.current.scope.key, this.backendConversationId);
     this.cancelAll(); this.tools.clear(); this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); this.changed();
     return this.state();
   }
@@ -321,6 +332,7 @@ class CompanionRuntime extends EventEmitter {
     this.historyEnabled = value; this.persist(); this.changed(); return this.getHistory();
   }
   addMessage(message) {
+    if (this.characterLibrary) message = { ...message, conversationId: message.conversationId ?? this.backendConversationId };
     this.messages.push(message); this.messages = this.messages.slice(-500); this.persist();
     this.publish({ type: 'message', message });
   }
@@ -346,7 +358,7 @@ class CompanionRuntime extends EventEmitter {
     const capability = this.mode === 'real' && !diagnostic ? adviceCapability(message, input?.capability) : null;
     const adviceMode = input?.adviceMode ?? 'ui_evidence';
     if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
-    const request = { characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const request = { conversationId: this.characterLibrary ? this.backendConversationId : this.sessionId, characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {
       // Previous cards are historical, not current values after a new read or failure.
       for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];
@@ -361,7 +373,7 @@ class CompanionRuntime extends EventEmitter {
     try {
       this.tool(request, 'running');
       const result = request.mode === 'real'
-        ? await this.realClient.reply({ message: request.text, conversationId: request.sessionId, capability: request.capability, adviceMode: request.adviceMode, characterContext: request.characterContext, signal: request.controller.signal })
+        ? await this.realClient.reply({ message: request.text, conversationId: request.conversationId, capability: request.capability, adviceMode: request.adviceMode, characterContext: request.characterContext, signal: request.controller.signal })
         : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
       if (request.mode === 'real') {
@@ -407,7 +419,7 @@ class CompanionRuntime extends EventEmitter {
     this.addMessage(message); this.changed(); return { messageId: message.id };
   }
   getHistory() { return { enabled: this.historyEnabled, messages: [...this.messages] }; }
-  async clearHistory() { this.characterSession?.activate(this.saveId, this.characterId); this.cancelAll(); this.tools.clear(); this.messages = []; this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); await this.persist(); this.changed(); return this.getHistory(); }
+  async clearHistory() { this.characterSession?.activate(this.saveId, this.characterId); this.cancelAll(); this.tools.clear(); this.messages = []; this.backendConversationId = randomUUID(); this.epoch += 1; this.sessionId = randomUUID(); this.refreshConnection(); await this.persist(); this.changed(); return this.getHistory(); }
   getMemories() {
     if (this.characterLibrary && this.mode === 'real') return this.syncRealMemories();
     return { entries: [...this.memories] };

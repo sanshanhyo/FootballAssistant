@@ -108,3 +108,35 @@ test('a backend reply for another character cannot be displayed as the current c
   const client=new RealReaderClient({request:async()=>({reply:'wrong persona',character_context:{save_id:'save',character_id:'test.other'}})});
   await assert.rejects(client.reply({message:'hello',characterContext:{save_id:'save',character_id:'official.eckera',persona:'fixture'}}),/范围/);
 });
+test('history disabled preserves A → B → A during this run but never writes messages to disk', async t => {
+  const {runtime:r,lib}=await fixture(t); assert.equal(r.historyEnabled,false);
+  r.addMessage({id:'temporary',text:'A while history disabled',sessionId:r.sessionId});
+  r.selectCharacter('test.other'); r.selectCharacter('official.eckera');
+  assert.equal(r.state().messages[0].text,'A while history disabled');
+  r.bindSaveContext('known-save'); r.addMessage({id:'known',text:'Known A temporary chat',sessionId:r.sessionId});
+  r.selectCharacter('test.other'); r.selectCharacter('official.eckera');
+  assert.equal(r.state().messages[0].text,'Known A temporary chat');
+  assert.deepEqual(lib.readScope('known-save','official.eckera').messages,[]);
+});
+test('A → B → A keeps backend conversation while UI epoch changes; new conversation resets only backend continuity', async t => {
+  const calls=[];
+  const realClient={capabilities:()=>[],status:async()=>({metadata:{limitations:[]}}),reply:async request=>{calls.push(request);return{text:'fixture reply',metadata:{},cards:[]};}};
+  const {runtime:r}=await fixture(t,{realClient}); r.setMode('real');
+  const send=async text=>{r.sendMessage({text});await new Promise(resolve=>setImmediate(resolve));};
+  await send('A first'); const a=calls[0].conversationId, uiSession=r.sessionId;
+  r.selectCharacter('test.other'); await send('B first'); const b=calls[1].conversationId;
+  r.selectCharacter('official.eckera'); assert.notEqual(r.sessionId,uiSession); await send('A second');
+  assert.equal(calls[2].conversationId,a); assert.notEqual(b,a);
+  assert.equal(calls[2].characterContext.character_id,'official.eckera');
+  assert.ok(r.messages.every(message=>message.conversationId===a));
+  r.switchSession(); await send('A new conversation'); const fresh=calls[3].conversationId; assert.notEqual(fresh,a);
+  r.selectCharacter('test.other'); r.selectCharacter('official.eckera'); await send('A new continued'); assert.equal(calls[4].conversationId,fresh);
+  assert.ok(r.state().messages.every(message=>message.conversationId===fresh));
+});
+test('persisted scope restores backend conversation ID from message metadata', async t => {
+  const lib=library();
+  lib.writeScope('known-save','official.eckera',{messages:[{id:'old',text:'old retained',conversationId:'retained-conversation'}],memories:[]});
+  const r=new CompanionRuntime({characterLibrary:lib});await r.init();t.after(()=>r.close());r.setHistoryEnabled(true);r.bindSaveContext('known-save');
+  assert.equal(r.backendConversationId,'retained-conversation');
+  await r.clearHistory(); assert.notEqual(r.backendConversationId,'retained-conversation');
+});
