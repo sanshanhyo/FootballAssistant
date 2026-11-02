@@ -1,0 +1,140 @@
+name: One-time audited merged branch cleanup
+on:
+  push:
+    branches: ['maintenance/merged-branch-cleanup-20261102']
+    paths: ['.github/workflows/one-time-merged-branch-cleanup.yml']
+permissions: {}
+concurrency:
+  group: one-time-merged-branch-cleanup-20261102
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    if: github.repository == 'sanshanhyo/FootballAssistant' && github.ref == 'refs/heads/maintenance/merged-branch-cleanup-20261102' && github.event_name == 'push' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Double-check fixed refs and delete only with exact-SHA leases
+        shell: python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          import json, os, subprocess, tempfile, urllib.request, urllib.error, urllib.parse
+          REPO = "sanshanhyo/FootballAssistant"
+          BRANCH = "maintenance/merged-branch-cleanup-20261102"
+          BASELINE = "758463f5bd7bf63dce51539110d14523c837ba44"
+          ALLOW = {
+            "docs/archive-legacy-reader": "03a41aa8902ab99e4c2f8a5b2e88e17e09d6efcd",
+            "feat/companion-ui": "13c1a6bf801821c4cff2c4586939035e6b8534c8",
+            "feat/reader-semantics": "18acc2eb4d6f0541c0d2935bf5e9e1c6b8618655",
+            "feature/pet-light-motion": "5b185282023f63155b466b8e70e722a45dc3bb47",
+            "fix/mit-license-preparation": "fcee292c5d0dfba1625cfa1fe0d4fa6a1d8b9f68",
+            "integration/alpha-reader-ui": "6c27d17f66134a705af941d93bfa11b2af94e54a",
+            "release/alpha-0.0.1-rc": "d4594120b972ac7e7a22d07ced474f870838b39e",
+            "fix/windows-reader-onboarding": "075d48604fb412e7fcc61c091ccb7c23830ea1c6",
+            "test/windows-final-20261101": "20117e31e7bf7cb7fa9f41c13524b930de64447b"
+          }
+          assert os.environ["GITHUB_REPOSITORY"] == REPO
+          assert os.environ["GITHUB_REF"] == "refs/heads/" + BRANCH
+          assert os.environ["GITHUB_EVENT_NAME"] == "push"
+          assert os.environ["GITHUB_RUN_ATTEMPT"] == "1", "No rerun deletions"
+          TOKEN = os.environ["GH_TOKEN"]
+          ROOT = "https://api.github.com/repos/" + REPO
+          def api(path, missing=False):
+              req = urllib.request.Request(ROOT + path, headers={"Authorization":"Bearer " + TOKEN,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as e:
+                  if missing and e.code == 404:
+                      return None
+                  raise RuntimeError("GitHub GET failed with status " + str(e.code)) from None
+          def pages(path, key=None):
+              result = []
+              for page in range(1, 101):
+                  data = api(path + ("&" if "?" in path else "?") + "per_page=100&page=" + str(page))
+                  batch = data[key] if key else data
+                  if key and data.get("total_count", 0) > 1000:
+                      raise RuntimeError("Refuse incomplete Actions pagination")
+                  result.extend(batch)
+                  if len(batch) < 100:
+                      return result
+              raise RuntimeError("Pagination limit; refuse mutation")
+          def ref(name):
+              value = api("/git/ref/heads/" + urllib.parse.quote(name, safe=""), missing=True)
+              return None if value is None else value["object"]["sha"]
+          def guard(name, sha):
+              if ref(name) != sha:
+                  return "absent or SHA changed"
+              main = ref("main")
+              if main != BASELINE:
+                  return "main changed since reviewed baseline"
+              comparison = api("/compare/" + main + "..." + sha)
+              if comparison["ahead_by"] != 0 or comparison["status"] not in ("behind", "identical") or comparison["merge_base_commit"]["sha"] != sha:
+                  return "not an exact main ancestor"
+              for pr in pages("/pulls?state=open"):
+                  for side in ("head", "base"):
+                      target = pr[side]
+                      if target["ref"] == name and (target.get("repo") or {}).get("full_name") == REPO:
+                          return "open PR #" + str(pr["number"]) + " uses branch as " + side
+              runs = pages("/actions/runs?branch=" + urllib.parse.quote(name, safe=""), "workflow_runs")
+              if any(run["status"] != "completed" for run in runs):
+                  return "unfinished Actions run"
+              if ref(name) != sha or ref("main") != main:
+                  return "ref changed during checks"
+              return None
+          metadata = api("")
+          assert metadata["id"] == 1439202213 and metadata["default_branch"] == "main"
+          assert len(ALLOW) == 9 and BRANCH not in ALLOW and "main" not in ALLOW
+          results = []
+          with tempfile.TemporaryDirectory(prefix="fa-branch-audit-") as work:
+              env = dict(os.environ)
+              env.update({"GIT_TERMINAL_PROMPT":"0","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null"})
+              askpass = os.path.join(work, "askpass")
+              with open(askpass, "w") as f:
+                  f.write('#!/bin/sh\ncase "$1" in *Username*) printf "%s\\n" x-access-token ;; *Password*) printf "%s\\n" "$GH_TOKEN" ;; *) exit 1 ;; esac\n')
+              os.chmod(askpass, 0o700)
+              env["GIT_ASKPASS"] = askpass
+              subprocess.run(["git","init","--bare",work + "/audit.git"],check=True,stdout=subprocess.DEVNULL,env=env)
+              for name, sha in ALLOW.items():
+                  outcome = {"branch":name,"original_sha":sha,"status":"not_attempted"}
+                  try:
+                      reason = guard(name, sha)
+                      if reason is None:
+                          reason = guard(name, sha)
+                      if reason is not None:
+                          outcome.update(status="skipped",reason=reason)
+                      else:
+                          outcome["status"] = "attempted"
+                          p = subprocess.run(["git","-C",work + "/audit.git","-c","credential.helper=","push","--porcelain","--force-with-lease=refs/heads/" + name + ":" + sha,"https://github.com/" + REPO + ".git",":refs/heads/" + name],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)
+                          remaining = ref(name)
+                          if p.returncode == 0 and remaining is None:
+                              outcome["status"] = "deleted_verified"
+                          else:
+                              outcome.update(status="failed_or_uncertain",git_exit=p.returncode,remaining_sha=remaining)
+                              results.append(outcome)
+                              print(json.dumps(outcome),flush=True)
+                              break
+                  except Exception as e:
+                      outcome.update(status="failed_or_uncertain" if outcome["status"] == "attempted" else "blocked_before_delete",error=type(e).__name__ + ": " + str(e))
+                      results.append(outcome)
+                      print(json.dumps(outcome),flush=True)
+                      break
+                  results.append(outcome)
+                  print(json.dumps(outcome),flush=True)
+          for name, sha in ALLOW.items():
+              if not any(r["branch"] == name for r in results):
+                  results.append({"branch":name,"original_sha":sha,"status":"not_attempted_after_error"})
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+              f.write("# One-time merged branch cleanup\n\nMain recovery anchor: " + BASELINE + "\n\n")
+              f.write("| Branch | Original SHA | Outcome |\n|---|---|---|\n")
+              for r in results:
+                  f.write("| " + r["branch"] + " | " + r["original_sha"] + " | " + r["status"] + ": " + r.get("reason",r.get("error","")) + " |\n")
+          print("FINAL_AUDIT=" + json.dumps(results),flush=True)
+          assert ref("main") == BASELINE, "main changed externally during cleanup; investigate"
+          if any(r["status"] not in ("deleted_verified","skipped") for r in results):
+              raise SystemExit(1)
+          
