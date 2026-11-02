@@ -193,6 +193,11 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     async def health():
         return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
 
+    @app.get("/v1/reader/onboarding-status", dependencies=[Depends(authorized)])
+    async def reader_onboarding_status(verify: bool = Query(default=False)):
+        from .offseason_snapshot import onboarding_status
+        return await onboarding_status(verify=verify)
+
     @app.get("/v1/reader/match", dependencies=[Depends(authorized)])
     def match_snapshot():
         from .match_snapshot import read_match_snapshot
@@ -203,12 +208,14 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
     async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647), start: str | None = Query(default=None, max_length=10), end: str | None = Query(default=None, max_length=10)):
-        from .offseason_snapshot import read_offseason, unavailable, valid_range
+        from .offseason_snapshot import read_offseason, unavailable, valid_range, consent_enabled
         if not valid_range(start, end, club_uid):
             raise HTTPException(status_code=422, detail="invalid calendar range")
         configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
         if not configured:
             return unavailable("producer_not_configured")
+        if not consent_enabled():
+            return unavailable("consent_required")
         if start is None:
             return await read_offseason(Path(configured), club_uid, person_uid)
         return await read_offseason(Path(configured), club_uid, person_uid, start, end)
@@ -465,9 +472,11 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
         @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
         async def calendar_advice(body: CalendarAdviceRequest):
-            from .offseason_snapshot import read_offseason, valid_range, unavailable
+            from .offseason_snapshot import read_offseason, valid_range, unavailable, consent_enabled
             if not valid_range(body.start, body.end, body.club_uid):
                 raise HTTPException(422, detail="invalid calendar range")
+            if not consent_enabled():
+                return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
             envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
             try:
@@ -481,8 +490,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
         @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
         async def auto_calendar_advice(body: ChatRequest):
-            from .offseason_snapshot import read_offseason
+            from .offseason_snapshot import read_offseason, consent_enabled
             from .calendar_selection import choose_calendar_scope
+            if not consent_enabled():
+                return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
             if not configured:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "当前无法读取球队候选和游戏日期。"}
@@ -492,6 +503,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             if scope is None:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "未能唯一确认所问球队候选或当前游戏日期，请明确球队名称或俱乐部 UID。"}
             envelope = await read_offseason(executable, scope["club_uid"], 0, scope["start"], scope["end"])
+            if initial.get("producerVerified") is True and (envelope.get("producerVerified") is not True or
+                    (initial.get("snapshot") or {}).get("process") != (envelope.get("snapshot") or {}).get("process")):
+                return {"status": "unavailable", "reason": "session_changed", "conversation_id": body.conversation_id, "reply": "游戏进程会话在读取期间变化，请重试；没有使用上一会话的数据。"}
             verified = choose_calendar_scope(envelope, body.message)
             if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}

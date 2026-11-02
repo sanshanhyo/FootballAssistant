@@ -1,16 +1,29 @@
-﻿"""One-shot, bounded local bridge for the experimental offseason reader."""
+"""One-shot, bounded local bridge for the experimental offseason reader."""
 from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timezone
+import hashlib
 import json
+import os
 from pathlib import Path
+import re
+import threading
 
 _MAX_BYTES = 256 * 1024
+_PRODUCER_GATE = threading.Lock()
+PRODUCER = {"id": "footballassistant.offseason-reader", "version": "0.1.0", "protocol": "fa-offseason/0.1"}
+EXPECTED_BINARY = "bc940e472418fc5c214208d7cf30fecf600f689b6f9d71c11ba19a2df0fe057f"
+STATES = {"fm_not_running", "multiple_process", "unsupported_binary", "process_access_denied", "no_session", "no_data", "fresh_partial", "read_failed"}
+_LEGACY_REASONS = {"fm_process_not_unique", "process_unavailable", "no_current_data"}
 
 
 def unavailable(reason: str) -> dict:
     return {"status": "unavailable", "reason": reason, "snapshot": None}
+
+
+def consent_enabled() -> bool:
+    return os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_CONSENT") == "1"
 
 
 def valid_range(start: str | None, end: str | None, club_uid: int) -> bool:
@@ -27,27 +40,106 @@ def valid_range(start: str | None, end: str | None, club_uid: int) -> bool:
         return False
 
 
-async def read_offseason(executable: Path, club_uid: int, person_uid: int, start: str | None = None, end: str | None = None) -> dict:
-    """Run a configured local producer once; never use a shell or cache its output."""
+def _timestamp(value):
+    if not isinstance(value, str) or len(value) > 64:
+        raise ValueError("invalid timestamp")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("timezone required")
+    return parsed
+
+
+def validate_snapshot(data: dict, *, require_current_producer: bool = False, now=None) -> dict:
+    """Legacy fixtures remain experimental, never onboarding-verified producers."""
+    try:
+        if not isinstance(data, dict) or data.get("schema") != "fa-offseason/0.1":
+            return unavailable("producer_invalid_output")
+        if data.get("synthetic") is True or data.get("status") in {"offline_self_test", "version"}:
+            return unavailable("synthetic_producer_output")
+        captured = _timestamp(data.get("capturedAt"))
+        if not -5 <= ((now or datetime.now(timezone.utc)) - captured).total_seconds() <= 30:
+            return unavailable("stale")
+        current = data.get("producer") == PRODUCER
+        if not current and (require_current_producer or "producer" in data):
+            return unavailable("unsupported_producer")
+        if current:
+            state = data.get("state")
+            if data.get("synthetic") is not False or state not in STATES or data.get("reason") != state:
+                return unavailable("producer_invalid_output")
+            if data.get("status") != ("partial" if state == "fresh_partial" else "unavailable"):
+                return unavailable("producer_invalid_output")
+            process = data.get("process")
+            binary = data.get("binary")
+            if process is not None:
+                if not isinstance(process, dict) or set(process) != {"pid", "startedAt", "sessionId", "identityKind", "saveIdentity"}:
+                    return unavailable("invalid_process_identity")
+                pid = process.get("pid")
+                started = _timestamp(process.get("startedAt"))
+                if type(pid) is not int or not 0 < pid <= 0xffffffff or started > captured or started.year < 2000:
+                    return unavailable("invalid_process_identity")
+                expected_session = hashlib.sha256(f"{pid}:{process['startedAt']}".encode("utf-8")).hexdigest()
+                if process.get("sessionId") != expected_session or process.get("identityKind") != "process_start" or process.get("saveIdentity") != "unknown":
+                    return unavailable("invalid_process_identity")
+            if binary is not None:
+                if not isinstance(binary, dict) or set(binary) != {"module", "sha256", "matched"}:
+                    return unavailable("invalid_binary_identity")
+                if binary.get("module") != "game_plugin.dll" or not isinstance(binary.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", binary["sha256"]) or type(binary.get("matched")) is not bool:
+                    return unavailable("invalid_binary_identity")
+                if binary["matched"] != (binary["sha256"] == EXPECTED_BINARY):
+                    return unavailable("invalid_binary_identity")
+            if state in {"fresh_partial", "no_data"} and (process is None or binary is None or binary["matched"] is not True):
+                return unavailable("invalid_producer_identity")
+            if state == "unsupported_binary" and (process is None or binary is None or binary["matched"] is not False):
+                return unavailable("invalid_producer_identity")
+            if state in {"fm_not_running", "multiple_process"} and (process is not None or binary is not None):
+                return unavailable("invalid_producer_identity")
+            if state == "fresh_partial":
+                statuses = {
+                    "date": {"experimental"}, "team": {"experimental_candidates_incomplete"},
+                    "schedule": {"experimental_records_unverified"}, "managerCandidates": {"experimental_candidates_incomplete"},
+                    "tactic": {"experimental"}, "calendar": {"partial", "experimental_loaded_buckets_only"},
+                }
+                has_candidate = any(isinstance(data.get(key), dict) and data[key].get("status") in allowed for key, allowed in statuses.items())
+                player = data.get("player")
+                has_candidate = has_candidate or (isinstance(player, dict) and isinstance(player.get("value"), dict) and player["value"].get("status") == "experimental")
+                if not has_candidate:
+                    return unavailable("producer_invalid_output")
+            diagnostics = {key: data.get(key) for key in ("producer", "process", "binary", "capturedAt", "state")}
+            if data["status"] == "unavailable":
+                return {**unavailable(state), "producerVerified": True, "diagnostics": diagnostics}
+        else:
+            if data.get("status") == "unavailable":
+                reason = data.get("reason")
+                return {**unavailable(reason if reason in STATES | _LEGACY_REASONS else "producer_unavailable"), "producerVerified": False}
+            if data.get("status") != "partial":
+                return unavailable("producer_invalid_output")
+        return {"status": "partial", "reason": "experimental_candidates", "snapshot": data, "producerVerified": current}
+    except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
+        return unavailable("producer_invalid_output")
+
+
+async def read_offseason(executable: Path, club_uid: int, person_uid: int, start: str | None = None, end: str | None = None, *, require_current_producer: bool = False) -> dict:
+    """Run once under explicit consent; no shell, cache, timer or process polling."""
+    if not consent_enabled():
+        return unavailable("consent_required")
     if not valid_range(start, end, club_uid):
         return unavailable("invalid_range")
-    if not executable.is_absolute() or not executable.is_file() or executable.suffix.lower() != ".exe":
+    if not executable.is_absolute() or executable.suffix.lower() != ".exe":
         return unavailable("producer_not_configured")
+    if not executable.is_file() or executable.is_symlink():
+        return unavailable("resource_missing")
+    if not _PRODUCER_GATE.acquire(blocking=False):
+        return unavailable("producer_busy")
     proc = None
     try:
         args = [str(executable), str(club_uid), str(person_uid)]
         if start is not None and end is not None:
             args.extend([start, end])
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
+        flags = {"creationflags": 0x08000000} if os.name == "nt" else {}
+        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, **flags)
         async def collect() -> bytes:
             assert proc.stdout is not None
-            result = await proc.stdout.read(_MAX_BYTES + 1)
-            if len(result) > _MAX_BYTES:
-                raise ValueError("oversized")
-            # A single read may return before EOF; consume remaining bounded data.
+            result = b""
             while True:
                 chunk = await proc.stdout.read(_MAX_BYTES + 1 - len(result))
                 if not chunk:
@@ -60,23 +152,40 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
         raw = await asyncio.wait_for(collect(), timeout=40 if start is not None else 20)
         if proc.returncode != 0:
             return unavailable("producer_failed")
-        data = json.loads(raw)
-        if not isinstance(data, dict) or data.get("schema") != "fa-offseason/0.1":
-            raise ValueError("invalid schema")
-        if data.get("status") == "unavailable":
-            return unavailable("producer_unavailable")
-        if data.get("status") != "partial":
-            raise ValueError("invalid status")
-        captured = datetime.fromisoformat(data["capturedAt"].replace("Z", "+00:00"))
-        if captured.utcoffset() is None or not -5 <= (datetime.now(timezone.utc) - captured).total_seconds() <= 30:
-            return unavailable("stale")
-        return {"status": "partial", "reason": "experimental_candidates", "snapshot": data}
-    except (OSError, ValueError, TypeError, KeyError, UnicodeError, AttributeError, NotImplementedError, asyncio.TimeoutError):
-        return unavailable("producer_invalid_or_unavailable")
+        return validate_snapshot(json.loads(raw), require_current_producer=require_current_producer)
+    except asyncio.TimeoutError:
+        return unavailable("producer_timeout")
+    except (ValueError, TypeError, KeyError, UnicodeError, AttributeError):
+        return unavailable("producer_invalid_output")
+    except (OSError, NotImplementedError):
+        return unavailable("read_failed")
     finally:
-        if proc is not None and proc.returncode is None:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.wait()
+        try:
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                await proc.wait()
+        finally:
+            _PRODUCER_GATE.release()
+
+
+async def onboarding_status(*, verify: bool = False) -> dict:
+    """Configuration inspection is passive. Only explicit verify runs the reader."""
+    configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+    consent = consent_enabled()
+    executable = Path(configured) if configured else None
+    resource_present = bool(executable and executable.is_absolute() and executable.suffix.lower() == ".exe" and executable.is_file() and not executable.is_symlink())
+    state = "consent_required" if not consent else "producer_not_configured" if not configured else "resource_missing" if not resource_present else "configured"
+    result = {"schema": "fa-reader-onboarding/1", "backendHealthy": True, "configured": bool(configured), "consent": consent,
+              "resourcePresent": resource_present, "state": state, "verified": False, "read": None}
+    if not verify or state != "configured":
+        return result
+    envelope = await read_offseason(executable, 0, 0, require_current_producer=True)
+    snapshot = envelope.get("snapshot") or envelope.get("diagnostics") or {}
+    result["state"] = snapshot.get("state") or envelope["reason"]
+    result["verified"] = envelope.get("producerVerified") is True
+    result["read"] = {"status": envelope["status"], "reason": envelope["reason"], "producerVerified": envelope.get("producerVerified", False),
+                      **{key: snapshot.get(key) for key in ("producer", "process", "binary", "capturedAt")}}
+    return result

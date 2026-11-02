@@ -61,6 +61,7 @@ def test_authenticated_server_owns_candidate_handoff(tmp_path, monkeypatch):
     async def fake_chat(message, conversation_id, context, **kwargs):
         contexts.append(context)
         return {"reply":"Synthetic", "conversation_id":conversation_id, "source_status":context["source_status"]}
+    monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_CONSENT", "1")
     monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_EXE", str(tmp_path / "fake.exe"))
     monkeypatch.setattr(offseason_snapshot, "read_offseason", fake_read)
     app = create_app(settings(tmp_path), enable_agent=True)

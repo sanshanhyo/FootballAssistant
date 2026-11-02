@@ -22,6 +22,7 @@ def test_offseason_forwards_explicit_selectors_to_configured_reader(tmp_path, mo
         calls.append((path, club_uid, person_uid))
         return {"status": "partial", "snapshot": {"schema": "fa-offseason/0.1", "tactic": {"status": "experimental", "phase": "unknown"}}}
 
+    monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_CONSENT", "1")
     monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_EXE", str(tmp_path / "reader.exe"))
     monkeypatch.setattr(offseason_snapshot, "read_offseason", fake_reader)
     with TestClient(create_reader_app(settings(tmp_path)), base_url="http://127.0.0.1") as client:
@@ -42,6 +43,7 @@ def test_offseason_calendar_range_validation_and_forwarding(tmp_path, monkeypatc
         calls.append((club_uid, person_uid, start, end))
         return {"status": "partial", "snapshot": {"calendar": {"status": "partial", "unloaded": 1}}}
 
+    monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_CONSENT", "1")
     monkeypatch.setenv("FOOTBALL_ASSISTANT_OFFSEASON_EXE", str(tmp_path / "reader.exe"))
     monkeypatch.setattr(offseason_snapshot, "read_offseason", fake_reader)
     with TestClient(create_reader_app(settings(tmp_path)), base_url="http://127.0.0.1") as client:
