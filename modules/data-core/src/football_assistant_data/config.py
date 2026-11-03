@@ -11,6 +11,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path.cwd() if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[4]
+# Completion limits can include hidden reasoning as well as the visible reply.
+# Keep explicit user limits intact; reply length is guided separately by the prompt.
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 
 @dataclass(frozen=True)
@@ -23,7 +26,7 @@ class Settings:
     model: str = ""
     api_key: str = field(default="", repr=False)
     model_timeout: float = 45.0
-    max_output_tokens: int = 180
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     model_extra_body: dict = field(default_factory=dict)
     model_request_limit: int = 0
     model_budget_id: str = "default"
@@ -77,7 +80,7 @@ class Settings:
             model=os.environ.get("FOOTBALL_ASSISTANT_MODEL", "").strip(),
             api_key=os.environ.get("FOOTBALL_ASSISTANT_API_KEY", "").strip(),
             model_timeout=float(os.environ.get("FOOTBALL_ASSISTANT_MODEL_TIMEOUT", "45")),
-            max_output_tokens=int(os.environ.get("FOOTBALL_ASSISTANT_MAX_OUTPUT_TOKENS", "180")),
+            max_output_tokens=int(os.environ.get("FOOTBALL_ASSISTANT_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS))),
             model_extra_body=json.loads(os.environ.get("FOOTBALL_ASSISTANT_MODEL_EXTRA_BODY", "{}")),
             model_request_limit=int(os.environ.get("FOOTBALL_ASSISTANT_MODEL_REQUEST_LIMIT", "0")),
             model_budget_id=os.environ.get("FOOTBALL_ASSISTANT_MODEL_BUDGET_ID", "default"),

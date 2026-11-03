@@ -252,7 +252,7 @@ def test_real_sdk_response_shape_subtypes_without_content_or_retry(tmp_path, mon
     monkeypatch.setattr(service, 'AsyncOpenAI', client)
     store = CompanionStore(None)
     agent = service.AgentService(settings(tmp_path, base_url='https://model.invalid/v1',
-                                         model='fixture-model', api_key='FIXTURE-KEY'), store)
+                                         model='fixture-model', api_key='FIXTURE-KEY', max_output_tokens=180), store)
     try:
         with pytest.raises(service.ModelUnavailable) as caught:
             invoke(agent)
