@@ -63,7 +63,10 @@ public static class PersonLookup
                     !ReadBytes(memory, positionPlayer + 0x150, 15, out positionBlock))
                     return new("unavailable", null, null);
             }
-            if (personVtable == image + 0x04D27758 && item >= 0x288)
+            // The legacy attribute layout is proven only at displacement zero.
+            // Named positions can use the separately verified adjustment above.
+            if (personVtable == image + 0x04D27758 && item >= 0x288 &&
+                Read32(memory, item - 4, out int legacyDisplacement) && legacyDisplacement == 0)
             {
                 details = ReadDetails(memory, item, item - 0x288);
                 affiliation = ReadAffiliation(memory, image, item, item - 0x288);

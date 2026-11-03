@@ -25,11 +25,13 @@ public sealed record NativeReadProfile(string Status, string? Reason = null,
             var native = modules.SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             var assembly = modules.SingleOrDefault(m => string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase));
             var executable = process.MainModule?.FileName;
-            if (native is null || assembly is null || string.IsNullOrEmpty(executable)) return new("unavailable", "profile_files_unavailable");
+            var nativePath = native?.FileName;
+            var assemblyPath = assembly?.FileName;
+            if (string.IsNullOrEmpty(nativePath) || string.IsNullOrEmpty(assemblyPath) || string.IsNullOrEmpty(executable)) return new("unavailable", "profile_files_unavailable");
             // Derive Unity's standard metadata location from the running executable,
             // never from a hard-coded installation directory or a private capture.
             var metadata = Path.Combine(Path.GetDirectoryName(executable)!, Path.GetFileNameWithoutExtension(executable) + "_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
-            return FromHashes(Hash(native.FileName), Hash(assembly.FileName), Hash(metadata));
+            return FromHashes(Hash(nativePath), Hash(assemblyPath), Hash(metadata));
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException or CryptographicException)
         { return new("unavailable", "profile_files_unavailable"); }
