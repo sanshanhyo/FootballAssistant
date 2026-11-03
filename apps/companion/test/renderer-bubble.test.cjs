@@ -45,3 +45,64 @@ test('renderer bubble ignores drags and cancelled pointers, supports click/keybo
   assert.equal(bubble.hidden,false);assert.equal(queue.state().index,2);
   queue.dispose();
 });
+
+test('automatic and manual speech use the full reply independently of bubble pagination', async () => {
+  const elements = new Map(), enqueued = [];
+  let queue, onRuntimeEvent;
+  const get = id => {
+    if (!elements.has(id)) elements.set(id, {
+      id, hidden:['error','chat-form','interaction-feedback','draft-note'].includes(id), value:'', textContent:'', style:{}, dataset:{}, scrollHeight:30,
+      events:new Map(), classList:{remove(){},toggle(){}},
+      addEventListener(type, fn) { this.events.set(type, fn); },
+      setAttribute(){}, focus(){},
+      getClientRects() { return this.hidden ? [] : [{}]; },
+      getBoundingClientRect() { return {x:0,y:0,width:100,height:100}; },
+    });
+    return elements.get(id);
+  };
+  const state = {epoch:1,sessionId:'tts-full-reply',canSend:true,messages:[]};
+  const api = {
+    inputRects(){}, subscribe:fn => { onRuntimeEvent = fn; return () => {}; },
+    getState:async () => ({ok:true,value:state}),
+    getSpeechConfig:async () => ({ok:true,value:{enabled:true}}),
+    speechCapabilities:async () => ({ok:true,value:{}}), stopSpeech:async () => {},
+  };
+  const window = {
+    companion:api, CompanionUI:require('../src/ui-state.js'), CompanionScenes:require('../src/character-scene.js'),
+    CompanionBubbles:{...Bubbles,createQueue:options => (queue = Bubbles.createQueue({...options,setTimer:() => 1,clearTimer(){}}))},
+    FootballTtsQueue:{createTtsQueue:() => ({
+      enqueue(payload, options) { enqueued.push({payload,options}); return Promise.resolve(); },
+      switchContext(){}, dispose(){},
+    })},
+    getSelection:() => ({toString:() => ''}), addEventListener(){},
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/renderer.js'),'utf8'), {
+    window, document:{getElementById:get,addEventListener(){}}, setTimeout,clearTimeout,performance,URL,navigator:{},ResizeObserver:class {observe(){}},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const text = '第一段保留完整内容。\n第二段包含标点、空格和 emoji ⚽。\n最后一段也必须完整朗读。';
+  const message = {id:'full-reply',role:'assistant',epoch:state.epoch,sessionId:state.sessionId,text,metadata:{synthetic:false}};
+  onRuntimeEvent({type:'message',message});
+  assert.ok(queue.state().count >= 3);
+  assert.notEqual(get('compact-text').textContent, text);
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].payload.text, text);
+  assert.equal(enqueued[0].payload.generation, state.epoch);
+  assert.equal(enqueued[0].payload.conversationId, state.sessionId);
+  const nextPage = () => get('compact-bubble').events.get('keydown')({key:'Enter',repeat:false,preventDefault(){}});
+  nextPage();
+  assert.equal(queue.state().index, 1);
+  assert.equal(enqueued.length, 1, 'turning a bubble page must not enqueue speech');
+  onRuntimeEvent({type:'read-last-reply'});
+  assert.equal(enqueued.length, 2);
+  assert.equal(enqueued[1].payload.text, text, 'manual speech on page two must use the original reply');
+  assert.equal(enqueued[1].options.interrupt, true);
+  while (queue.state().hasNext) nextPage();
+  assert.equal(queue.state().index, queue.state().count - 1);
+  assert.equal(enqueued.length, 2, 'remaining page turns must not enqueue speech');
+  onRuntimeEvent({type:'read-last-reply'});
+  assert.equal(enqueued.length, 3);
+  assert.equal(enqueued[2].payload.text, text, 'manual speech on the last page must still use the original reply');
+  assert.equal(message.text, text);
+  queue.dispose();
+});
