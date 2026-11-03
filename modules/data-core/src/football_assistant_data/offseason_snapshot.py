@@ -9,9 +9,12 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
+from contextlib import suppress
 
 _MAX_BYTES = 256 * 1024
 _PRODUCER_GATE = threading.Lock()
+_STAGES = frozenset("process module_hash native_profile manager date person team schedule manager_candidates tactic calendar revalidate complete".split())
 PRODUCER = {"id": "footballassistant.offseason-reader", "version": "0.1.0", "protocol": "fa-offseason/0.1"}
 EXPECTED_BINARY = "bc940e472418fc5c214208d7cf30fecf600f689b6f9d71c11ba19a2df0fe057f"
 STATES = {"fm_not_running", "multiple_process", "unsupported_binary", "process_access_denied", "no_session", "no_data", "fresh_partial", "read_failed"}
@@ -95,7 +98,7 @@ def validate_snapshot(data: dict, *, require_current_producer: bool = False, now
                 return unavailable("invalid_producer_identity")
             if state == "fresh_partial":
                 statuses = {
-                    "date": {"experimental"}, "team": {"experimental_candidates_incomplete"},
+                    "date": {"experimental"}, "manager": {"available"}, "team": {"experimental_candidates_incomplete"},
                     "schedule": {"experimental_records_unverified"}, "managerCandidates": {"experimental_candidates_incomplete"},
                     "tactic": {"experimental"}, "calendar": {"partial", "experimental_loaded_buckets_only"},
                 }
@@ -131,34 +134,84 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
     if not _PRODUCER_GATE.acquire(blocking=False):
         return unavailable("producer_busy")
     proc = None
+    started = time.monotonic()
+    stage = None
+    stage_started = started
+    stage_timings = {}
+    def finish(result):
+        now = time.monotonic()
+        return {**result, "producer_diagnostics": {
+            "schema": "fa-reader-diagnostics/1", "stage": stage,
+            "elapsed_ms": round((now - started) * 1000),
+            "stage_elapsed_ms": round((now - stage_started) * 1000) if stage else None,
+            "stage_timings_ms": {**stage_timings, **({stage: stage_timings.get(stage, 0) + round((now - stage_started) * 1000)} if stage else {})},
+            "timeout_seconds": 40 if start is not None else 20,
+            "exit_code": proc.returncode if proc is not None else None,
+        }}
     try:
         args = [str(executable), str(club_uid), str(person_uid)]
         if start is not None and end is not None:
             args.extend([start, end])
         flags = {"creationflags": 0x08000000} if os.name == "nt" else {}
-        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, **flags)
+        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **flags)
+        async def collect_stages():
+            nonlocal stage, stage_started
+            stream = getattr(proc, "stderr", None)
+            if stream is None:
+                return
+            total = 0
+            pending = b""
+            while True:
+                chunk = await stream.read(512)
+                if not chunk:
+                    return
+                total += len(chunk)
+                if total > 4096:
+                    raise ValueError("oversized diagnostics")
+                pending += chunk
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    try:
+                        entry = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if (isinstance(entry, dict) and set(entry) == {"schema", "stage"}
+                            and entry["schema"] == "fa-reader-stage/1"
+                            and isinstance(entry["stage"], str) and entry["stage"] in _STAGES):
+                        tick = time.monotonic()
+                        if stage is not None:
+                            stage_timings[stage] = stage_timings.get(stage, 0) + round((tick - stage_started) * 1000)
+                        stage, stage_started = entry["stage"], tick
         async def collect() -> bytes:
             assert proc.stdout is not None
-            result = b""
-            while True:
-                chunk = await proc.stdout.read(_MAX_BYTES + 1 - len(result))
-                if not chunk:
-                    break
-                result += chunk
-                if len(result) > _MAX_BYTES:
-                    raise ValueError("oversized")
-            await proc.wait()
-            return result
+            diagnostic_task = asyncio.create_task(collect_stages())
+            try:
+                result = b""
+                while True:
+                    chunk = await proc.stdout.read(_MAX_BYTES + 1 - len(result))
+                    if not chunk:
+                        break
+                    result += chunk
+                    if len(result) > _MAX_BYTES:
+                        raise ValueError("oversized")
+                await proc.wait()
+                await diagnostic_task
+                return result
+            finally:
+                if not diagnostic_task.done():
+                    diagnostic_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await diagnostic_task
         raw = await asyncio.wait_for(collect(), timeout=40 if start is not None else 20)
         if proc.returncode != 0:
-            return unavailable("producer_failed")
-        return validate_snapshot(json.loads(raw), require_current_producer=require_current_producer)
+            return finish(unavailable("producer_failed"))
+        return finish(validate_snapshot(json.loads(raw), require_current_producer=require_current_producer))
     except asyncio.TimeoutError:
-        return unavailable("producer_timeout")
+        return finish(unavailable("producer_timeout"))
     except (ValueError, TypeError, KeyError, UnicodeError, AttributeError):
-        return unavailable("producer_invalid_output")
+        return finish(unavailable("producer_invalid_output"))
     except (OSError, NotImplementedError):
-        return unavailable("read_failed")
+        return finish(unavailable("read_failed"))
     finally:
         try:
             if proc is not None and proc.returncode is None:
@@ -171,7 +224,7 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
             _PRODUCER_GATE.release()
 
 
-async def onboarding_status(*, verify: bool = False) -> dict:
+async def onboarding_status(*, verify: bool = False, read=None) -> dict:
     """Configuration inspection is passive. Only explicit verify runs the reader."""
     configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
     consent = consent_enabled()
@@ -182,10 +235,11 @@ async def onboarding_status(*, verify: bool = False) -> dict:
               "resourcePresent": resource_present, "state": state, "verified": False, "read": None}
     if not verify or state != "configured":
         return result
-    envelope = await read_offseason(executable, 0, 0, require_current_producer=True)
+    envelope = await (read or read_offseason)(executable, 0, 0, require_current_producer=True)
     snapshot = envelope.get("snapshot") or envelope.get("diagnostics") or {}
     result["state"] = snapshot.get("state") or envelope["reason"]
     result["verified"] = envelope.get("producerVerified") is True
     result["read"] = {"status": envelope["status"], "reason": envelope["reason"], "producerVerified": envelope.get("producerVerified", False),
+                      **({"producer_diagnostics": envelope["producer_diagnostics"]} if "producer_diagnostics" in envelope else {}),
                       **{key: snapshot.get(key) for key in ("producer", "process", "binary", "capturedAt")}}
     return result

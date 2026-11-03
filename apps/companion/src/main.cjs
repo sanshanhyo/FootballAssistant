@@ -1,8 +1,20 @@
 'use strict';
+if (process.argv.includes('--fa-install-readers')) {
+  const { app, dialog } = require('electron');
+  require('./windows-install-entry.cjs').runWindowsInstallEntry({ app, dialog })
+    .then(code => app.exit(code)).catch(() => app.exit(5));
+} else {
 const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, systemPreferences, dialog, safeStorage, shell, powerMonitor } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { CharacterLibrary } = require('./character-library.cjs');
+const { migrateLegacyCharacter } = require('./character-migration.cjs');
+const { createCharacterController } = require('./character-controller.cjs');
+const { createPetReactionRuntime } = require('./pet-reaction-runtime.cjs');
+const { createSpeechConfig } = require('./speech-config.cjs');
+const { createWindowsMatchInstaller } = require('./windows-match-installer.cjs');
+const { createWindowsMatchSetup, trustedMatchPath } = require('./windows-match-setup.cjs');
 const { createWindowsReaderSetup, validateReaderPayload } = require('./windows-reader-setup.cjs');
 const { createPersonaAccess } = require('./persona-access.cjs');
 const { controlSettingsWindow } = require('./settings-window.cjs');
@@ -42,7 +54,13 @@ let backendOptions;
 let credentials;
 let modelDiscovery;
 let personaAccess;
+let characterLibrary;
+let characterController;
+let speechConfig;
+let petReactions;
 let windowsReaderSetup;
+let windowsMatchSetup;
+let windowsMatchInstaller;
 let bridgeDeployment;
 let savingModel = false;
 let updateController;
@@ -77,7 +95,7 @@ function emit(value) {
   }
 }
 function emitPet(value) { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('companion:event', value); }
-const speech = createSpeechService({ localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'), onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
+let speech = createSpeechService({ localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'), onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
 function senderRole(event, method) {
   for (const [role, window, url] of [['pet', win, pageUrl], ['settings', settingsWindow, settingsPageUrl]]) {
     if (!window || window.isDestroyed() || event.sender !== window.webContents) continue;
@@ -152,7 +170,7 @@ function contextMenu() {
   return Menu.buildFromTemplate([
     { label: win?.isVisible() ? '隐藏桌宠' : '显示桌宠', click: () => win?.isVisible() ? hidePet() : showPet() },
     { label: '设置…', click: () => openSettings().catch(() => {}) },
-    { label: '朗读上一条回复', enabled: ALPHA_TTS_ENABLED && Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
+    { label: '朗读上一条回复', enabled: ALPHA_TTS_ENABLED && speechConfig?.getPublicConfig().enabled === true && Boolean(runtime?.state().messages.some(message => message.role === 'assistant')), click: () => { showPet(); emitPet({ type: 'read-last-reply' }); } },
     { label: '停止语音', click: () => { speech.stop(); emit({ type: 'stop-speech' }); } },
     { type: 'separator' }, { label: '退出', click: () => app.quit() },
   ]);
@@ -185,6 +203,38 @@ function registerIpc() {
   handle('contributors-open', () => settingsContent.openContributors());
   handle('persona-open-file', () => personaAccess.open('file'));
   handle('persona-open-folder', () => personaAccess.open('folder'));
+  handle('result-reactions-get', () => petReactions?.status() || { enabled: false, readerEvidence: 'unavailable' });
+  handle('result-reactions-set', enabled => { if (!petReactions) throw Error('赛果反应配置不可用。'); return petReactions.setEnabled(enabled); });
+  handle('characters-list', () => characterController.list());
+  handle('character-get', id => characterController.get(id));
+  handle('character-select', id => characterController.select(id));
+  handle('character-import', () => characterController.importZip());
+  handle('character-save', input => characterController.save(input));
+  handle('character-portrait', id => characterController.portrait(id));
+  handle('character-reset', id => characterController.reset(id));
+  handle('character-archive', async () => {
+    const local = characterController.archive();
+    try { return { ...local, backend: await request(backendOptions.runtimeFile, '/v1/characters/legacy-archive') }; }
+    catch { return { ...local, backendUnavailable: true }; }
+  });
+  handle('speech-config-get', () => speechConfig.getPublicConfig());
+  handle('speech-config-save', async input => {
+    const saved = await speechConfig.save(input); speech.dispose();
+    speech = createSpeechService({ env: process.env, ttsEnv: speechConfig.speechEnv(),
+      bundledEdgePath: app.isPackaged ? path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'football-assistant-backend.exe' : 'football-assistant-backend') : undefined,
+      localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'),
+      onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
+    emit({ type: 'speech-config', config: saved }); emitPet({ type: 'stop-speech' }); return saved;
+  });
+  const matchNoArgs = action => (...args) => { if (args.length) throw Error('此操作不接受路径参数。'); return action(); };
+  handle('match-deployment-inspect', matchNoArgs(() => windowsMatchSetup.status()));
+  handle('match-deployment-select', matchNoArgs(() => windowsMatchSetup.select()));
+  handle('match-deployment-plan', matchNoArgs(() => windowsMatchSetup.plan()));
+  handle('match-deployment-deploy', input => windowsMatchSetup.deploy(input));
+  handle('match-deployment-connect', matchNoArgs(() => windowsMatchSetup.connect()));
+  handle('match-deployment-verify', matchNoArgs(() => windowsMatchSetup.verify()));
+  handle('match-deployment-retry', matchNoArgs(() => windowsMatchSetup.retry()));
+  handle('match-deployment-rollback', input => windowsMatchSetup.rollback(input));
   handle('reader-onboarding-inspect', (...args) => { if (args.length) throw Error('此操作不接受路径参数。'); return windowsReaderSetup.inspect(); });
   handle('reader-onboarding-select', (...args) => { if (args.length) throw Error('请使用系统文件选择框。'); return windowsReaderSetup.selectGame(); });
   handle('reader-onboarding-enable', input => windowsReaderSetup.enable(input));
@@ -252,7 +302,7 @@ function registerIpc() {
     return input;
   }
   handle('transcribe', input => speech.transcribe(speechInput(input)));
-  handle('speak', input => speakWhenEnabled(() => speech.speak(speechInput(input))));
+  handle('speak', input => speakWhenEnabled(() => speech.speak(speechConfig.authorizeSpeak(speechInput(input), characterLibrary.resolve(runtime.characterId).voice))));
   handle('cancel-speech-operation', id => speech.cancel(id));
   handle('stop-speech', ({ role }) => stopSpeechForRole(role, { stop: () => speech.stop(), notifyPet: emitPet }), { withSender: true });
   handle('microphone-permission', async () => {
@@ -309,13 +359,42 @@ async function buildWindow() {
   if (smokePath) {
     await openSettings();
     const settingsRenderer = await settingsWindow.webContents.executeJavaScript("(async () => ({ipcOk: (await window.companion.getState()).ok, aboutOk: (await window.companion.getAbout()).ok, customControls: Boolean(document.getElementById('window-close'))}))()");
+    const settingsLayout = await settingsWindow.webContents.executeJavaScript(`(async () => {
+      const hidden = document.getElementById('page-companion');
+      if (document.querySelector('[data-page="companion"], #match-deployment, #reader-onboarding, #model-save')) throw new Error('Removed settings controls remain');
+      if (hidden && (!hidden.hidden || !hidden.inert)) throw new Error('Character configuration is not hidden');
+      const panel = document.getElementById('tts-settings');
+      if (panel) {
+        const deadline = Date.now() + 5000;
+        while (!document.getElementById('tts-provider') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+        document.querySelector('[data-page="voice"]').click();
+        const provider = document.getElementById('tts-provider');
+        if (!provider || JSON.stringify(Array.from(provider.options, item => item.value)) !== '["edge","openai"]') throw new Error('Unexpected speech providers');
+        if (document.getElementById('tts-networkConsent') || panel.querySelector('button[type="submit"]')) throw new Error('Redundant speech save or consent control');
+        const speed = document.getElementById('tts-speed'), volume = document.getElementById('tts-volume');
+        if (speed?.type !== 'range' || volume?.type !== 'range' || Math.abs(speed.getBoundingClientRect().y - volume.getBoundingClientRect().y) > 2) throw new Error('Speech sliders are not aligned');
+      }
+      return { maintenanceHidden: true, characterSettingsHidden: true, speechControls: Boolean(panel) };
+    })()`);
+    await fs.mkdir(path.dirname(smokePath), { recursive: true });
+    await settingsWindow.webContents.capturePage().then(image => fs.writeFile(smokePath.replace(/\.json$/, '-settings.png'), image.toPNG()));
     settingsWindow.close();
+    // Validate the actual Chromium image, not just a transparent DOM placeholder.
+    await win.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const image = document.getElementById('character-image');
+        if (image && !image.hidden && image.complete && image.naturalWidth > 0 && getComputedStyle(image).display !== 'none') return true;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      throw new Error('Pet character did not become visible');
+    })()`);
     const report = {
       platform: process.platform, arch: process.arch, electron: process.versions.electron,
       window: { transparentConfigured: true, backgroundColor: win.getBackgroundColor(), alwaysOnTop: win.isAlwaysOnTop(), bounds: win.getBounds(), contextIsolation: win.webContents.getLastWebPreferences().contextIsolation, nodeIntegration: win.webContents.getLastWebPreferences().nodeIntegration, sandbox: win.webContents.getLastWebPreferences().sandbox },
       runtime: runtime.state(), bootstrap: bootstrapStatus, updates: { ...updateController.status, installation: installedUpdates.status, recovery: updateRecovery.status },
       renderer: await win.webContents.executeJavaScript('(async () => ({title: document.title, bridge: Boolean(window.companion), nodeExposed: typeof require !== "undefined", pet: Boolean(document.getElementById("pet")), ipcOk: (await window.companion.getState()).ok}))()'),
-      settingsRenderer,
+      settingsRenderer, settingsLayout,
     };
     await fs.mkdir(path.dirname(smokePath), { recursive: true });
     await fs.writeFile(smokePath, JSON.stringify(report, null, 2));
@@ -385,11 +464,23 @@ async function main() {
   const runtimeFile = external || !app.isPackaged ? defaultRuntimeFile(process.env, process.argv) : path.join(app.getPath('userData'), 'backend', 'runtime.json');
   credentials = createCredentialConfig({ userData: app.getPath('userData'), safeStorage });
   modelDiscovery = createModelDiscovery({ credentials });
+  speechConfig = await createSpeechConfig({ userData: app.getPath('userData'), safeStorage });
+  speech.dispose();
+  speech = createSpeechService({ env: process.env, ttsEnv: speechConfig.speechEnv(),
+    bundledEdgePath: app.isPackaged ? path.join(process.resourcesPath, 'backend', process.platform === 'win32' ? 'football-assistant-backend.exe' : 'football-assistant-backend') : undefined,
+    localAssetRoot: path.join(app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..'), 'local-stt'),
+    onState: state => { speechPlaying = !['finished', 'error', 'stopped'].includes(state.state); emit({ type: 'speech', state }); } });
   let readerExecutable = '';
   if (process.platform === 'win32' && app.isPackaged && settings.windowsReaderEnabled === true) {
     try { readerExecutable = (await validateReaderPayload(process.resourcesPath)).executable; } catch { /* Fail closed; onboarding exposes the error. */ }
   }
-  backendOptions = { readerExecutable, userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
+  windowsMatchInstaller = createWindowsMatchInstaller({ userData: app.getPath('userData'), resourcesPath: process.resourcesPath, platform: process.platform,
+    probeGame: async () => { const status = await detectGame(); return status.state === 'not_detected' ? false : status.state === 'running' ? true : null; } });
+  let matchFile = '';
+  if (process.platform === 'win32' && app.isPackaged && settings.windowsMatchEnabled === true) {
+    try { const installed = await windowsMatchInstaller.inspect(settings.windowsMatchGamePath); if (installed.state === 'deployed') matchFile = await trustedMatchPath(app.getPath('userData'), installed.snapshotPath); } catch { /* Deployment UI exposes failure, no unverified snapshot path is enabled. */ }
+  }
+  backendOptions = { matchFile, readerExecutable, userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged, runtimeFile, external, settings };
   backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
   installedUpdates = createInstalledUpdater({ platform: process.platform,
     distribution: distribution({ packaged: app.isPackaged, executable: app.getPath('exe') }),
@@ -431,13 +522,35 @@ async function main() {
   personaAccess = createPersonaAccess({ userData: app.getPath('userData'),
     isManaged: () => app.isPackaged && !backendSupervisor.external && backendSupervisor.status.owned === true && backendSupervisor.status.state === 'ready',
     getMetadata: () => request(runtimeFile, '/v1/agent/persona'), openPath: target => shell.openPath(target) });
-  runtime = new CompanionRuntime({ realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
-  await initializeCompanion(runtime); runtime.on('event', emit);
+  characterLibrary = new CharacterLibrary({ root: path.join(app.getPath('userData'), 'characters') });
+  let characterMigrationWarning = null;
+  try { migrateLegacyCharacter({ library: characterLibrary, personaFile: path.join(app.getPath('userData'), 'backend', 'persona.md'), settingsFile: path.join(app.getPath('userData'), 'companion-ui.json') }); }
+  catch { characterMigrationWarning = '旧角色数据迁移未完成，原文件保留；请先检查后再编辑角色。'; }
+  runtime = new CompanionRuntime({ characterLibrary, cancelCharacterEffects: () => { petReactions?.cancel(); speech.stop(); emitPet({ type: 'stop-speech' }); }, realClient: new RealReaderClient({ request: (endpoint, body, options) => request(runtimeFile, endpoint, body, options) }), file: path.join(app.getPath('userData'), 'companion-ui.json') });
+  await initializeCompanion(runtime); if (characterMigrationWarning) runtime.storageWarning = characterMigrationWarning; runtime.on('event', emit);
+  const chooseFile = async (name, extensions) => {
+    const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name, extensions }] });
+    return result.canceled ? null : result.filePaths[0];
+  };
+  characterController = createCharacterController({ library: characterLibrary, runtime, chooseZip: () => chooseFile('角色包 ZIP', ['zip']), choosePortrait: () => chooseFile('角色 PNG', ['png']) });
+  try { petReactions = await createPetReactionRuntime({ runtime, journalFile: path.join(app.getPath('userData'), 'result-events.json'), preferencesFile: path.join(app.getPath('userData'), 'result-reactions.json'), emit: emitPet }); } catch { runtime.storageWarning ||= '赛果反应配置不可用，保持关闭，原文件保留。'; }
   windowsReaderSetup = createWindowsReaderSetup({ userData: app.getPath('userData'), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
     chooseGame: async () => { const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name: 'Football Manager 27', extensions: ['exe'] }] }); return result.canceled ? null : result.filePaths[0]; },
     requestStatus: verify => request(runtimeFile, `/v1/reader/onboarding-status${verify ? '?verify=true' : ''}`, undefined, { timeoutMs: verify ? 45000 : 5000 }),
     onConfigured: async ({ executable }) => {
       backendOptions.settings = await loadSettings(app.getPath('userData')); backendOptions.readerExecutable = executable;
+      if (backendSupervisor.external || (backendSupervisor.status.state === 'ready' && !backendSupervisor.status.owned)) return { restartRequired: true };
+      await backendSupervisor.stop();
+      backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
+      bootstrapStatus.backend = await backendSupervisor.start(); runtime.refreshConnection();
+      return { restartRequired: bootstrapStatus.backend.state !== 'ready', backendReady: bootstrapStatus.backend.state === 'ready' };
+    },
+  });
+  windowsMatchSetup = createWindowsMatchSetup({ userData: app.getPath('userData'), installer: windowsMatchInstaller, packaged: app.isPackaged,
+    chooseGame: async () => { const result = await dialog.showOpenDialog(settingsWindow || win, { properties: ['openFile'], filters: [{ name: 'Football Manager 27', extensions: ['exe'] }] }); return result.canceled ? null : result.filePaths[0]; },
+    requestMatch: () => request(runtimeFile, '/v1/reader/match'),
+    onConfigured: async ({ matchFile }) => {
+      backendOptions.settings = await loadSettings(app.getPath('userData')); backendOptions.matchFile = matchFile;
       if (backendSupervisor.external || (backendSupervisor.status.state === 'ready' && !backendSupervisor.status.owned)) return { restartRequired: true };
       await backendSupervisor.stop();
       backendSupervisor = new BackendSupervisor({ ...backendOptions, backendEnv: credentials.getPublicConfig().configured ? await credentials.backendEnv() : {} });
@@ -452,7 +565,11 @@ async function main() {
     { type: 'separator' }, { role: 'quit', label: '退出' },
   ] }]) : null);
   await buildWindow();
-  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable)) await openSettings();
+  if (process.platform === 'win32' && (!settings.windowsReaderEnabled || !readerExecutable || !settings.windowsMatchEnabled || !matchFile)) {
+    if (app.isPackaged && distribution({ packaged: true, executable: app.getPath('exe') }) !== 'portable')
+      dialog.showErrorBox('游戏读取安装未完成', '请重新运行安装器并选择 FM 目录。不会自动下载依赖、修改游戏或冒充已连接。');
+    else await openSettings();
+  }
   tray = new Tray(trayImage()); tray.setToolTip('FootballAssistant · 桌宠');
   tray.on('click', () => contextMenu().popup()); tray.on('double-click', showPet);
   tray.on('right-click', () => contextMenu().popup());
@@ -469,6 +586,8 @@ app.on('window-all-closed', () => { /* The tray owns application lifetime. */ })
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault(); quitting = true;
-  clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); tray?.destroy();
+  clearInterval(pointerTimer); updateController?.stop(); updateLifecycle?.stop(); installedUpdates?.stop(); speech.dispose(); petReactions?.dispose(); tray?.destroy();
   Promise.resolve(runtime?.close()).finally(async () => { await backendSupervisor?.stop(); app.quit(); });
 });
+
+}

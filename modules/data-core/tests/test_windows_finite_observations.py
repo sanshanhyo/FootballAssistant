@@ -129,13 +129,14 @@ def test_source_config_requires_explicit_private_root(monkeypatch):
     with pytest.raises(ValueError): Settings.from_env(reader_only=True)
 
 
-def test_ai_generation_rechecks_same_capture_without_model(source, monkeypatch):
+def test_ai_generation_rechecks_same_capture_without_model(source, monkeypatch, request):
     import asyncio
     import football_assistant_agent.service as service
     reader,event,parts,store=source;reader.poll();snapshot=store.reader_snapshot()
     real_prepare=service.prepare_ui_advice
     monkeypatch.setattr(service,'prepare_ui_advice',lambda c,s:real_prepare(c,s,now=NOW))
-    agent=object.__new__(service.AgentService)
+    agent=service.AgentService(None, None)
+    request.addfinalizer(agent.close)
     async def chat(*args,**kwargs):
         assert kwargs=={'ui':True}
         assert args[2]['ui_evidence']['evidence'][0]['rows'][0]['value_display']=='8'
@@ -146,6 +147,7 @@ def test_ai_generation_rechecks_same_capture_without_model(source, monkeypatch):
     reader.invalidate('cancelled')
     result=asyncio.run(agent.ui_advice('页面属性',None,'player_info',snapshot,refresh=store.reader_snapshot))
     assert result['status']=='blocked' and result['evidence']==[]
+    assert result['character_context']==agent.default_character_context
 
 
 def test_one_full_manifest_all_35_rows_summary_retains_original_times(tmp_path):

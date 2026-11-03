@@ -104,8 +104,12 @@ def test_business_advice_route_is_agent_only_and_forbids_client_data(tmp_path, m
     from football_assistant_data.app import create_app
     app = create_app(settings(tmp_path / 'agent'))
     with TestClient(app, base_url='http://127.0.0.1') as client:
-        async def forbidden_model(*args, **kwargs):
-            raise AssertionError('blocked business advice must not call model')
+        general_calls = []
+        async def forbidden_model(message, conversation, context, **kwargs):
+            assert context == {'source_status': 'general_knowledge'}
+            assert not kwargs.get('business') and not kwargs.get('offseason')
+            general_calls.append(message)
+            return {'reply': '一般建议，不包含当前存档事实。', 'conversation_id': conversation}
         def forbidden_budget(*args, **kwargs):
             raise AssertionError('blocked business advice must not reserve budget')
         monkeypatch.setattr(app.state.agent, '_chat', forbidden_model)
@@ -116,9 +120,10 @@ def test_business_advice_route_is_agent_only_and_forbids_client_data(tmp_path, m
         response = client.post(path, json=body, headers=AUTH)
         assert response.status_code == 200
         result = response.json()
-        assert result['status'] == 'blocked'
-        assert result['facts'] == result['inferences'] == []
-        assert result['readiness']['production_ready'] is False
+        assert result['status'] == 'general_advice' and result['source_status'] == 'general_knowledge'
+        assert result['production_ready'] is False and 'facts' not in result
+        assert len(general_calls) == 1
+        assert app.state.business_snapshots.status()['production_ready'] is False
 
 
 def test_publication_rejects_older_capture_and_identity_collisions_without_refresh():

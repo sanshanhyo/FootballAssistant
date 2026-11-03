@@ -103,7 +103,7 @@ function verifyFixtureEvidenceEncoding() {
 }
 
 async function copyFixtureModules(companion, project) {
-  for (const name of ['update-installed.cjs', 'update-security.cjs', 'update-recovery.cjs', 'credentials.cjs', 'model-providers.cjs']) {
+  for (const name of ['update-installed.cjs', 'update-security.cjs', 'update-recovery.cjs', 'credentials.cjs', 'model-providers.cjs', 'bootstrap.cjs', 'backend.cjs', 'offseason-calendar.cjs']) {
     await fs.copyFile(path.join(companion, 'src', name), path.join(project, name));
   }
   // Fail before packaging if a new local dependency was omitted from this isolated app.

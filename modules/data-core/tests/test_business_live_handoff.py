@@ -40,9 +40,11 @@ def _child(folder: Path, mode: str, seeded: bool):
         from football_assistant_agent import service
         from football_assistant_agent.storage import CompanionStore
 
-        async def forbidden_chat(*args, **kwargs):
+        async def general_chat(self, message, conversation_id, context, **kwargs):
             report['model_calls'] += 1
-            raise AssertionError('blocked advice entered model path')
+            assert context == {'source_status': 'general_knowledge'}
+            assert not any(kwargs.get(key) for key in ('business', 'ui', 'calendar', 'offseason'))
+            return {'reply': 'General football advice without current game claims.', 'conversation_id': conversation_id}
 
         def forbidden_budget(*args, **kwargs):
             report['budget_calls'] += 1
@@ -52,7 +54,7 @@ def _child(folder: Path, mode: str, seeded: bool):
             report['sdk_calls'] += 1
             raise AssertionError('blocked advice constructed provider client')
 
-        service.AgentService._chat = forbidden_chat
+        service.AgentService._chat = general_chat
         CompanionStore.reserve_model_request = forbidden_budget
         service.AsyncOpenAI = forbidden_sdk
 
@@ -202,6 +204,10 @@ def test_reader_business_wire_and_no_sdk_or_ui_fallback(tmp_path, seeded):
         snapshot = server.reader.business_snapshot()
         assert_envelope(status, snapshot=False)
         assert_envelope(snapshot, snapshot=True)
+        partial = status.pop('offseason_readiness')
+        assert partial['schema'] == 'fa-offseason-readiness/1'
+        assert partial['status'] == 'unavailable' and partial['production_ready'] is False
+        assert all(not item['ready'] for item in partial['capabilities'].values())
         assert status == {k: v for k, v in snapshot.items() if k != 'snapshot'}
         if seeded:
             data = snapshot['snapshot']
@@ -226,7 +232,7 @@ def test_reader_business_wire_and_no_sdk_or_ui_fallback(tmp_path, seeded):
 
 
 @pytest.mark.parametrize('seeded', [False, True])
-def test_agent_business_handoff_stays_blocked_without_budget_or_model(tmp_path, seeded):
+def test_agent_business_handoff_keeps_full_gate_blocked_and_allows_general_advice(tmp_path, seeded):
     import sqlite3
 
     with live_server(tmp_path, mode='agent', seeded=seeded) as server:
@@ -244,14 +250,16 @@ def test_agent_business_handoff_stays_blocked_without_budget_or_model(tmp_path, 
                                         json={**body, 'capability': capability})
             assert response.status_code == 200
             advice = response.json()
-            assert advice['status'] == 'blocked'
+            assert advice['status'] == 'general_advice'
+            assert advice['source_status'] == 'general_knowledge'
             assert advice['conversation_id'] == 'loopback-test'
-            assert advice['facts'] == advice['inferences'] == []
-            assert advice['readiness']['production_ready'] is False
-            assert advice['readiness']['source'] == snapshot['source']
-            assert 'native_producer_not_verified' in advice['readiness']['reasons']
-            assert advice['missing_requirements']
-    assert server.report['model_calls'] == server.report['budget_calls'] == server.report['sdk_calls'] == 0
+            assert 'facts' not in advice and 'inferences' not in advice
+            assert advice['production_ready'] is False
+            assert advice['offseason_readiness']['status'] == 'unavailable'
+            assert advice['offseason_readiness']['production_ready'] is False
+        assert server.reader.business_snapshot() == snapshot
+    assert server.report['model_calls'] == len(CAPABILITIES)
+    assert server.report['budget_calls'] == server.report['sdk_calls'] == 0
     with sqlite3.connect(server.folder / 'companion.sqlite') as db:
         assert db.execute('SELECT COUNT(*) FROM model_request_counts').fetchone()[0] == 0
         assert db.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 0

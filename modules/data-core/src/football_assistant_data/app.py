@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import asyncio
 import os
 import secrets
@@ -28,6 +29,7 @@ from .storage import ObservationConflict, ObservationStore, private_directory, u
 from .monitoring import CatalogRequest, HeartbeatRequest
 from .registries import ProbeRequest, RegistryBatch, RegistryStore
 from .native_observers import NativeObserverReport, NativeObserverStore
+from .offseason_readiness import OffseasonReadiness, partial_source_status
 
 
 class CaptureProfileRequest(BaseModel):
@@ -35,10 +37,41 @@ class CaptureProfileRequest(BaseModel):
     profile: Literal["schedule", "tactics", "current_page_attributes", "next_match"]
 
 
+class CharacterContext(BaseModel):
+    """Authenticated main-process context; never accepts resource paths or URLs."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    save_id: str = Field(min_length=1, max_length=512)
+    character_id: str = Field(min_length=1, max_length=96, pattern=r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$")
+    persona: str | None = Field(default=None, min_length=1, max_length=16384)
+
+    @field_validator("save_id", "persona")
+    @classmethod
+    def bounded_text(cls, value: str | None, info):
+        if value is None:
+            return value
+        maximum = 512 if info.field_name == "save_id" else 16384
+        if not value.strip() or "\x00" in value or len(value.encode("utf-8")) > maximum:
+            raise ValueError("Invalid character context text")
+        return value
+
+    @field_validator("character_id")
+    @classmethod
+    def normalize_builtin(cls, value: str):
+        return "official.eckera" if value == "builtin.eckera" else value
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    character_context: CharacterContext | None = None
+
+    @field_validator("character_context")
+    @classmethod
+    def selected_persona(cls, value):
+        if value is not None and value.character_id != "official.eckera" and value.persona is None:
+            raise ValueError("Selected character requires persona text")
+        return value
 
     @field_validator("message")
     @classmethod
@@ -62,6 +95,7 @@ class CalendarAdviceRequest(ChatRequest):
 class MemoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     content: str = Field(min_length=1, max_length=2000)
+    character_context: CharacterContext | None = None
 
     @field_validator("content")
     @classmethod
@@ -135,6 +169,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
         app.state.business_snapshots = BusinessSnapshotStore()
+        app.state.offseason_readiness = OffseasonReadiness()
         app.state.windows_discovery = empty_snapshot()
         app.state.windows_discovery_generation = 0
         from .ui_capture_control import UiCaptureController
@@ -169,9 +204,11 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                 await finite_task  # Let a bounded file read finish before closing SQLite.
                 finite_source.invalidate('backend_shutdown')
             app.state.business_snapshots.invalidate()
+            app.state.offseason_readiness.invalidate("backend_shutdown")
             app.state.windows_discovery = empty_snapshot()
             observations.close()
             if companion is not None:
+                app.state.agent.close()
                 companion.close()
             try:
                 runtime = json.loads(settings.runtime_file.read_text())
@@ -189,6 +226,24 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode("utf-8"),settings.token.encode("utf-8")):
             raise HTTPException(401,detail={"code":"unauthorized","message":"需要有效的本机访问令牌。"},headers={"WWW-Authenticate":"Bearer"})
 
+    async def tracked_offseason_read(executable, club_uid, person_uid, start=None, end=None, **kwargs):
+        from .offseason_snapshot import read_offseason
+        cache = app.state.offseason_readiness
+        ticket = cache.begin()
+        try:
+            args = (executable, club_uid, person_uid) if start is None else (executable, club_uid, person_uid, start, end)
+            result = await read_offseason(*args, **kwargs)
+            cache.complete(ticket, result, executable, club_uid, person_uid, start, end)
+            return result
+        except BaseException:
+            cache.complete(ticket, {"reason": "read_failed"}, executable)
+            raise
+
+    def reader_state():
+        readiness = app.state.offseason_readiness.status()
+        return {"source_status": partial_source_status(app.state.observations.source_status(), readiness),
+                "offseason_readiness": readiness}
+
     @app.get("/health")
     async def health():
         return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
@@ -196,7 +251,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     @app.get("/v1/reader/onboarding-status", dependencies=[Depends(authorized)])
     async def reader_onboarding_status(verify: bool = Query(default=False)):
         from .offseason_snapshot import onboarding_status
-        return await onboarding_status(verify=verify)
+        result = await onboarding_status(verify=verify, read=tracked_offseason_read)
+        if result["state"] not in {"configured", "fresh_partial"} and result["read"] is None:
+            app.state.offseason_readiness.invalidate(result["state"])
+        return result
 
     @app.get("/v1/reader/match", dependencies=[Depends(authorized)])
     def match_snapshot():
@@ -208,7 +266,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
     async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647), start: str | None = Query(default=None, max_length=10), end: str | None = Query(default=None, max_length=10)):
-        from .offseason_snapshot import read_offseason, unavailable, valid_range, consent_enabled
+        from .offseason_snapshot import unavailable, valid_range, consent_enabled
         if not valid_range(start, end, club_uid):
             raise HTTPException(status_code=422, detail="invalid calendar range")
         configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
@@ -217,25 +275,25 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         if not consent_enabled():
             return unavailable("consent_required")
         if start is None:
-            return await read_offseason(Path(configured), club_uid, person_uid)
-        return await read_offseason(Path(configured), club_uid, person_uid, start, end)
+            return await tracked_offseason_read(Path(configured), club_uid, person_uid)
+        return await tracked_offseason_read(Path(configured), club_uid, person_uid, start, end)
 
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
-            return {"source_status":app.state.observations.source_status(),"mode":"reader","agent_enabled":False}
-        return {"source_status":app.state.observations.source_status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.companion.counts()}
+            return {**reader_state(),"mode":"reader","agent_enabled":False}
+        return {**reader_state(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
 
     if enable_agent:
         @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
         async def companion_state():
             state = "model_unconfigured" if not settings.model_configured else "model_error" if app.state.agent.last_error else "ready"
-            return {"state":"idle","mood":"neutral","status":state,"source_status":app.state.observations.source_status()}
+            return {"state":"idle","mood":"neutral","status":state,**reader_state()}
 
     @app.get("/v1/reader/status",dependencies=[Depends(authorized)])
     async def reader_status():
         return {"service":"football-assistant","reader_api":1,"agent_enabled":enable_agent,
-                "source_status":app.state.observations.source_status(),
+                **reader_state(),
                 "latest_event_cursor":app.state.observations.events(0,1)["latest_cursor"],
                 "native_records":{"state":"awaiting_decoded_native_records","payload_decoded":False,
                                   "field_values_known":False,"scope":"headers_are_diagnostics_only"}}
@@ -251,7 +309,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/business/status",dependencies=[Depends(authorized)])
     async def business_reader_status():
-        return app.state.business_snapshots.status()
+        return {**app.state.business_snapshots.status(), "offseason_readiness": app.state.offseason_readiness.status()}
 
     @app.get("/v1/reader/business/snapshot",dependencies=[Depends(authorized)])
     async def business_reader_snapshot():
@@ -449,6 +507,28 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         return app.state.observations.interfaces(catalog_id,after,limit,access_status)
 
     if enable_agent:
+        from .offseason_conversation import OffseasonConversation
+        offseason_conversations = OffseasonConversation()
+
+        async def partial_offseason_reply(body):
+            # Exact social turns do not need memory scanning. Do not classify
+            # arbitrary text or contextual follow-ups as evidence-free.
+            social = re.sub(r"[\s，,。.!！?？~～]+", "", body.message).casefold()
+            if social in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "早安", "晚上好", "晚安", "谢谢", "谢谢你", "你好埃克拉", "埃克拉你好"}:
+                return None
+            # Read the consented server-owned producer, never client-supplied facts.
+            # This is a partial observation channel, not a business-store publication.
+            from .offseason_snapshot import consent_enabled
+            configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
+            if not consent_enabled() or not configured:
+                return None
+            async def read_selected(club, person):
+                return await tracked_offseason_read(Path(configured), club, person, require_current_producer=True)
+            result = await offseason_conversations.reply(body, read_selected, app.state.agent)
+            if result is not None:
+                result["offseason_readiness"] = app.state.offseason_readiness.status()
+            return result
+
         @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
         def persona_metadata():
             from football_assistant_agent.persona import load_persona
@@ -462,35 +542,43 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             # override provenance, readiness or provide their own snapshot.
             snapshot = app.state.business_snapshots.read()["snapshot"]
             try:
-                return await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot)
+                result = await app.state.agent.business_advice(body.message,body.conversation_id,body.capability,snapshot, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                if result.get("status") == "blocked":
+                    partial = await partial_offseason_reply(body)
+                    if partial is not None:
+                        return partial
+                    result = await app.state.agent.general_advice(body.message, body.conversation_id,
+                        **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                    result["offseason_readiness"] = app.state.offseason_readiness.status()
+                return result
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
         async def calendar_advice(body: CalendarAdviceRequest):
-            from .offseason_snapshot import read_offseason, valid_range, unavailable, consent_enabled
+            from .offseason_snapshot import valid_range, unavailable, consent_enabled
             if not valid_range(body.start, body.end, body.club_uid):
                 raise HTTPException(422, detail="invalid calendar range")
             if not consent_enabled():
                 return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
-            envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
+            envelope = await tracked_offseason_read(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
             try:
-                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end)
+                return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429, detail={"code": "model_request_limit", "message": str(error)}) from None
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
         async def auto_calendar_advice(body: ChatRequest):
-            from .offseason_snapshot import read_offseason, consent_enabled
+            from .offseason_snapshot import consent_enabled
             from .calendar_selection import choose_calendar_scope
             if not consent_enabled():
                 return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
@@ -498,21 +586,23 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             if not configured:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "当前无法读取球队候选和游戏日期。"}
             executable = Path(configured)
-            initial = await read_offseason(executable, 0, 0)
+            initial = await tracked_offseason_read(executable, 0, 0)
             scope = choose_calendar_scope(initial, body.message)
             if scope is None:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "未能唯一确认所问球队候选或当前游戏日期，请明确球队名称或俱乐部 UID。"}
-            envelope = await read_offseason(executable, scope["club_uid"], 0, scope["start"], scope["end"])
+            envelope = await tracked_offseason_read(executable, scope["club_uid"], 0, scope["start"], scope["end"])
             if initial.get("producerVerified") is True and (envelope.get("producerVerified") is not True or
                     (initial.get("snapshot") or {}).get("process") != (envelope.get("snapshot") or {}).get("process")):
+                app.state.offseason_readiness.invalidate("session_changed")
                 return {"status": "unavailable", "reason": "session_changed", "conversation_id": body.conversation_id, "reply": "游戏进程会话在读取期间变化，请重试；没有使用上一会话的数据。"}
             verified = choose_calendar_scope(envelope, body.message)
-            if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
+            if verified is None or any(verified.get(key) != scope.get(key) for key in ("manager_uid", "club_uid", "team_uid", "selection", "start", "end")):
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}
             try:
-                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"])
+                result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"], **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
                 if result.get("status") == "partial":
-                    result["reply"] = "按经理关联球队候选读取，尚未确认当前执教身份。\n" + result["reply"]
+                    if scope["selection"] != "native_current_manager":
+                        result["reply"] = "按经理关联球队候选读取。\n" + result["reply"]
                     result["selection"] = {key: scope[key] for key in ("club_uid", "club_name", "selection", "start", "end")}
                 return result
             except ModelBudgetExceeded as error:
@@ -520,7 +610,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
         async def ui_advice(body: BusinessAdviceRequest):
@@ -529,36 +619,66 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             snapshot = app.state.observations.reader_snapshot(0, MAX_FACTS)
             try:
                 return await app.state.agent.ui_advice(body.message,body.conversation_id,body.capability,snapshot,
-                    refresh=lambda: app.state.observations.reader_snapshot(0, MAX_FACTS))
+                    refresh=lambda: app.state.observations.reader_snapshot(0, MAX_FACTS),
+                    **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
-                return await app.state.agent.chat(body.message,body.conversation_id)
+                # Direct chat and the desktop calendar route must select the same
+                # existing calendar reader, never guess fixtures from general chat.
+                if re.search(r'(?:下场|下一场|下一轮).{0,12}(?:打谁|对谁|对阵|对手)|(?:who|whom).{0,20}(?:play|playing).{0,10}next', body.message, re.I):
+                    result = await auto_calendar_advice(body)
+                    result["character_context"] = app.state.agent.response_scope(body.character_context.model_dump(exclude_none=True) if body.character_context else None)
+                    result["offseason_readiness"] = app.state.offseason_readiness.status()
+                    return result
+                partial = await partial_offseason_reply(body)
+                if partial is not None:
+                    return partial
+                result = await app.state.agent.chat(body.message,body.conversation_id, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                result["offseason_readiness"] = app.state.offseason_readiness.status()
+                return result
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
+
+        @app.get("/v1/characters/legacy-archive", dependencies=[Depends(authorized)])
+        async def legacy_character_archive(request: Request):
+            if request.query_params:
+                raise HTTPException(422, detail={"code": "archive_scope_fixed", "message": "The legacy archive does not accept scope parameters."})
+            return app.state.companion.legacy_archive()
+
+        def memory_scope(save_id=None, character_id=None):
+            try:
+                supplied = None if save_id is None and character_id is None else CharacterContext(save_id=save_id, character_id=character_id).model_dump(exclude_none=True)
+                context = app.state.agent.character_context(supplied)
+                return {key: context[key] for key in ("save_id", "character_id")}
+            except (ValueError, TypeError):
+                raise HTTPException(422, detail={"code": "invalid_character_scope", "message": "Both save_id and character_id are required."}) from None
 
         @app.get("/v1/memories",dependencies=[Depends(authorized)])
-        async def memories():
-            return {"memories":app.state.companion.memories()}
+        async def memories(save_id: str | None = Query(default=None, max_length=512), character_id: str | None = Query(default=None, max_length=96)):
+            scope = memory_scope(save_id, character_id)
+            return {"memories":app.state.agent.store_for_context(scope).memories(**scope), "character_context":scope}
 
         @app.post("/v1/memories",dependencies=[Depends(authorized)],status_code=201)
         async def create_memory(body: MemoryRequest):
-            return app.state.companion.add_memory(body.content)
+            scope = memory_scope(body.character_context.save_id, body.character_context.character_id) if body.character_context else memory_scope()
+            return {**app.state.agent.store_for_context(scope).add_memory(body.content, **scope), "character_context":scope}
 
         @app.delete("/v1/memories/{memory_id}",dependencies=[Depends(authorized)])
-        async def delete_memory(memory_id: UUID):
-            if not app.state.companion.delete_memory(str(memory_id)):
+        async def delete_memory(memory_id: UUID, save_id: str | None = Query(default=None, max_length=512), character_id: str | None = Query(default=None, max_length=96)):
+            scope = memory_scope(save_id, character_id)
+            if not app.state.agent.store_for_context(scope).delete_memory(str(memory_id), **scope):
                 raise HTTPException(404,detail={"code":"memory_not_found","message":"记忆不存在。"})
             return {"deleted":True}
 

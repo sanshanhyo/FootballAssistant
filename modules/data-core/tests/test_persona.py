@@ -90,16 +90,16 @@ def test_all_modes_load_editable_persona_below_fact_and_failure_rules(tmp_path, 
             return SimpleNamespace(output='TEST response')
     class Store:
         def reserve_model_request(self, *args): return allow_request
-        def memories(self): return []
-        def recent_messages(self, *args): return []
-        def append_turn(self, *args): saved_turns.append(args)
+        def memories(self, **scope): return []
+        def recent_messages(self, *args, **scope): return []
+        def append_turn(self, *args, **scope): saved_turns.append(args)
     monkeypatch.setattr(service, 'AsyncOpenAI', Client)
     monkeypatch.setattr(service, 'Agent', Agent)
     monkeypatch.setattr(service, 'OpenAICompatibleProvider', lambda *a, **k: object())
     monkeypatch.setattr(service, 'OpenAIChatModel', lambda *a, **k: object())
     config = settings(tmp_path, base_url='http://invalid.test', model='TEST', api_key='TEST_KEY')
     agent = service.AgentService(config, Store())
-    asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
+    asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, character_context={'save_id': 'fixture-save', 'character_id': 'official.eckera'}, ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
     assert captured['message']['untrusted_persona'] == malicious
     assert captured['prompt'].startswith(SYSTEM_RULES)
     assert 'TEST_PERSONA_CUSTOM' not in captured['prompt']
@@ -114,20 +114,20 @@ def test_all_modes_load_editable_persona_below_fact_and_failure_rules(tmp_path, 
     assert str(tmp_path) not in json.dumps(captured)
     assert path.read_text(encoding='utf-8') == malicious
     path.write_text('TEST_RELOADED', encoding='utf-8')
-    asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
+    asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, character_context={'save_id': 'fixture-save', 'character_id': 'official.eckera'}, ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
     assert captured['message']['untrusted_persona'] == 'TEST_RELOADED'
 
     # A persona cannot turn a provider failure or exhausted budget into a reply.
     saved_count = len(saved_turns)
     provider_failure = True
     with pytest.raises(service.ModelUnavailable) as error:
-        asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'},
+        asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, character_context={'save_id': 'fixture-save', 'character_id': 'official.eckera'},
                                 ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
     assert 'TEST_PRIVATE_PROVIDER_FAILURE' not in str(error.value)
     assert agent.last_error is True and len(saved_turns) == saved_count
     allow_request = False
     with pytest.raises(service.ModelBudgetExceeded):
-        asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'},
+        asyncio.run(agent._chat('TEST question', 'TEST', {'source_status': 'TEST'}, character_context={'save_id': 'fixture-save', 'character_id': 'official.eckera'},
                                 ui=mode == 'ui', business=mode == 'business', calendar=mode == 'calendar'))
     assert len(saved_turns) == saved_count
     assert path.read_text(encoding='utf-8') == 'TEST_RELOADED'

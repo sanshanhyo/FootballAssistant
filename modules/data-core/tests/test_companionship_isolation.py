@@ -35,12 +35,14 @@ def test_greeting_never_uses_legacy_snapshot(tmp_path, captured_model, source_st
     config = settings(tmp_path, base_url='http://invalid.test/v1', model='fixture-model', api_key='TEST-NOT-A-KEY')
     store = CompanionStore(tmp_path / 'test-companionship.sqlite')
     try:
-        memory = store.add_memory('请叫我阿明，我喜欢简洁温和的交流。')
-        game_memory = store.add_memory('TEST-旧伤病断言：前锋受伤，恢复时间六周。')
-        store.append_turn('TEST-conversation', '上一轮聊什么？', 'TEST-旧助手断言：预算九百万。')
+        agent = service.AgentService(config, store)
+        scope = {"save_id": "fixture-save", "character_id": "official.eckera"}
+        memory = store.add_memory('请叫我阿明，我喜欢简洁温和的交流。', **scope)
+        game_memory = store.add_memory('TEST-旧伤病断言：前锋受伤，恢复时间六周。', **scope)
+        store.append_turn('TEST-conversation', '上一轮聊什么？', 'TEST-旧助手断言：预算九百万。', **scope)
         context = {'source_status': source_status, 'facts': ['TEST-captured-budget', 'TEST-captured-injury'],
                    'diagnostics': 'TEST-private-path', 'session_id': 'TEST-mismatched-session'}
-        result = asyncio.run(service.AgentService(config, store).chat('你好', 'TEST-conversation', context))
+        result = asyncio.run(agent.chat('你好', 'TEST-conversation', context, character_context=scope))
         assert result['source_status'] == 'not_used'
         serialized = json.dumps(captured_model, ensure_ascii=False)
         for marker in ('TEST-captured-budget', 'TEST-captured-injury', 'TEST-private-path', 'TEST-mismatched-session'):
@@ -58,9 +60,11 @@ def test_greeting_never_uses_legacy_snapshot(tmp_path, captured_model, source_st
         assert untrusted['explicit_memories'] == [memory, game_memory]
         assert 'TEST-旧助手断言' in untrusted['historical_conversation'][-1]['content']
         # Filtering model input never deletes the user's real memory/history.
-        assert store.memories() == [memory, game_memory]
+        assert store.memories(**scope) == [memory, game_memory]
+        assert store.memories() == []  # Unassigned archive is never injected into a new session.
         assert store.counts() == {'messages': 4, 'memories': 2}
     finally:
+        agent.close()
         store.close()
 
 

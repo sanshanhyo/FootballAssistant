@@ -24,7 +24,8 @@ public static class FixtureCalendarLookup
         if(!IsValidRange(start,finish)) throw new ArgumentException();
         for(int i=0;i<=(finish-start).Days;i++) yield return start.AddDays(i);
     }
-    public static FixtureCalendarResult Read(int pid,uint clubUid,DateTime start,DateTime finish)
+    public static FixtureCalendarResult Read(int pid,uint clubUid,DateTime start,DateTime finish) => Read(pid,clubUid,start,finish,null);
+    public static FixtureCalendarResult Read(int pid,uint clubUid,DateTime start,DateTime finish,NativeReadContext? context)
     {
         if(pid<=0 || clubUid is 0 or uint.MaxValue || !IsValidRange(start,finish)) return new("unknown");
         try
@@ -33,7 +34,7 @@ public static class FixtureCalendarLookup
     if(!string.Equals(proc.ProcessName,"fm",StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException();
     var module=proc.Modules.Cast<ProcessModule>().Single(m=>string.Equals(m.ModuleName,"game_plugin.dll",StringComparison.OrdinalIgnoreCase));
     if(string.IsNullOrEmpty(module.FileName)) throw new InvalidOperationException();
-    using(var file=File.OpenRead(module.FileName)) using(var sha=SHA256.Create()) if(Convert.ToHexString(sha.ComputeHash(file))!=Hash) throw new InvalidOperationException();
+    if(NativeReadContext.Hash(proc,module,context)!=Hash) throw new InvalidOperationException();
     using var handle=Native.OpenProcess(0x1010,false,pid); if(handle.IsInvalid) throw new InvalidOperationException();
     var clock=Stopwatch.StartNew(); long image=module.BaseAddress.ToInt64();
     var mem=new Tracked((address,length)=>Native.Read(handle,address,length));

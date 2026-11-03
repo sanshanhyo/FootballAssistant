@@ -7,3 +7,9 @@
 /packaging/licenses/openssl-3.0.16/README.md -text
 
 /apps/companion/packaging/WHISPER-MODEL-LICENSE.txt -text
+
+# Preserve hash-pinned upstream license bytes (including original CRLF).
+modules/game-bridge/packaging/windows-match-licenses/** -text -whitespace
+modules/game-bridge/packaging/windows-match-native-licenses/** -text -whitespace
+
+modules/game-bridge/packaging/offline/**/*.bin -text

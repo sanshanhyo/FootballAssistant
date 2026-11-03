@@ -11,9 +11,10 @@ test('isolated updater fixture loads recovery with its transitive validation dep
   t.after(() => fs.rmSync(project, { recursive: true, force: true }));
   await copyFixtureModules(path.resolve(__dirname, '..'), project);
   const { createUpdateRecovery } = require(path.join(project, 'update-recovery.cjs'));
+  const { DEFAULT_SETTINGS } = require(path.join(project, 'bootstrap.cjs'));
   const profile = path.join(project, 'profile');
   fs.mkdirSync(profile);
-  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ version: 1, backend: { port: 17827 }, bridgePrivateRoot: '', backendEnvFile: '' }));
+  fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify(DEFAULT_SETTINGS));
   const recovery = createUpdateRecovery({ userData: profile, currentVersion: '0.0.1-alpha.1' });
   assert.equal((await recovery.prepare({ targetVersion: '0.0.2-alpha.1' })).state, 'prepared');
 });

@@ -29,14 +29,14 @@ test('intent asks for UID rather than resolving names or inferring managed-team 
   }
   assert.equal(offseasonIntent('什么是战术'),null); assert.equal(offseasonIntent('俱乐部 UID 42 的赛程'),null);
 });
-test('explicit real queries fetch native readback only, no model POST and no UI fallback',async()=>{
-  const calls=[], client=new RealReaderClient({request:async(url,body,options)=>{calls.push({url,body,options});return fixture();}});
-  const got=await client.reply({message:'读取球员 UID:123',conversationId:'conversation'});
-  assert.equal(calls[0].url,offseasonEndpoint(0,123));assert.equal(calls[0].body,undefined);assert.equal(calls[0].options.timeoutMs,45000);
-  assert.match(got.text,/部分实验/);assert.equal(got.cards.length,1);
-  assert.equal(got.cards[0].fields.find(x=>x.label==='手控球').value,null);
-  assert.equal(JSON.stringify(got).includes('999'),false);
-  const before=calls.length;const missing=await client.reply({message:'查看张三的属性'});assert.match(missing.text,/UID/);assert.equal(calls.length,before);
+test('date stays deterministic while person names and explicit IDs reach scoped native chat',async()=>{
+  const calls=[], client=new RealReaderClient({request:async(url,body,options)=>{calls.push({url,body,options});return url.startsWith('/v1/reader/')?fixture():{reply:'Scoped partial lookup',conversation_id:'conversation'};}});
+  const date=await client.reply({message:'游戏日期',conversationId:'conversation'});
+  assert.equal(calls[0].url,offseasonEndpoint(0,0));assert.equal(date.cards.length,1);
+  await client.reply({message:'读取球员 UID:123',conversationId:'conversation'});
+  await client.reply({message:'查看张三的属性',conversationId:'conversation'});
+  assert.deepEqual(calls.slice(1).map(c=>c.url),['/v1/chat','/v1/chat']);
+  assert.equal(calls[2].body.message,'查看张三的属性');
 });
 test('fresh date and candidate responses retain experimental/partial limits',()=>{
   const date=offseasonReply(fixture(),{kind:'date'},'c');assert.match(date.text,/2026-07-13/);

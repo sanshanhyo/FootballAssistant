@@ -114,6 +114,34 @@ function adviceCapability(message, explicit) {
   if (/球员|属性|存档|页面|界面|这页|这一页|player|squad/i.test(message)) return 'player_info';
   return null;
 }
+function partialReadiness(envelope = {}, now = Date.now()) {
+  const value = envelope.offseason_readiness;
+  const observed = Date.parse(value?.observed_at), expires = Date.parse(value?.expires_at);
+  if (value?.schema !== 'fa-offseason-readiness/1' || value.status !== 'partial' ||
+      value.source !== 'native_offseason_reader' || value.scope !== 'partial_native_query' ||
+      value.producer_verified !== true || value.synthetic !== false || value.production_ready !== false ||
+      value.freshness !== 'fresh' || !Number.isFinite(observed) || !Number.isFinite(expires) ||
+      now < observed - 5000 || now > expires || now - observed > 30000 || expires - observed > 30000) return null;
+  return value;
+}
+function generalAdviceReply(result, conversationId) {
+  if (result?.status !== 'general_advice' || result.source_status !== 'general_knowledge') return null;
+  return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [], metadata: {
+    ...businessMetadata(), source: 'agent', sourceLabel: 'AI 对话 · 非当前存档事实',
+    readiness: { production_ready: false, ...(result.offseason_readiness ? { offseason_readiness: result.offseason_readiness } : {}) },
+    limitations: ['普通对话不代表已读取当前存档业务数据。'],
+  } };
+}
+function partialNativeReply(result, conversationId) {
+  if (result?.source_status !== 'partial_native_candidates' || result.status !== 'partial' || typeof result.reply !== 'string') return null;
+  return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [], metadata: {
+    source: 'native_offseason_reader', sourceLabel: '赛外读取 · 部分事实', synthetic: false, partial: true,
+    freshness: result.context?.freshness === 'expired_during_generation' ? 'stale' : 'observed_for_request', sampledAt: result.context?.observed_at ?? null,
+    sessionId: result.context?.session_id ?? null,
+    limitations: Array.isArray(result.context?.limitations) ? result.context.limitations : ['候选不等于当前执教身份；未读取字段保持未知。'],
+    readiness: { production_ready: false, mode: 'partial_native_candidates', ...(result.offseason_readiness ? { offseason_readiness: result.offseason_readiness } : {}) },
+  } };
+}
 const PREVIEWS = Object.freeze([
   { id: 'schedule', title: '实验性 UI 赛程', key: 'schedule_projection', status: 'experimental_ui_schedule' },
   { id: 'tactics', title: '实验性 UI 战术', key: 'tactics_projection', status: 'experimental_ui_tactics' },
@@ -168,37 +196,95 @@ class RealReaderClient {
     this.request = request;
   }
   capabilities(envelope = {}) {
-    return BUSINESS_CAPABILITIES.map(id => ({ id, available: envelope.production_ready === true && envelope.capabilities?.[id]?.ready === true,
-      synthetic: envelope.source?.synthetic === true, reason: (envelope.capabilities?.[id]?.missing_requirements || envelope.reasons || ['业务能力尚未验证']).join('、') }));
+    const partial = partialReadiness(envelope);
+    return BUSINESS_CAPABILITIES.map(id => {
+      const complete = envelope.production_ready === true && envelope.capabilities?.[id]?.ready === true;
+      const limited = !complete && partial?.capabilities?.[id]?.ready === true;
+      return { id, available: complete || limited, partial: limited, productionReady: complete,
+        ...(limited ? { source: partial.source, scope: partial.scope, observedFields: partial.observed_fields } : {}),
+        synthetic: envelope.source?.synthetic === true,
+        reason: complete || limited ? null : (envelope.capabilities?.[id]?.missing_requirements || envelope.reasons || ['业务能力尚未验证']).join('、') };
+    });
   }
   async status({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/status', undefined, { signal });
-    return { connection: 'connected', metadata: businessMetadata(envelope), capabilities: this.capabilities(envelope), readiness: envelope };
+    const partial = partialReadiness(envelope);
+    const meta = businessMetadata(envelope);
+    if (partial && envelope.production_ready !== true) Object.assign(meta, { source: partial.source, sourceLabel: '赛外读取 · 部分事实',
+      partial: true, synthetic: false, freshness: 'current', sampledAt: partial.observed_at, sessionId: partial.session_id });
+    return { connection: 'connected', metadata: meta, capabilities: this.capabilities(envelope), readiness: envelope };
+  }
+  async agentRequest(endpoint, body, options) {
+    const result = await this.request(endpoint, body, options);
+    if (!result || typeof result.reply !== 'string' || !result.reply.trim()) throw Error('后端未返回可显示的回复，请重试。');
+    const expected = body.character_context;
+    // Deterministic blocked advice need not carry a model scope, generated output must.
+    if (expected && (endpoint === '/v1/chat' || result?.character_context || ['generated', 'partial', 'general_advice'].includes(result?.status))) {
+      if (result?.character_context?.save_id !== expected.save_id || result?.character_context?.character_id !== expected.character_id) throw Error('角色回复范围不匹配。');
+    }
+    return result;
+  }
+  memoryScope(characterContext) {
+    if (!characterContext || typeof characterContext.save_id !== 'string' || !characterContext.save_id.trim() || typeof characterContext.character_id !== 'string' || !characterContext.character_id.trim()) throw Error('记忆请求缺少角色/存档范围。');
+    return { save_id: characterContext.save_id, character_id: characterContext.character_id };
+  }
+  verifyMemoryScope(result, context) {
+    if (result?.character_context?.save_id !== context.save_id || result?.character_context?.character_id !== context.character_id) throw Error('记忆响应范围不匹配。');
+    return result;
+  }
+  async memories({ characterContext, signal }) {
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request(`/v1/memories?${new URLSearchParams(scope)}`, undefined, { signal });
+    return this.verifyMemoryScope(result, scope);
+  }
+  async addMemory({ content, characterContext, signal }) {
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request('/v1/memories', { content, character_context: scope }, { signal });
+    return this.verifyMemoryScope(result, scope);
+  }
+  async deleteMemory({ id, characterContext, signal }) {
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) throw Error('无效记忆标识。');
+    const scope = this.memoryScope(characterContext);
+    const result = await this.request(`/v1/memories/${encodeURIComponent(id)}?${new URLSearchParams(scope)}`, undefined, { signal, method: 'DELETE' });
+    if (result?.deleted !== true) throw Error('记忆删除未确认。');
+    return result;
   }
   async match({ signal } = {}) {
     return this.request('/v1/reader/match', undefined, { signal });
   }
-  async offseason({ clubUid = 0, personUid = 0, signal } = {}) {
-    const endpoint = offseasonEndpoint(clubUid, personUid);
+  async boundedNativeRead(endpoint, { signal } = {}) {
+    const deadline = AbortSignal.timeout(45_000);
+    const activeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    activeSignal.throwIfAborted();
     if (this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
-    this.offseasonPending = true;
-    try { return await this.request(endpoint, undefined, { signal, timeoutMs: 45_000 }); }
-    finally { this.offseasonPending = false; }
+    const token = {}; this.offseasonPending = token;
+    const release = () => { if (this.offseasonPending === token) this.offseasonPending = null; };
+    let abort;
+    const cancelled = new Promise((_resolve, reject) => {
+      abort = () => { release(); reject(activeSignal.reason); };
+      activeSignal.addEventListener('abort', abort, { once: true });
+    });
+    try {
+      return await Promise.race([this.request(endpoint, undefined, { signal: activeSignal, timeoutMs: 45_000 }), cancelled]);
+    } finally {
+      activeSignal.removeEventListener('abort', abort); release();
+    }
+  }
+  async offseason({ clubUid = 0, personUid = 0, signal } = {}) {
+    return this.boundedNativeRead(offseasonEndpoint(clubUid, personUid), { signal });
   }
   async onboardingStatus({ verify = false, signal } = {}) {
     if (typeof verify !== 'boolean') throw Error('Invalid verification request');
-    if (verify && this.offseasonPending) throw Error('赛外读取正在进行，请稍候再试。');
-    if (verify) this.offseasonPending = true;
-    try { return await this.request('/v1/reader/onboarding-status' + (verify ? '?verify=true' : ''), undefined, { signal, timeoutMs: 45_000 }); }
-    finally { if (verify) this.offseasonPending = false; }
+    const endpoint = '/v1/reader/onboarding-status' + (verify ? '?verify=true' : '');
+    return verify ? this.boundedNativeRead(endpoint, { signal }) : this.request(endpoint, undefined, { signal, timeoutMs: 45_000 });
   }
   async offseasonCalendar({ clubUid, start, end, signal } = {}) {
     return this.request(calendarEndpoint(clubUid, start, end), undefined, { signal, timeoutMs: 45_000 });
   }
-  async calendarAdvice({ message, conversationId, clubUid, start, end, signal } = {}) {
+  async calendarAdvice({ message, conversationId, clubUid, start, end, characterContext, signal } = {}) {
     calendarEndpoint(clubUid, start, end); // Validate the explicit selection before a request.
     if (typeof message !== 'string' || !message.trim() || message.length > 4000) throw new Error('Invalid question');
-    return this.request('/v1/agent/calendar-advice', { message, conversation_id: conversationId ?? null, club_uid: clubUid, start, end }, { signal, timeoutMs: 120_000 });
+    return this.agentRequest('/v1/agent/calendar-advice', { message, conversation_id: conversationId ?? null, club_uid: clubUid, start, end, ...(characterContext ? { character_context: characterContext } : {}) }, { signal, timeoutMs: 120_000 });
   }
   async snapshot({ signal } = {}) {
     const envelope = await this.request('/v1/reader/business/snapshot', undefined, { signal });
@@ -260,11 +346,19 @@ class RealReaderClient {
       }
     }));
   }
-  async reply({ message, conversationId, capability, adviceMode = 'native', signal }) {
+  async reply({ message, conversationId, capability, adviceMode = 'native', nativePartial = false, characterContext, signal }) {
     // Explicit diagnostic questions are deterministic read-only tooling, never model context.
     if (asksImportedDiagnostic(message)) return diagnosticReply(await this.windowsDiscovery({ signal }), conversationId);
-    const readback = asksManagedTeam(message) ? { personUid: 0, clubUid: 0, kind: 'team' } : offseasonIntent(message);
-    if (readback) return offseasonReply(readback.error ? null : await this.offseason({ ...readback, signal }), readback, conversationId);
+    if (asksManagedTeam(message)) {
+      // Identity questions always use server-owned candidate confirmation, even
+      // for a legacy caller explicitly selecting the UI evidence mode.
+      const result = await this.agentRequest('/v1/chat', { message, conversation_id: conversationId, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+      return partialNativeReply(result, conversationId) || generalAdviceReply({ ...result, status: 'general_advice', source_status: 'general_knowledge' }, conversationId);
+    }
+    const readback = offseasonIntent(message);
+    // Date-only readback remains deterministic. Names/club/person selections now
+    // flow through the existing chat/advice endpoint so follow-ups retain scope.
+    if (readback?.kind === 'date' && !readback.error) return offseasonReply(await this.offseason({ ...readback, signal }), readback, conversationId);
     // Never infer a selected club or range from a conversation or current save.
     if (typeof message === 'string' && /(?:赛程|schedule|fixtures?)/i.test(message) && /(?:俱乐部\s*UID|club\s*UID)/i.test(message)) {
       const markers = [...message.matchAll(/(?:俱乐部\s*UID|club\s*UID)/gi)];
@@ -280,7 +374,7 @@ class RealReaderClient {
       } catch {
         return { text: '请明确提供一个俱乐部 UID 和两个同年日期（YYYY-MM-DD），范围最多 30 天。', conversationId, cards: [], metadata: meta };
       }
-      const result = await this.calendarAdvice({ message, conversationId, clubUid, start: dates[0], end: dates[1], signal });
+      const result = await this.calendarAdvice({ message, conversationId, clubUid, start: dates[0], end: dates[1], characterContext, signal });
       if (result?.status !== 'partial' || result.context?.status !== 'partial' || result.context?.selected_club_uid !== clubUid ||
           result.context?.start !== dates[0] || result.context?.end !== dates[1] || typeof result.reply !== 'string' || !result.reply.trim()) {
         return { text: '所选范围的赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
@@ -289,20 +383,20 @@ class RealReaderClient {
         metadata: { ...meta, sampledAt: result.context?.observed_at ?? null, selectedClubUid: clubUid,
           limitations: [...meta.limitations, `未加载范围：${result.context?.unloaded ?? '未知'}；未知项：${result.context?.unknown ?? '未知'}。`] } };
     }
-    if (typeof message === 'string' && /(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) {
+    if ((nativePartial && capability === 'schedule_analysis') || (typeof message === 'string' && ((/(?:赛程|比赛|fixtures?|schedule|matches)/i.test(message) && /(?:接下来|未来|下几场|接着|upcoming)/i.test(message)) || /(?:下场|下一场|下一轮).{0,12}(?:打谁|对谁|对阵|对手)|(?:who|whom).{0,20}(?:play|playing).{0,10}next/i.test(message)))) {
       const meta = { source: 'native_calendar_candidate', synthetic: false, freshness: 'unknown', partial: true,
         limitations: ['仅包含已加载赛程候选，可能不完整；经理关联候选不代表已确认当前执教球队。'] };
-      const result = await this.request('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null }, { signal, timeoutMs: 120_000 });
+      const result = await this.agentRequest('/v1/agent/auto-calendar-advice', { message, conversation_id: conversationId ?? null, ...(characterContext ? { character_context: characterContext } : {}) }, { signal, timeoutMs: 120_000 });
       const selection = result?.selection, context = result?.context;
       if (result?.status !== 'partial' || context?.status !== 'partial' || !selection ||
           context.selected_club_uid !== selection.club_uid || context.start !== selection.start || context.end !== selection.end ||
-          !['named_candidate', 'unique_candidate_not_active_confirmed'].includes(selection.selection) ||
+          !['named_candidate', 'unique_candidate_not_active_confirmed', 'native_current_manager'].includes(selection.selection) ||
           typeof result.reply !== 'string' || !result.reply.trim()) {
         return { text: typeof result?.reply === 'string' && result.status === 'unavailable' ? result.reply : '赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
       }
       return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [],
         metadata: { ...meta, sampledAt: context.observed_at ?? null, selectedClubUid: selection.club_uid,
-          limitations: [...meta.limitations, `未加载范围：${context.unloaded ?? '未知'}；未知项：${context.unknown ?? '未知'}。`] } };
+          limitations: [...(selection.selection === 'native_current_manager' ? ['仅包含当前经理关联俱乐部的已加载赛程，可能不完整。'] : meta.limitations), `未加载范围：${context.unloaded ?? '未知'}；未知项：${context.unknown ?? '未知'}。`] } };
     }
     if (/(比分|比赛情况|比赛怎么样|比赛进展|score)/i.test(message)) {
       const view = matchView(await this.match({ signal }));
@@ -313,7 +407,7 @@ class RealReaderClient {
         metadata: card.metadata, cards: [card] };
     }
     if (capability && adviceMode === 'ui_evidence') {
-      const result = await this.request('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability }, { signal });
+      const result = await this.agentRequest('/v1/agent/ui-advice', { message, conversation_id: conversationId, capability, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
       const provenance = result.provenance;
       return { text: result.reply, conversationId: result.conversation_id, cards: [], metadata: {
         source: 'ui', sourceLabel: 'Alpha · UI 采样建议（非后台全量数据）',
@@ -325,7 +419,9 @@ class RealReaderClient {
       } };
     }
     if (capability) {
-      const result = await this.request('/v1/agent/business-advice', { message, conversation_id: conversationId, capability }, { signal });
+      const result = await this.agentRequest(nativePartial ? '/v1/chat' : '/v1/agent/business-advice', { message, conversation_id: conversationId, ...(nativePartial ? {} : { capability }), ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+      const partial = generalAdviceReply(result, conversationId) || partialNativeReply(result, conversationId);
+      if (partial) return partial;
       const meta = businessMetadata(result.readiness);
       meta.snapshotId = result.facts?.[0]?.snapshot_id ?? null;
       meta.limitations.push(...(result.missing_requirements || []));
@@ -334,8 +430,10 @@ class RealReaderClient {
         cards: facts.length ? [{ id: 'business-facts', title: '已读取事实 · 建议见回复', metadata: meta,
           fields: facts.slice(0, 100).map(fact => ({ label: `${fact.snapshot_id} ${fact.field_ref}`, value: fact.value, status: 'observed' })) }] : [] };
     }
-    const result = await this.request('/v1/chat', { message, conversation_id: conversationId }, { signal });
-    return { text: result.reply, conversationId: result.conversation_id, metadata: { ...businessMetadata(), source: 'agent', sourceLabel: 'AI 对话 · 非当前存档事实', limitations: ['普通对话不代表已读取当前存档业务数据。'] }, cards: [] };
+    const result = await this.agentRequest('/v1/chat', { message, conversation_id: conversationId, ...(characterContext ? { character_context: characterContext } : {}) }, { signal });
+    const partial = generalAdviceReply(result, conversationId) || partialNativeReply(result, conversationId);
+    if (partial) return partial;
+    return { text: result.reply, conversationId: result.conversation_id, metadata: { ...businessMetadata(), source: 'agent', sourceLabel: 'AI 对话 · 非当前存档事实', ...(result.offseason_readiness ? { readiness: { production_ready: false, offseason_readiness: result.offseason_readiness } } : {}), limitations: ['普通对话不代表已读取当前存档业务数据。'] }, cards: [] };
   }
 }
 module.exports.RealReaderClient = RealReaderClient;

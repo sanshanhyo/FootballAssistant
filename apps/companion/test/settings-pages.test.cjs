@@ -60,10 +60,10 @@ test('failed key replacement retains draft, old saved state and a retry; unrelat
  const h=await harness({saveModelConfig:()=>Promise.resolve({ok:false,error:'保存失败'})});
  h.$('model-api-key').value='TEST-replacement';await h.$('model-api-key').fire('input');await h.$('model-fetch').fire('click');
  await h.$('model-config-form').fire('submit');await flush();
- assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('model-save').disabled,false);
+ assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('model-name').disabled,false);
  assert.equal(h.$('model-storage-note').textContent,'新密钥待保存');
  h.event({type:'state',state:{...h.state,preferences:{expression:'happy'}}});
- assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('error').textContent,'保存失败');
+ assert.equal(h.$('model-api-key').value,'TEST-replacement');assert.equal(h.$('error').textContent,'API 配置保存失败');
 });
 
 test('duplicate in-flight saves are blocked and successful response does not erase a newer key draft',async()=>{
@@ -92,30 +92,29 @@ test('explicit removal never submits a typed replacement and clears configured m
  assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-api-key').placeholder,'输入 API Key');
  assert.equal(h.$('model-storage-note').textContent,'未配置密钥');
 });
-test('five navigation pages with Alpha persona configuration hidden; diagnostic DOM removed',()=>{
+test('five navigation pages hide character library and deployment UI',()=>{
   assert.equal((html.match(/class="settings-page"/g)||[]).length,6);
   assert.equal((html.match(/data-page="/g)||[]).length,5);
   assert.doesNotMatch(html,/data-page="companion"/);
-  assert.match(html,/id="page-companion"[^>]+hidden inert/);
+  assert.match(html,/id="page-companion"[^>]+hidden inert>/);
+  assert.match(html,/id="character-library"/);
   for(const forbidden of ['COMPANION','sidebar-footer','class="brand"','class="muted"','<small>','Windows 手动诊断导入','bridge-setup-card','模拟数据演示','page-description','discovery-settings.js','bridge-settings.js'])assert.ok(!html.includes(forbidden),forbidden);
   assert.match(html,/<select id="model-name"/);assert.doesNotMatch(html,/<input id="model-name"/);
   assert.match(css,/\.about-nav\{margin-top:auto\}/);
 });
 
-test('Alpha hides all character configuration navigation while retaining persona data and memory pages',async()=>{
- assert.doesNotMatch(html,/character-card|character-introduction|data-page="characters?"|id="page-characters?"/);
- for(const id of ['persona-content','persona-save','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
+test('character UI stays hidden while retaining legacy persona and memory DOM',async()=>{
+ for(const id of ['character-library','tts-settings','persona-content','history-list','memory-list']) assert.ok(html.includes(`id="${id}"`));
  const h=await harness();assert.equal(h.nav.some(x=>x.dataset.page==='companion'),false);
  assert.equal(h.$('page-companion').hidden,true);
- const legacy=h.nav[0];legacy.dataset.page='companion';await legacy.fire('click');
- assert.equal(h.$('page-connection').hidden,false);assert.equal(h.$('page-companion').hidden,true);
- assert.equal(h.$('page-title').textContent,'连接');
+ for(const id of ['match-deployment','reader-onboarding','model-save']) assert.equal(h.$(id),undefined);
+ assert.doesNotMatch(source,/= window\.Football(?:CharacterSettings|MatchDeployment|ReaderOnboarding)\?\.bind/);
 });
 test('unavailable backend remains visibly disconnected and unknown never becomes healthy',async()=>{const h=await harness();assert.equal(h.$('connection-status').textContent,'后台未连接');h.event({type:'state',state:{...h.state,connection:{state:'pending'}}});assert.equal(h.$('connection-status').textContent,'连接未确认');});
-test('preset URL hidden, custom URL shown, provider changes clear draft key and model list',async()=>{const h=await harness();assert.equal(h.$('custom-url-row').hidden,true);h.$('model-api-key').value='secret';h.$('model-provider').value='openai-compatible';await h.$('model-provider').fire('change');assert.equal(h.$('custom-url-row').hidden,false);assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-save').disabled,true);});
-test('fetched model choices are required; edits invalidate and cancellation cannot render stale models',async()=>{let resolve;const h=await harness({listModels:()=>new Promise(r=>resolve=r)});const request=h.$('model-fetch').fire('click');h.$('model-api-key').value='changed';await h.$('model-api-key').fire('input');resolve({ok:true,value:{models:[{id:'stale'}]}});await request;assert.equal(h.$('model-save').disabled,true);assert.equal(h.$('model-name').options.some(o=>o.value==='stale'),false);});
-test('successful provider model fetch unlocks save and submits exact choice',async()=>{const h=await harness();await h.$('model-fetch').fire('click');assert.equal(h.$('model-save').disabled,false);h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();assert.equal(h.calls.find(c=>c.save).save.model,'two');assert.equal(h.$('notice').textContent,'已保存');});
-test('model fetch failures are visible and never enable save',async()=>{const h=await harness({listModels:()=>Promise.resolve({ok:false,error:'认证失败'})});await h.$('model-fetch').fire('click');assert.equal(h.$('error').textContent,'认证失败');assert.equal(h.$('model-save').disabled,true);});
+test('preset URL hidden, custom URL shown, provider changes clear draft key and model list',async()=>{const h=await harness();assert.equal(h.$('custom-url-row').hidden,true);h.$('model-api-key').value='secret';h.$('model-provider').value='openai-compatible';await h.$('model-provider').fire('change');assert.equal(h.$('custom-url-row').hidden,false);assert.equal(h.$('model-api-key').value,'');assert.equal(h.$('model-name').disabled,true);});
+test('fetched model choices are required; edits invalidate and cancellation cannot render stale models',async()=>{let resolve;const h=await harness({listModels:()=>new Promise(r=>resolve=r)});const request=h.$('model-fetch').fire('click');h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');resolve({ok:true,value:{models:[{id:'stale'}]}});await request;assert.equal(h.$('model-name').disabled,true);assert.equal(h.$('model-name').options.some(o=>o.value==='stale'),false);});
+test('successful provider model fetch unlocks save and submits exact choice',async()=>{const h=await harness();await h.$('model-fetch').fire('click');assert.equal(h.$('model-name').disabled,false);h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();assert.equal(h.calls.find(c=>c.save).save.model,'two');assert.equal(h.$('notice').textContent,'');});
+test('model fetch failures are visible and never enable save',async()=>{const h=await harness({listModels:()=>Promise.resolve({ok:false,error:'认证失败'})});await h.$('model-fetch').fire('click');assert.equal(h.$('error').textContent,'认证失败');assert.equal(h.$('model-name').disabled,true);});
 test('speech list excludes mock and selected unavailable service remains truthful',async()=>{const h=await harness();assert.equal(h.$('stt-provider').options.some(o=>o.value==='mock'),false);h.$('stt-provider').value='openai';await h.$('stt-provider').fire('change');assert.equal(h.$('stt-note').textContent,'未就绪');});
 test('persona editor sends revision and retains edited content on conflict',async()=>{const h=await harness({savePersona:()=>Promise.resolve({ok:false,error:'文件已修改'})});await h.$('persona-refresh').fire('click');assert.equal(h.$('persona-content').value,'# Original');h.$('persona-content').value='# User edit';await h.$('persona-content').fire('input');await h.$('persona-save').fire('click');assert.equal(h.$('persona-content').value,'# User edit');assert.equal(h.$('error').textContent,'文件已修改');assert.equal(h.$('persona-status').textContent,'未保存');});
 test('persona save uses loaded revision',async()=>{const h=await harness();await h.$('persona-refresh').fire('click');h.$('persona-content').value='# New';await h.$('persona-content').fire('input');await h.$('persona-save').fire('click');assert.equal(h.calls.find(c=>c.persona).persona.revision,'r1');assert.equal(h.$('persona-status').textContent,'已读取');});
@@ -129,10 +128,50 @@ test('light motion switch persists without replacing the default handwritten bub
 });
 test('about check-update network failure is not reported as up to date',async()=>{const h=await harness();await h.$('update-check').fire('click');assert.equal(h.$('update-status').textContent,'连接失败');});
 test('persona refresh discards confirmed stale draft, but never overwrites newer typing',async()=>{const h=await harness();await h.$('persona-refresh').fire('click');h.$('persona-content').value='# Draft';await h.$('persona-content').fire('input');await h.$('persona-refresh').fire('click');assert.equal(h.$('persona-content').value,'# Original');let resolve;h.api.getPersona=()=>new Promise(r=>resolve=r);const request=h.$('persona-refresh').fire('click');h.$('persona-content').value='# Typed during request';await h.$('persona-content').fire('input');resolve({ok:true,value:{content:'# Server',revision:'r3',canEdit:true,canOpen:true,status:'ready'}});await request;assert.equal(h.$('persona-content').value,'# Typed during request');});
-test('late save response preserves a newer provider/key draft',async()=>{let resolve;const h=await harness({saveModelConfig:()=>new Promise(r=>resolve=r)});await h.$('model-fetch').fire('click');await h.$('model-config-form').fire('submit');h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');h.$('model-api-key').value='new draft secret';await h.$('model-api-key').fire('input');resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true,storage:'encrypted'}});await flush();assert.equal(h.$('model-provider').value,'deepseek');assert.equal(h.$('model-api-key').value,'new draft secret');assert.equal(h.$('model-save').disabled,true);});
+test('late save response preserves a newer provider/key draft',async()=>{let resolve;const h=await harness({saveModelConfig:()=>new Promise(r=>resolve=r)});await h.$('model-fetch').fire('click');await h.$('model-config-form').fire('submit');h.$('model-provider').value='deepseek';await h.$('model-provider').fire('change');h.$('model-api-key').value='new draft secret';await h.$('model-api-key').fire('input');resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true,storage:'encrypted'}});await flush();assert.equal(h.$('model-provider').value,'deepseek');assert.equal(h.$('model-api-key').value,'new draft secret');assert.equal(h.$('model-name').disabled,true);});
 
 test('save masks the committed key and reports session-only storage without secret readback', async()=>{
  let h,received;h=await harness({saveModelConfig:input=>{received={...input};assert.equal(h.$('model-api-key').value,'test-secret');return Promise.resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',hasApiKey:true,storage:'session',restartRequired:true}});}});
  h.$('model-api-key').value='test-secret';await h.$('model-fetch').fire('click');h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();
- assert.deepEqual(received,{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',apiKey:'test-secret'});assert.equal(h.$('model-api-key').value,'');assert.match(h.$('model-storage-note').textContent,/仅本次/);assert.match(h.$('notice').textContent,/待重启/);
+ assert.deepEqual(received,{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',apiKey:'test-secret'});assert.equal(h.$('model-api-key').value,'');assert.match(h.$('model-storage-note').textContent,/仅本次/);assert.equal(h.$('notice').textContent,'');
+});
+test('bubble duration persists, validates integer bounds, and survives unrelated appearance edits',async()=>{
+  const h=await harness();assert.equal(h.$('bubble-duration-mode').value,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
+  h.$('bubble-duration-mode').value='fixed';await h.$('bubble-duration-mode').fire('change');assert.equal(h.$('bubble-duration-row').hidden,false);
+  h.$('bubble-duration-seconds').value='60';await h.$('bubble-duration-seconds').fire('change');
+  const read=()=>JSON.parse(h.storage.get('football-assistant.appearance.v1'));
+  assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().fontFamily,undefined);
+  for (const invalid of ['','1','61','2.5','NaN']) {h.$('bubble-duration-seconds').value=invalid;await h.$('bubble-duration-seconds').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.match(h.$('error').textContent,/2–60/);}
+  h.$('font-size').value='18';await h.$('font-size').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().bubbleDurationMode,'fixed');
+  h.$('bubble-duration-mode').value='auto';await h.$('bubble-duration-mode').fire('change');assert.equal(read().bubbleDurationMode,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
+});
+test('key blur autosaves without a save button or fresh model fetch', async()=>{
+ const h=await harness();h.$('model-api-key').value='TEST-new';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');await flush();
+ assert.equal(h.calls.find(c=>c.save).save.apiKey,'TEST-new');assert.equal(h.$('model-api-key').value,'');
+});
+test('late initial read preserves a key typed without changing provider', async()=>{
+ let resolve;const h=await harness({getModelConfig:()=>new Promise(r=>resolve=r)});
+ h.$('model-api-key').value='TEST-draft';await h.$('model-api-key').fire('input');
+ resolve({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true}});await flush();
+ assert.equal(h.$('model-api-key').value,'TEST-draft');
+});
+test('newer API key edit is saved when the older in-flight request fails', async()=>{
+ let resolve;const calls=[];const h=await harness({saveModelConfig:input=>{calls.push({...input});return calls.length===1?new Promise(r=>resolve=r):Promise.resolve({ok:true,value:{...input,hasApiKey:true}});}});
+ h.$('model-api-key').value='TEST-first';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ h.$('model-api-key').value='TEST-newer';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ resolve({ok:false});await flush();await flush();assert.equal(calls.length,2);assert.equal(calls[1].apiKey,'TEST-newer');assert.equal(h.$('model-api-key').value,'');
+});
+test('close waits for latest API draft after an earlier save failure', async()=>{
+ const resolvers=[],calls=[];let closed=0;
+ const h=await harness({saveModelConfig:input=>{calls.push({...input});return new Promise(r=>resolvers.push(r));},controlSettingsWindow:()=>{closed++;return Promise.resolve({ok:true});}});
+ h.$('model-api-key').value='TEST-first';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');
+ h.$('model-api-key').value='TEST-last';await h.$('model-api-key').fire('input');const closing=h.$('window-close').fire('click');
+ resolvers.shift()({ok:false});await flush();assert.equal(closed,0);assert.equal(calls.length,2);
+ resolvers.shift()({ok:true,value:{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'one',hasApiKey:true}});
+ await closing;assert.equal(closed,1);assert.equal(h.$('model-api-key').value,'');
+});
+test('unchanged failing API draft is retained without an automatic retry loop', async()=>{
+ let count=0;const h=await harness({saveModelConfig:()=>{count++;return Promise.resolve({ok:false});}});
+ h.$('model-api-key').value='TEST-retained';await h.$('model-api-key').fire('input');await h.$('model-api-key').fire('blur');await flush();await flush();
+ assert.equal(count,1);assert.equal(h.$('model-api-key').value,'TEST-retained');
 });

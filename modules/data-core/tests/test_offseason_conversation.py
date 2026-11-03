@@ -1,0 +1,148 @@
+"""Regression for the reported keeper question; synthetic only, no native reads."""
+import asyncio
+from copy import deepcopy
+from types import SimpleNamespace
+from football_assistant_agent.service import AgentService
+from football_assistant_data.offseason_conversation import OffseasonConversation
+from test_offseason_advice_context import envelope
+
+
+def test_keeper_question_followup_confirmation_names_and_bounded_attributes():
+    async def scenario():
+        data = envelope()
+        data['snapshot']['managerCandidates']['candidates'][0]['clubName'] = '示例队'
+        players = [{'uid': uid, 'name': name, 'clubUid': 34, 'teamUid': 55, 'linkStatus': 'exact_types'} for uid, name in [(1, '甲球员'), (2, '乙球员'), (3, '丙球员')]]
+        calls = []
+        async def read(club, person):
+            calls.append((club, person)); value = deepcopy(data)
+            if club:
+                value['snapshot']['team'] = {'status': 'experimental_candidates_incomplete', 'observedAt': value['snapshot']['capturedAt'], 'players': players}
+            if person:
+                value['snapshot']['player'] = {'observedAt': value['snapshot']['capturedAt'], 'value': {'status': 'experimental', 'uid': person, 'displayName': players[person-1]['name'], 'affiliation': {'clubUid': 34, 'teamUid': 55}, 'details': {'reflexesRaw': 71, 'handlingRaw': 58}}}
+            return value
+        agent = AgentService(None, None)
+        contexts = []
+        async def chat(message, conversation, context, **kwargs):
+            contexts.append((message, context)); return {'reply': '只比较本次原始观测', 'conversation_id': conversation}
+        agent._chat = chat
+        reader = OffseasonConversation()
+        def body(message, conversation=None):
+            return SimpleNamespace(message=message, conversation_id=conversation, character_context=None)
+        try:
+            first = await reader.reply(body('让我们队伍谁当门将最合适'), read, agent)
+            cid = first['conversation_id']
+            assert '示例队' in first['reply'] and '哪支球队' in first['reply']
+            follow = await reader.reply(body('你看一下吧', cid), read, agent)
+            assert follow['source_status'] == 'general_knowledge'
+            assert not contexts[-1][1].get('facts')
+            confirmed = await reader.reply(body('是的', cid), read, agent)
+            assert '甲球员' in confirmed['reply'] and '没有球员位置' in confirmed['reply']
+            result = await reader.reply(body('甲球员和乙球员是实际门将，比较他们', cid), read, agent)
+            assert result['status'] == 'partial'
+            facts = contexts[-1][1]['facts']
+            assert len(facts['player_candidates']) == 2
+            assert facts['player_candidates'][0]['attributes_raw']['reflexesRaw'] == 71
+            assert sum(club == 34 and person == 0 for club, person in calls) == 1
+            assert [(c,p) for c,p in calls if p] == [(34,1), (34,2)]
+            assert '谁当门将最合适' in contexts[-1][0]
+            people_before = sum(bool(p) for _, p in calls)
+            await reader.reply(body('你看一下吧', cid), read, agent)
+            assert sum(bool(p) for _, p in calls) == people_before
+            before = len(calls)
+            excess = await reader.reply(body('比较甲球员乙球员丙球员', cid), read, agent)
+            assert '至多两位' in excess['reply'] and len(calls) == before + 1
+            fresh = await reader.reply(body('谁当门将最合适', 'new-conversation'), read, agent)
+            assert '哪支球队' in fresh['reply']
+            other = body('谁当门将最合适', cid)
+            other.character_context = SimpleNamespace(model_dump=lambda **kw: {'save_id': 'session:other', 'character_id': 'custom.other'})
+            assert '哪支球队' in (await reader.reply(other, read, agent))['reply']
+            data['snapshot']['process'] = envelope()['snapshot']['process']
+            assert '哪支球队' in (await reader.reply(body('谁当门将最合适', cid), read, agent))['reply']
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_busy_reader_keeps_chat_useful_without_other_requests_data():
+    async def scenario():
+        reader = OffseasonConversation()
+        await reader.lock.acquire()
+        calls = []
+        class Agent:
+            async def general_advice(self, message, conversation, **kwargs):
+                calls.append((message, conversation, kwargs))
+                return {'reply': '先聊思路，我更喜欢接球稳、出击判断好的门将。', 'status': 'general_advice', 'source_status': 'general_knowledge'}
+        body = SimpleNamespace(message='你看一下吧', conversation_id='busy', character_context=None)
+        async def forbidden(*args):
+            raise AssertionError('Busy request must not read or reuse another selection')
+        try:
+            result = await reader.reply(body, forbidden, Agent())
+            assert '上一条' not in result['reply'] and result['source_status'] == 'general_knowledge'
+            assert len(calls) == 1 and reader.lock.locked() and not reader.sessions
+        finally:
+            reader.lock.release()
+    asyncio.run(asyncio.wait_for(scenario(), timeout=2))
+
+
+def test_removed_pending_team_cannot_leave_an_empty_confirmation_loop():
+    async def scenario():
+        data = envelope()
+        reader = OffseasonConversation()
+        agent = AgentService(None, None)
+        async def read(*args):
+            return deepcopy(data)
+        def body(message):
+            return SimpleNamespace(message=message, conversation_id='changed-candidates', character_context=None)
+        try:
+            first = await reader.reply(body('谁当门将最合适'), read, agent)
+            assert '哪支球队' in first['reply']
+            data['snapshot']['managerCandidates']['candidates'] = []
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert '已变化或不可用' in result['reply']
+            assert not next(iter(reader.sessions.values()))['pending']
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_busy_followup_uses_same_scope_inflight_question_not_completed_topic():
+    """Real async overlap with synthetic reader/model, no game/model calls."""
+    async def scenario():
+        reader = OffseasonConversation()
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        class Agent:
+            async def general_advice(self, message, conversation, **kwargs):
+                calls.append((message, conversation, kwargs))
+                return {'reply': '先讲门将选择的一般思路。', 'status': 'general_advice', 'source_status': 'general_knowledge'}
+        agent = Agent()
+        scope = {'save_id': 'session:synthetic', 'character_id': 'official.eckera'}
+        def body(message, cid='same', supplied=None):
+            return SimpleNamespace(message=message, conversation_id=cid,
+                character_context=SimpleNamespace(model_dump=lambda **kw: supplied or scope))
+        async def read(*args):
+            entered.set()
+            await release.wait()
+            return {'snapshot': None, 'reason': 'producer_failed'}
+        owner = asyncio.create_task(reader.reply(body('你推荐我们选择哪个门将呢'), read, agent))
+        try:
+            await entered.wait()
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert result['reader_handoff']['reason'] == 'conversation_busy'
+            assert '你推荐我们选择哪个门将呢' in calls[-1][0]
+            assert '你看一下吧' in calls[-1][0]
+            assert '未完成' in calls[-1][0]  # User intent only, not an observation/result.
+            await reader.reply(body('你看一下吧', cid='other'), read, agent)
+            assert calls[-1][0] == '你看一下吧'
+            await reader.reply(body('你看一下吧', supplied={**scope, 'character_id': 'example.other'}), read, agent)
+            assert calls[-1][0] == '你看一下吧'
+            await reader.reply(body('不聊足球了，讲个笑话'), read, agent)
+            assert calls[-1][0] == '不聊足球了，讲个笑话'
+            assert reader.lock.locked()
+        finally:
+            owner.cancel()
+            try: await owner
+            except asyncio.CancelledError: pass
+        assert not reader.lock.locked()
+        assert reader.active_request is None
+    asyncio.run(scenario())

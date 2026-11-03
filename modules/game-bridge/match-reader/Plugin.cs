@@ -14,13 +14,19 @@ public sealed class Plugin : BasePlugin
     private RealtimeMatchTimeline? timeline;
     private Timer? retry;
     private int installing;
+    private long installStarted;
 
     public override void Load()
     {
         PluginLog = Log;
+        // The installer owns this file byte-for-byte for safe rollback.
+        Config.SaveOnConfigSet = false;
         var configuredPath = Config.Bind("Output", "SnapshotPath", "", "Absolute path for the FA match snapshot.").Value;
-        var path = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_MATCH_FILE");
-        if (string.IsNullOrWhiteSpace(path)) path = configuredPath;
+        var environmentPath = Environment.GetEnvironmentVariable("FOOTBALL_ASSISTANT_MATCH_FILE");
+        var path = string.IsNullOrWhiteSpace(configuredPath) ? environmentPath : configuredPath;
+        if (!string.IsNullOrWhiteSpace(configuredPath) && !string.IsNullOrWhiteSpace(environmentPath) &&
+            !string.Equals(configuredPath, environmentPath, StringComparison.OrdinalIgnoreCase))
+            Log.LogWarning("Ignoring ambient FOOTBALL_ASSISTANT_MATCH_FILE: installer-configured Output.SnapshotPath takes precedence.");
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
         {
             Log.LogWarning("Match reader disabled: configure an absolute snapshot output path.");
@@ -28,7 +34,8 @@ public sealed class Plugin : BasePlugin
         }
         timeline = new RealtimeMatchTimeline(path);
         hook = new GameMatchTickHook(timeline);
-        retry = new Timer(_ => Install(), null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+        installStarted = Environment.TickCount64;
+        retry = new Timer(_ => Install(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private void Install()
@@ -36,6 +43,12 @@ public sealed class Plugin : BasePlugin
         if (Interlocked.Exchange(ref installing, 1) != 0) return;
         try
         {
+            if (Environment.TickCount64 - installStarted > 120_000)
+            {
+                timeline?.SetLoadState("hook_timeout");
+                Interlocked.Exchange(ref retry, null)?.Dispose();
+                return;
+            }
             if (hook is not null && (hook.IsStarted || hook.Start(false)))
                 Interlocked.Exchange(ref retry, null)?.Dispose();
         }

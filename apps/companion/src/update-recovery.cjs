@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { compareVersions } = require('./update-security.cjs');
 const { validateModelConfig } = require('./credentials.cjs');
+const { validateSettings } = require('./bootstrap.cjs');
 const SNAPSHOTS = Object.freeze([
   { source: 'companion-ui.json', limit: 2_000_000, validate: bytes => { if (JSON.parse(bytes.toString('utf8')).version !== 1) throw Error('Unsupported conversation schema'); } },
   { source: 'model-config.json', limit: 16384, validate: bytes => validateModelConfig(JSON.parse(bytes.toString('utf8')), { persisted: true }) },
@@ -98,7 +99,9 @@ function createUpdateRecovery({ userData, currentVersion }) {
       // This settings snapshot accepts only the non-secret bootstrap schema.
       // Account/UI/persona checkpoints use the separate fixed allowlist below;
       // backend environment files and the rest of the profile are never traversed.
-      if (!settings || settings.version !== 1 || Object.keys(settings).some(key => !['version', 'backend', 'bridgePrivateRoot', 'backendEnvFile'].includes(key)) || !settings.backend || Object.keys(settings.backend).some(key => key !== 'port') || !Number.isInteger(settings.backend.port) || settings.backend.port < 1 || settings.backend.port > 65535 || typeof settings.bridgePrivateRoot !== 'string' || typeof settings.backendEnvFile !== 'string') throw new Error('Settings schema cannot be safely snapshotted');
+      // Share the live bootstrap schema, including installed Windows reader paths.
+      // Its strict allowlist still rejects unknown fields and plaintext credentials.
+      validateSettings(settings);
       backup = `settings-${transaction}.json`; backupSha256 = crypto.createHash('sha256').update(bytes).digest('hex');
       // Immutable unique-name backup: never replace an earlier upgrade's snapshot.
       const handle = await fs.open(path.join(directory, backup), 'wx', 0o600);

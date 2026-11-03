@@ -1,0 +1,788 @@
+{
+  "schema": 1,
+  "officialArchiveSha256": "2a7cbf74d26abe4765c3e662db1721b923bac39849ebfef2ca5dc7de7e2d9b7f",
+  "components": [
+    {
+      "id": "BepInEx",
+      "version": "6.0.0-be.785+6abdba4",
+      "license": "LGPL-2.1-only",
+      "files": [
+        "BepInEx/core/BepInEx.Core.dll",
+        "BepInEx/core/BepInEx.Preloader.Core.dll",
+        "BepInEx/core/BepInEx.Unity.Common.dll",
+        "BepInEx/core/BepInEx.Unity.IL2CPP.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/BepInEx.Core.dll": "352aacc2d5356489a00891f76db28b6463c81d25bcb02f90035171a669b7e35b",
+        "BepInEx/core/BepInEx.Preloader.Core.dll": "ec168752c9a885d9fe035370ac2dbd8b52b91b24cb60fbc425cfcbee5436dae9",
+        "BepInEx/core/BepInEx.Unity.Common.dll": "8a15faf3191ba107d6a4ac7c61b89e2e030a23b9e74d74773f54572baa3a39c7",
+        "BepInEx/core/BepInEx.Unity.IL2CPP.dll": "62c8246a3076bfe459ec80c482381228d0eb1dde3434fe97ae5255fef406fe72"
+      },
+      "licenseFiles": [
+        "BepInEx/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/BepInEx/BepInEx/tar.gz/6abdba47eeebe08552282e7a58ef0f4a9ab60b62",
+        "sha256": "7706166671509986a866506e2971bbbcd0e7537034a21feaf7d019cb41d7334a",
+        "commit": "6abdba47eeebe08552282e7a58ef0f4a9ab60b62",
+        "excludeFiles": [
+          "BepInEx-6abdba47eeebe08552282e7a58ef0f4a9ab60b62/Runtimes/Unity/BepInEx.Unity.IL2CPP/lib/Unity.InputSystem.dll",
+          "BepInEx-6abdba47eeebe08552282e7a58ef0f4a9ab60b62/Runtimes/Unity/BepInEx.Unity.IL2CPP/lib/UnityEngine.CoreModule.dll",
+          "BepInEx-6abdba47eeebe08552282e7a58ef0f4a9ab60b62/Runtimes/Unity/BepInEx.Unity.IL2CPP/lib/UnityEngine.InputLegacyModule.dll"
+        ]
+      },
+      "sourceArchiveRequired": true,
+      "binaryEvidence": {
+        "BepInEx/core/BepInEx.Core.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/BepInEx.Preloader.Core.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/BepInEx.Unity.Common.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/BepInEx.Unity.IL2CPP.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        }
+      }
+    },
+    {
+      "id": "Il2CppInterop",
+      "version": "1.5.3",
+      "license": "LGPL-3.0-only",
+      "files": [
+        "BepInEx/core/Il2CppInterop.Common.dll",
+        "BepInEx/core/Il2CppInterop.Generator.dll",
+        "BepInEx/core/Il2CppInterop.Runtime.dll",
+        "BepInEx/core/Il2CppInterop.HarmonySupport.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Il2CppInterop.Common.dll": "070e04f2276a8963a6d2a7eb52d43b644f3ae9aa3816c34541124d3862f1b37f",
+        "BepInEx/core/Il2CppInterop.Generator.dll": "95364bf2686f50d114784e482a0e78c472f6a649d07ea31a075328b2b756899d",
+        "BepInEx/core/Il2CppInterop.Runtime.dll": "65ab051a681c2c1e52df7596ff738be401aae72cff882ff18241cf54a3ea38a4",
+        "BepInEx/core/Il2CppInterop.HarmonySupport.dll": "f7612ea2e5a4d473b771f34ee3b20cf32dc0c4ecea0185416474999a17fbcc07"
+      },
+      "licenseFiles": [
+        "Il2CppInterop/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/BepInEx/Il2CppInterop/tar.gz/dbda1cb353b0f4253345dc45136d170b9e50a5a0",
+        "sha256": "477c1be02f0f13e5a3f424ee33293d50e95e1b770a6dfe1b45e5135eb172029e",
+        "commit": "dbda1cb353b0f4253345dc45136d170b9e50a5a0",
+        "excludeFiles": [
+          "Il2CppInterop-dbda1cb353b0f4253345dc45136d170b9e50a5a0/Il2CppInterop.Runtime/Libs/Il2Cppmscorlib.dll"
+        ]
+      },
+      "sourceArchiveRequired": true,
+      "binaryEvidence": {
+        "BepInEx/core/Il2CppInterop.Common.dll": {
+          "package": "Il2CppInterop.Common",
+          "version": "1.5.3",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/il2cppinterop.common/1.5.3/il2cppinterop.common.1.5.3.nupkg",
+          "packageSha256": "067abd04a5a30f50522e0646d8aea93afb083c25e4091595fc628feb2d66332d",
+          "assemblyPath": "lib/netstandard2.0/Il2CppInterop.Common.dll"
+        },
+        "BepInEx/core/Il2CppInterop.Generator.dll": {
+          "package": "Il2CppInterop.Generator",
+          "version": "1.5.3",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/il2cppinterop.generator/1.5.3/il2cppinterop.generator.1.5.3.nupkg",
+          "packageSha256": "02ba147b4e09b63e04cab37a7d48b4d1dd0c0249e2ae86753880d55d493c1181",
+          "assemblyPath": "lib/netstandard2.1/Il2CppInterop.Generator.dll"
+        },
+        "BepInEx/core/Il2CppInterop.Runtime.dll": {
+          "package": "Il2CppInterop.Runtime",
+          "version": "1.5.3",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/il2cppinterop.runtime/1.5.3/il2cppinterop.runtime.1.5.3.nupkg",
+          "packageSha256": "b89a1f10ffb0b27b40c420296bedfdebceb69e0d70124f16e368232a1404677a",
+          "assemblyPath": "lib/net6.0/Il2CppInterop.Runtime.dll"
+        },
+        "BepInEx/core/Il2CppInterop.HarmonySupport.dll": {
+          "package": "Il2CppInterop.HarmonySupport",
+          "version": "1.5.3",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/il2cppinterop.harmonysupport/1.5.3/il2cppinterop.harmonysupport.1.5.3.nupkg",
+          "packageSha256": "4e627113acd627f6008e355b8c72688800c10adbe35ffd7862538dd1147f7c08",
+          "assemblyPath": "lib/net6.0/Il2CppInterop.HarmonySupport.dll"
+        }
+      }
+    },
+    {
+      "id": "Cpp2IL",
+      "version": "2022.1.0-development.1452",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/Cpp2IL.Core.dll",
+        "BepInEx/core/LibCpp2IL.dll",
+        "BepInEx/core/WasmDisassembler.dll",
+        "BepInEx/core/StableNameDotNet.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Cpp2IL.Core.dll": "a7ae866298472bfa5176c1b5b71adfa9fe6e2f1deef7b8d50f063c0e2c0ba258",
+        "BepInEx/core/LibCpp2IL.dll": "dd3bd5417cac3fd203b906a90dbae6719136e61f43c2b4eed55f56242bb10a14",
+        "BepInEx/core/WasmDisassembler.dll": "f837036e0db02d6f3dde76de573fd9a847a1175d61818607e40c46952f5c66c0",
+        "BepInEx/core/StableNameDotNet.dll": "280373b93a140395489d714703ac61f8d02c7aa07ac6e34024f8f0e26901325a"
+      },
+      "licenseFiles": [
+        "Cpp2IL/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/SamboyCoding/Cpp2IL/tar.gz/558ddd98642010897d54316b51fbaa7889fda093",
+        "sha256": "2b71b5d70fe47f8f718d542fc9abffa7b461d1f3979f172487fa2e555a049e49",
+        "commit": "558ddd98642010897d54316b51fbaa7889fda093"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/Cpp2IL.Core.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/LibCpp2IL.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/WasmDisassembler.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/StableNameDotNet.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        }
+      }
+    },
+    {
+      "id": "Disarm",
+      "version": "2022.1.0-master.99",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/Disarm.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Disarm.dll": "40e804c35369825884534734725d06831a534759478c8d9f3f908d80779a1a93"
+      },
+      "licenseFiles": [
+        "Disarm/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/SamboyCoding/Disarm/tar.gz/8574010015c8c56bb7faad7e407c50b0abe9cc72",
+        "sha256": "253fc2ac0b814a97446bd13262c361adf71d4606d1c4e2cc9dbb51817f5290dc",
+        "commit": "8574010015c8c56bb7faad7e407c50b0abe9cc72"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/Disarm.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        }
+      }
+    },
+    {
+      "id": "AssetRipper.CIL",
+      "version": "1.2.2",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/AssetRipper.CIL.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/AssetRipper.CIL.dll": "1eeff8d76dda5d65e5145ab0d43a3dac672e096e5692c47e0382ebb3c7c817f9"
+      },
+      "licenseFiles": [
+        "AssetRipper.CIL/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/AssetRipper/AssetRipper.CIL/tar.gz/06216e69825ccd6536dc17e9ca81c4d539ce9321",
+        "sha256": "92b7960f65a1d12127deec2885e35b341a4233a5ed6b12160647f8c9517b1e34",
+        "commit": "06216e69825ccd6536dc17e9ca81c4d539ce9321"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/AssetRipper.CIL.dll": {
+          "package": "AssetRipper.CIL",
+          "version": "1.2.2",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/assetripper.cil/1.2.2/assetripper.cil.1.2.2.nupkg",
+          "packageSha256": "0749545fca60527303e50b9f67c056428fb5c0326cdc682a52400c2a1ec26dd9",
+          "assemblyPath": "lib/net6.0/AssetRipper.CIL.dll"
+        }
+      }
+    },
+    {
+      "id": "AssetRipper.Primitives",
+      "version": "3.2.0",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/AssetRipper.Primitives.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/AssetRipper.Primitives.dll": "681ba26fd356d9263fdf6afeb1b8f8506802a9503ffa80c9d21e0c4a46743a28"
+      },
+      "licenseFiles": [
+        "AssetRipper.Primitives/License.md"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/AssetRipper/AssetRipper.Primitives/tar.gz/d759b3db98bf2a1cb8c2181faf5d405610aac585",
+        "sha256": "f527412102c5f346f3b12e8eacbe78f0ad7053b1f233b4017aa7c29600ce347c",
+        "commit": "d759b3db98bf2a1cb8c2181faf5d405610aac585"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/AssetRipper.Primitives.dll": {
+          "package": "AssetRipper.Primitives",
+          "version": "3.2.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/assetripper.primitives/3.2.0/assetripper.primitives.3.2.0.nupkg",
+          "packageSha256": "0a859c80b149f61207d3dbc37d3bebb4de9dcfd0b304ead7902da4c23f9e6c67",
+          "assemblyPath": "lib/net6.0/AssetRipper.Primitives.dll"
+        }
+      }
+    },
+    {
+      "id": "AsmResolver",
+      "version": "6.0.0-beta.5",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/AsmResolver.dll",
+        "BepInEx/core/AsmResolver.PE.dll",
+        "BepInEx/core/AsmResolver.PE.File.dll",
+        "BepInEx/core/AsmResolver.DotNet.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/AsmResolver.dll": "64b50030b34654f12805ec4d2848551e431c5f0bcd65cd70d6fe2845f715fb12",
+        "BepInEx/core/AsmResolver.PE.dll": "6ba6d56bf5fd3dd18233b56606a7ed1d42b8c93977b5375716771bf13ea36a1e",
+        "BepInEx/core/AsmResolver.PE.File.dll": "8246433a1a6fb4c012c1814acee8a4ff24f3a4fac593569f6a1e343e68c9d8ee",
+        "BepInEx/core/AsmResolver.DotNet.dll": "045bcdf32427f9bd39bee2620c470372583935c8e89b360931e467dd191d46d1"
+      },
+      "licenseFiles": [
+        "AsmResolver/LICENSE.md"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/Washi1337/AsmResolver/tar.gz/124e161a9bc0ebb83b4d97276ae3da3c9cfe2fc5",
+        "sha256": "c89df815fb1b809965e6bf7d833a05a35048957e1947775020e005db03ce455b",
+        "commit": "124e161a9bc0ebb83b4d97276ae3da3c9cfe2fc5"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/AsmResolver.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/AsmResolver.PE.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/AsmResolver.PE.File.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        },
+        "BepInEx/core/AsmResolver.DotNet.dll": {
+          "package": "AsmResolver.DotNet",
+          "version": "6.0.0-beta.5",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/asmresolver.dotnet/6.0.0-beta.5/asmresolver.dotnet.6.0.0-beta.5.nupkg",
+          "packageSha256": "c45cc807dbed7ee5145509ba64557ceac563cb2b383b26a84db4f4da62ede73e",
+          "assemblyPath": "lib/net6.0/AsmResolver.DotNet.dll"
+        }
+      }
+    },
+    {
+      "id": "Capstone.NET",
+      "version": "2.3.2",
+      "license": "MIT; bundled Capstone notice retained",
+      "files": [
+        "BepInEx/core/Gee.External.Capstone.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Gee.External.Capstone.dll": "18f9cfbfd10b479143a46b3e417ccfce4a62d4c2770da9ed12d553a0b326302c"
+      },
+      "licenseFiles": [
+        "Capstone.NET/Gee.External.Capstone/runtimes/LICENSE.TXT",
+        "Capstone.NET/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/ds5678/Capstone.NET/tar.gz/b90e380c14e857865c94a355954236e678bd557c",
+        "sha256": "5037cb91f74fd050c955510e423dc6c56ef52f24361f99306e80fb94c9ec07ee",
+        "commit": "b90e380c14e857865c94a355954236e678bd557c"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/Gee.External.Capstone.dll": {
+          "kind": "official BepInEx archive; version/source commit verified from assembly metadata or upstream release build"
+        }
+      }
+    },
+    {
+      "id": "Iced",
+      "version": "1.21.0",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/Iced.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Iced.dll": "f058c01321b4cdfc9b9151879e88e59571c8d0ba176fbcf95bc936a8f3d073ed"
+      },
+      "licenseFiles": [
+        "Iced/LICENSE.txt",
+        "Iced/src/rust/iced-x86-py/LICENSE.txt"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/icedland/iced/tar.gz/601c40570d6c986c8e1a6a2e483dd2fdf5ade552",
+        "sha256": "b339f3ee6d89077a2ce56e542bbb302623023a84ff9cfd16960a61386c193d41",
+        "commit": "601c40570d6c986c8e1a6a2e483dd2fdf5ade552"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/Iced.dll": {
+          "package": "Iced",
+          "version": "1.21.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/iced/1.21.0/iced.1.21.0.nupkg",
+          "packageSha256": "d31613617e3ddf91239bbc94a8c587849b4236e8f8a2a2ba59ea2397a1487c7a",
+          "assemblyPath": "lib/netstandard2.1/Iced.dll"
+        }
+      }
+    },
+    {
+      "id": "MonoMod",
+      "version": "22.7.31.1",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/MonoMod.RuntimeDetour.dll",
+        "BepInEx/core/MonoMod.Utils.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": "1b3d55f53cb9f9f2550daed4dfd300b247d71698a0ace82bc7b9ff38d563594f",
+        "BepInEx/core/MonoMod.Utils.dll": "72a5b4249985873d7ecb160cbbed7a1e6540a38ee7618c72c64b9cb068c1438a"
+      },
+      "licenseFiles": [
+        "MonoMod/LICENSE",
+        "MonoMod.Common/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/MonoMod/MonoMod/tar.gz/8fea48428622be858dd4f48b20ba1bf96ba09894",
+        "sha256": "b6a9838b41c7ba7c6a0dbe34c2fbaa3d2e5641ace8b44a38af8c65e609631737",
+        "commit": "8fea48428622be858dd4f48b20ba1bf96ba09894"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/MonoMod.RuntimeDetour.dll": {
+          "package": "MonoMod.RuntimeDetour",
+          "version": "22.7.31.1",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/monomod.runtimedetour/22.7.31.1/monomod.runtimedetour.22.7.31.1.nupkg",
+          "packageSha256": "add8715203eee73f7bb2817716d717817dc93ba9ec747fcca5f217fe41ae5370",
+          "assemblyPath": "lib/net5.0/MonoMod.RuntimeDetour.dll"
+        },
+        "BepInEx/core/MonoMod.Utils.dll": {
+          "package": "MonoMod.Utils",
+          "version": "22.7.31.1",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/monomod.utils/22.7.31.1/monomod.utils.22.7.31.1.nupkg",
+          "packageSha256": "6cbfacc470500c295079cb01dd8a792e325675946fc6f85f7b80f4d7ecbb9495",
+          "assemblyPath": "lib/net5.0/MonoMod.Utils.dll"
+        }
+      },
+      "additionalSources": [
+        {
+          "url": "https://codeload.github.com/MonoMod/MonoMod.Common/tar.gz/d679ae74d002e513bd88e52091b66283d8537d83",
+          "sha256": "4a00c0af8c5aeb5505be95a3857c1c75423c4b034ea1dddc1bdec21af842288f",
+          "commit": "d679ae74d002e513bd88e52091b66283d8537d83"
+        }
+      ]
+    },
+    {
+      "id": "MonoMod-new",
+      "version": "Backports 1.1.2; ILHelpers 1.1.0",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/MonoMod.Backports.dll",
+        "BepInEx/core/MonoMod.ILHelpers.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/MonoMod.Backports.dll": "cdd6e9f7bcdb98d2c002f63bfbe85ae80ea36261190a741e64283d769a6c6502",
+        "BepInEx/core/MonoMod.ILHelpers.dll": "0081403bdcef3340f78c7ccded0be6ae0507b397ee8b9980b44f01bf9f93aed1"
+      },
+      "licenseFiles": [
+        "MonoMod-new/LICENSE",
+        "MonoMod-new-Iced/LICENSE.txt",
+        "MonoMod-new-Iced/src/rust/iced-x86-py/LICENSE.txt"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/MonoMod/MonoMod/tar.gz/a1b82852b2574742776af08818487b90b0bfab93",
+        "sha256": "c995b1cd2223f103fdfc06fd81e74ae27d1673a5e65316d7ab95d78b500fdbf1",
+        "commit": "a1b82852b2574742776af08818487b90b0bfab93"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/MonoMod.Backports.dll": {
+          "package": "MonoMod.Backports",
+          "version": "1.1.2",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/monomod.backports/1.1.2/monomod.backports.1.1.2.nupkg",
+          "packageSha256": "a1785c9cca34ac36437299a119585085ac7494579bf434f719f4a8a1eb0ea37f",
+          "assemblyPath": "lib/net6.0/MonoMod.Backports.dll"
+        },
+        "BepInEx/core/MonoMod.ILHelpers.dll": {
+          "package": "MonoMod.ILHelpers",
+          "version": "1.1.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/monomod.ilhelpers/1.1.0/monomod.ilhelpers.1.1.0.nupkg",
+          "packageSha256": "b1ea044f97eab32398f20ec37cda4b407353754558dd4ff10a86050b852b38ac",
+          "assemblyPath": "lib/net6.0/MonoMod.ILHelpers.dll"
+        }
+      },
+      "additionalSources": [
+        {
+          "url": "https://codeload.github.com/icedland/iced/tar.gz/425462f47e0752f143b4f3826b875d5c33b5baf1",
+          "sha256": "7cb705588628a698e4eb6863b37bde466a2518a8af3fa10b26640672213e7515",
+          "commit": "425462f47e0752f143b4f3826b875d5c33b5baf1"
+        }
+      ]
+    },
+    {
+      "id": "Cecil",
+      "version": "0.11.4",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/Mono.Cecil.dll",
+        "BepInEx/core/Mono.Cecil.Mdb.dll",
+        "BepInEx/core/Mono.Cecil.Pdb.dll",
+        "BepInEx/core/Mono.Cecil.Rocks.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/Mono.Cecil.dll": "769a59793d4b8885bbbfbc5aee8f57a0d4e34d275c56c60c03994309b87f67e9",
+        "BepInEx/core/Mono.Cecil.Mdb.dll": "61637f9940e5e336571cbf945be0f36d6d6050e06288df0f0232d93b26f0bde7",
+        "BepInEx/core/Mono.Cecil.Pdb.dll": "a5249a04ad8fd7dfd47e4d0a620aed0f7eb6051e1ddec102c541ca3e12f6e2a8",
+        "BepInEx/core/Mono.Cecil.Rocks.dll": "273292babd45f9f34de5054bd9cdfe1d859a7dbf6f4ad5974fe4ead70698ed5b"
+      },
+      "licenseFiles": [
+        "Cecil/LICENSE.txt",
+        "Cecil/symbols/pdb/Microsoft.Cci.Pdb/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/jbevain/cecil/tar.gz/04b44978799b4c5268955de2219cda45904aa397",
+        "sha256": "542d95960cc65535762dd22ae64ac3d468ddc3400f98a79564ea72c15ce7c013",
+        "commit": "04b44978799b4c5268955de2219cda45904aa397"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/Mono.Cecil.dll": {
+          "package": "Mono.Cecil",
+          "version": "0.11.4",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/mono.cecil/0.11.4/mono.cecil.0.11.4.nupkg",
+          "packageSha256": "1eb9d1805b0ecdfa805b0d1f5318bfbe4cd977c74c9f9cee79478b41603daafb",
+          "assemblyPath": "lib/netstandard2.0/Mono.Cecil.dll"
+        },
+        "BepInEx/core/Mono.Cecil.Mdb.dll": {
+          "package": "Mono.Cecil",
+          "version": "0.11.4",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/mono.cecil/0.11.4/mono.cecil.0.11.4.nupkg",
+          "packageSha256": "1eb9d1805b0ecdfa805b0d1f5318bfbe4cd977c74c9f9cee79478b41603daafb",
+          "assemblyPath": "lib/netstandard2.0/Mono.Cecil.Mdb.dll"
+        },
+        "BepInEx/core/Mono.Cecil.Pdb.dll": {
+          "package": "Mono.Cecil",
+          "version": "0.11.4",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/mono.cecil/0.11.4/mono.cecil.0.11.4.nupkg",
+          "packageSha256": "1eb9d1805b0ecdfa805b0d1f5318bfbe4cd977c74c9f9cee79478b41603daafb",
+          "assemblyPath": "lib/netstandard2.0/Mono.Cecil.Pdb.dll"
+        },
+        "BepInEx/core/Mono.Cecil.Rocks.dll": {
+          "package": "Mono.Cecil",
+          "version": "0.11.4",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/mono.cecil/0.11.4/mono.cecil.0.11.4.nupkg",
+          "packageSha256": "1eb9d1805b0ecdfa805b0d1f5318bfbe4cd977c74c9f9cee79478b41603daafb",
+          "assemblyPath": "lib/netstandard2.0/Mono.Cecil.Rocks.dll"
+        }
+      }
+    },
+    {
+      "id": "HarmonyX",
+      "version": "2.10.2",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/0Harmony.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/0Harmony.dll": "6c898933b52149e8bcf6722305c7e4d94add47c9e53b364096f91721624c0877"
+      },
+      "licenseFiles": [
+        "HarmonyX/LICENSE",
+        "HarmonyX/LICENSE.Harmony"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/BepInEx/HarmonyX/tar.gz/97b2a2e9cecd6d0c757da4dbb696abaff9163faa",
+        "sha256": "a615125855a3e1f3ddf9b9fca07b4d7e06e567de08df81a4a49d30a6998a3a96",
+        "commit": "97b2a2e9cecd6d0c757da4dbb696abaff9163faa"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/0Harmony.dll": {
+          "package": "HarmonyX",
+          "version": "2.10.2",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/harmonyx/2.10.2/harmonyx.2.10.2.nupkg",
+          "packageSha256": "a0982001346412f8088475c15895b0c651bf7d04cdb14f4be4ea7112c2164eb7",
+          "assemblyPath": "lib/netstandard2.0/0Harmony.dll"
+        }
+      }
+    },
+    {
+      "id": "SemanticVersioning",
+      "version": "2.0.2",
+      "license": "MIT",
+      "files": [
+        "BepInEx/core/SemanticVersioning.dll"
+      ],
+      "fileHashes": {
+        "BepInEx/core/SemanticVersioning.dll": "a5b57607225a0ebde049e93469f49e5b2d07a7d602a03864ce3a72ccf57103a2"
+      },
+      "licenseFiles": [
+        "SemanticVersioning/LICENSE"
+      ],
+      "source": {
+        "url": "https://codeload.github.com/adamreeve/semver.net/tar.gz/c52c9d4c5d34a6a3bb6ff45f7276d8b6e951a42d",
+        "sha256": "45204f759067cc36f1336a6d8b8f6fb5c9b2bdcf3a0d17e77a99fa16ec33cdaa",
+        "commit": "c52c9d4c5d34a6a3bb6ff45f7276d8b6e951a42d"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "BepInEx/core/SemanticVersioning.dll": {
+          "package": "SemanticVersioning",
+          "version": "2.0.2",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/semanticversioning/2.0.2/semanticversioning.2.0.2.nupkg",
+          "packageSha256": "779b5426c8431e4feb84daaded197d4bf160e76e9e9757da79a9cd1ca72ab408",
+          "assemblyPath": "lib/netstandard2.0/SemanticVersioning.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.Primitives",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.Primitives.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.Primitives.dll": "8ce9a85927ec7507b11ffe90080e7a811d51304a9e8b1da20c350159ba403902"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.Primitives/LICENSE.TXT",
+        "Microsoft.Extensions.Primitives/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.Primitives.dll": {
+          "package": "Microsoft.Extensions.Primitives",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.primitives/6.0.0/microsoft.extensions.primitives.6.0.0.nupkg",
+          "packageSha256": "020bf2b2cce9435d40893049164bd2cbc267c085938f5e4f7de93b4fb4e151ce",
+          "assemblyPath": "lib/net6.0/Microsoft.Extensions.Primitives.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.Logging",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.Logging.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.Logging.dll": "183650081b551dfad967a7cbf79946a229cb79458b8d04a12db7c44b03bb9ab7"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.Logging/LICENSE.TXT",
+        "Microsoft.Extensions.Logging/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.Logging.dll": {
+          "package": "Microsoft.Extensions.Logging",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.logging/6.0.0/microsoft.extensions.logging.6.0.0.nupkg",
+          "packageSha256": "f16b1929119f5d6e4cb1790c98d55feac96b930f9c474d3973390e3f6294a939",
+          "assemblyPath": "lib/netstandard2.1/Microsoft.Extensions.Logging.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.DependencyInjection.Abstractions",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.DependencyInjection.Abstractions.dll": "9ccd830351aa28bc683d4f8d1cefd9e724161f972d25bfb64eee5bf55c48c5e3"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.DependencyInjection.Abstractions/LICENSE.TXT",
+        "Microsoft.Extensions.DependencyInjection.Abstractions/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.DependencyInjection.Abstractions.dll": {
+          "package": "Microsoft.Extensions.DependencyInjection.Abstractions",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.dependencyinjection.abstractions/6.0.0/microsoft.extensions.dependencyinjection.abstractions.6.0.0.nupkg",
+          "packageSha256": "49991ed2334a22a26fbee91db5af8c808946b2b3f611d3e4912f257cb83b26ee",
+          "assemblyPath": "lib/net6.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.Logging.Abstractions",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.Logging.Abstractions.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.Logging.Abstractions.dll": "d575c9d1543ca726ce14dbdffd103e93ea527cd46bb28316da1f4122dbc55d56"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.Logging.Abstractions/LICENSE.TXT",
+        "Microsoft.Extensions.Logging.Abstractions/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.Logging.Abstractions.dll": {
+          "package": "Microsoft.Extensions.Logging.Abstractions",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.logging.abstractions/6.0.0/microsoft.extensions.logging.abstractions.6.0.0.nupkg",
+          "packageSha256": "40da9c437c7e30e2bb9576d6902cd23966bfd90c9835b74cfce1046d6375e52c",
+          "assemblyPath": "lib/net6.0/Microsoft.Extensions.Logging.Abstractions.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.Options",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.Options.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.Options.dll": "786112cb2f6646ef1170219a8c0bb813c9f14a6781e67c6266414f55a679565d"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.Options/LICENSE.TXT",
+        "Microsoft.Extensions.Options/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.Options.dll": {
+          "package": "Microsoft.Extensions.Options",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.options/6.0.0/microsoft.extensions.options.6.0.0.nupkg",
+          "packageSha256": "0f19c48068825e992bc459315ed397ab06a202da088c0f1549258272c5b41701",
+          "assemblyPath": "lib/netstandard2.1/Microsoft.Extensions.Options.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Extensions.DependencyInjection",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Extensions.DependencyInjection.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Extensions.DependencyInjection.dll": "2aa8182b5356a8cc5c35fc3641a87e814857d8d9be399ac78f260343754d09e0"
+      },
+      "licenseFiles": [
+        "Microsoft.Extensions.DependencyInjection/LICENSE.TXT",
+        "Microsoft.Extensions.DependencyInjection/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Extensions.DependencyInjection.dll": {
+          "package": "Microsoft.Extensions.DependencyInjection",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.dependencyinjection/6.0.0/microsoft.extensions.dependencyinjection.6.0.0.nupkg",
+          "packageSha256": "819b8c6ae9cc255cafbdea6eccda1d18f45ce9ea8a1fffdb92cdfde7b75890f2",
+          "assemblyPath": "lib/net6.0/Microsoft.Extensions.DependencyInjection.dll"
+        }
+      }
+    },
+    {
+      "id": "Microsoft.Bcl.AsyncInterfaces",
+      "version": "6.0.0",
+      "license": "MIT",
+      "files": [
+        "dotnet/Microsoft.Bcl.AsyncInterfaces.dll"
+      ],
+      "fileHashes": {
+        "dotnet/Microsoft.Bcl.AsyncInterfaces.dll": "5705d245072d3eb78400547b32147dbb6e2c8b02ba8bda76729798f5efdeaecb"
+      },
+      "licenseFiles": [
+        "Microsoft.Bcl.AsyncInterfaces/LICENSE.TXT",
+        "Microsoft.Bcl.AsyncInterfaces/THIRD-PARTY-NOTICES.TXT"
+      ],
+      "source": {
+        "url": "https://github.com/dotnet/runtime/tree/4822e3c3aa77eb82b2fb33c9321f923cf11ddde6",
+        "commit": "4822e3c3aa77eb82b2fb33c9321f923cf11ddde6"
+      },
+      "sourceArchiveRequired": false,
+      "binaryEvidence": {
+        "dotnet/Microsoft.Bcl.AsyncInterfaces.dll": {
+          "package": "Microsoft.Bcl.AsyncInterfaces",
+          "version": "6.0.0",
+          "packageUrl": "https://api.nuget.org/v3-flatcontainer/microsoft.bcl.asyncinterfaces/6.0.0/microsoft.bcl.asyncinterfaces.6.0.0.nupkg",
+          "packageSha256": "e3df87fe2170a7e01f0880af59caa8f6eb380b3c40a4f282dfb43912aaf0f895",
+          "assemblyPath": "lib/netstandard2.1/Microsoft.Bcl.AsyncInterfaces.dll"
+        }
+      }
+    }
+  ],
+  "licenseHashes": {
+    "BepInEx/LICENSE": "f2ceca48af033d8adf337a8f9453e633cfad10a1f8c9fec2e5ae55a2d8ffe952",
+    "Il2CppInterop/LICENSE": "5eecce16e59e24ddd9d3712012517a033f2cd0459ace22b43d5659d4624abff0",
+    "Cpp2IL/LICENSE": "1a80d1b99e958385045da1e383a105895d1c997ef2b36448430dbfe3763fe670",
+    "Disarm/LICENSE": "dfe5ef7511938e4d23b12c80f38e966a7993aee60744ab72a947bed7b24963b8",
+    "AssetRipper.CIL/LICENSE": "039cd624a13919c3af1aec3ce2217c3f50d6e3053f6e9ef64d9cf37e12812a76",
+    "AssetRipper.Primitives/License.md": "dae6148ff7ad3331a6380a2ce0cbb87f71b8f177891aba1661b1d3a6fe52d5de",
+    "AsmResolver/LICENSE.md": "1c967bb945d9e86f79e49dda29e834d49ff3cb203c9a98878e7661b3de7a5559",
+    "Capstone.NET/Gee.External.Capstone/runtimes/LICENSE.TXT": "65e9ed46a59976eda8f5bd1ea79a680dea38dd299c760bc9a8d87a764ef5029b",
+    "Capstone.NET/LICENSE": "79463fa3b9facda0f90e33eda09ff57c6c4d5620ba8b01e5c48a68834e20de4e",
+    "Iced/LICENSE.txt": "93a47598376fd3f276b631e75149340087153c6ff1635a53c5790249e9124e2d",
+    "Iced/src/rust/iced-x86-py/LICENSE.txt": "93a47598376fd3f276b631e75149340087153c6ff1635a53c5790249e9124e2d",
+    "MonoMod/LICENSE": "0b64833222e3c6a426ad29362d26334619fe02eaf2b89ea9c37805521896c920",
+    "MonoMod.Common/LICENSE": "206ffec502564c3bd09be6c6370c817963ae69bef8e8f0cf208d19bd94ce28bd",
+    "MonoMod-new/LICENSE": "0b64833222e3c6a426ad29362d26334619fe02eaf2b89ea9c37805521896c920",
+    "MonoMod-new-Iced/LICENSE.txt": "93a47598376fd3f276b631e75149340087153c6ff1635a53c5790249e9124e2d",
+    "MonoMod-new-Iced/src/rust/iced-x86-py/LICENSE.txt": "93a47598376fd3f276b631e75149340087153c6ff1635a53c5790249e9124e2d",
+    "Cecil/LICENSE.txt": "13d58ecbed676511c0c4c4009bff107025e50007ff5e7901dc562700ec62509e",
+    "Cecil/symbols/pdb/Microsoft.Cci.Pdb/LICENSE": "d0e26984080b12c7830983ef4de2ec522e1aa94047f2753347953b278e9c66e0",
+    "HarmonyX/LICENSE": "1aaf59a35b7d0bc58cdc4ffe303558974ad5acae6700ba9e04a182e9f6cb5c8b",
+    "HarmonyX/LICENSE.Harmony": "07cfa3e4aa04ae179d538735629ac69d272b8c3ffc58a20ebdba5e8b63f9f42f",
+    "SemanticVersioning/LICENSE": "26a00bad0d14ca2fc93c10398d477fa9609d6fd36068867de53384218c1f64a3",
+    "Microsoft.Extensions.Primitives/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.Primitives/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Extensions.Logging/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.Logging/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Extensions.DependencyInjection.Abstractions/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.DependencyInjection.Abstractions/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Extensions.Logging.Abstractions/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.Logging.Abstractions/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Extensions.Options/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.Options/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Extensions.DependencyInjection/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Extensions.DependencyInjection/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95",
+    "Microsoft.Bcl.AsyncInterfaces/LICENSE.TXT": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+    "Microsoft.Bcl.AsyncInterfaces/THIRD-PARTY-NOTICES.TXT": "a6344bfb229bc08d1071cec400eea216e307439f961c5943ec1b56d2245acb95"
+  },
+  "notes": [
+    "Managed components only: native Doorstop/Dobby and original .NET runtime files are covered by the separate native components manifest.",
+    "Full license texts and exact component/file hashes are retained. No assertion of legal compatibility or real-game acceptance is made.",
+    "Required LGPL source archives must be repacked excluding source.excludeFiles external reference DLLs; do not redistribute Unity or generated interop binaries from source archives. Keep all project source/build scripts and original source provenance.",
+    "MIT component source URLs/commits are provenance; their full source archives are not required in this payload and may contain upstream sample binaries."
+  ]
+}

@@ -56,17 +56,19 @@ def test_auth_size_strict_observations_and_missing_model(tmp_path):
 
 def test_explicit_memory_survives_restart_and_deletes(tmp_path):
     config = settings(tmp_path)
+    scope = {"save_id": "fixture-save", "character_id": "official.eckera"}
     with client_for(config) as client:
-        memory = client.post("/v1/memories",headers=AUTH,json={"content":"我喜欢高位逼抢。"}).json()
+        memory = client.post("/v1/memories",headers=AUTH,json={"content":"我喜欢高位逼抢。", "character_context":scope}).json()
         assert memory["source"] == "user_explicit"
     with client_for(config) as client:
-        assert client.get("/v1/memories",headers=AUTH).json()["memories"][0]["content"] == "我喜欢高位逼抢。"
+        assert client.get("/v1/memories",headers=AUTH,params=scope).json()["memories"][0]["content"] == "我喜欢高位逼抢。"
         assert client.get("/v1/status",headers=AUTH).json()["memory"]["memories"] == 1
-        assert client.delete("/v1/memories/"+memory["id"],headers=AUTH).status_code == 200
-        assert client.get("/v1/memories",headers=AUTH).json()["memories"] == []
+        assert client.delete("/v1/memories/"+memory["id"],headers=AUTH,params=scope).status_code == 200
+        assert client.get("/v1/memories",headers=AUTH,params=scope).json()["memories"] == []
 
 
 def test_real_sdk_wiring_and_history_with_local_provider_fixture(tmp_path):
+    scope = {"save_id": "fixture-save", "character_id": "official.eckera"}
     captured = []
     class FixtureProvider(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -87,11 +89,11 @@ def test_real_sdk_wiring_and_history_with_local_provider_fixture(tmp_path):
     config = settings(tmp_path,base_url=f"http://127.0.0.1:{server.server_port}/v1",model="fixture-model",api_key="test-only-key",model_timeout=5)
     try:
         with client_for(config) as client:
-            first = client.post("/v1/chat",headers=AUTH,json={"message":"第一轮接口测试"})
+            first = client.post("/v1/chat",headers=AUTH,json={"message":"第一轮接口测试", "character_context":scope})
             assert first.status_code == 200, first.text
             conversation = first.json()["conversation_id"]
         with client_for(config) as client:
-            second = client.post("/v1/chat",headers=AUTH,json={"message":"第二轮接口测试","conversation_id":conversation})
+            second = client.post("/v1/chat",headers=AUTH,json={"message":"第二轮接口测试","conversation_id":conversation, "character_context":scope})
             assert second.status_code == 200, second.text
             assert client.get("/v1/status",headers=AUTH).json()["memory"]["messages"] == 4
         messages = captured[-1]["messages"]

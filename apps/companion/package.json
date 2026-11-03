@@ -1,6 +1,6 @@
 {
   "name": "football-assistant-companion",
-  "version": "0.0.1-alpha.2",
+  "version": "0.0.2-alpha.14",
   "private": true,
   "description": "FootballAssistant MVP desktop companion",
   "author": "FootballAssistant contributors",
@@ -53,7 +53,7 @@
       "category": "public.app-category.games",
       "identity": null,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "按住桌宠时使用麦克风，将你的语音转换成文字。"
+        "NSMicrophoneUsageDescription": "\u6309\u4f4f\u684c\u5ba0\u65f6\u4f7f\u7528\u9ea6\u514b\u98ce\uff0c\u5c06\u4f60\u7684\u8bed\u97f3\u8f6c\u6362\u6210\u6587\u5b57\u3002"
       },
       "icon": "packaging/assets/icon.png"
     },
@@ -78,6 +78,13 @@
         {
           "from": "../../build/reader-windows-x64",
           "to": "reader-windows-x64",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "../../build/match-windows-x64",
+          "to": "match-windows-x64",
           "filter": [
             "**/*"
           ]
@@ -131,7 +138,7 @@
       "allowElevation": false,
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false,
-      "runAfterFinish": false,
+      "runAfterFinish": true,
       "include": "packaging/installer.nsh"
     },
     "portable": {

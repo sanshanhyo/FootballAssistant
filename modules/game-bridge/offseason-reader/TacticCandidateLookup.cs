@@ -11,7 +11,8 @@ namespace FootballAssistant.OffseasonReader;
 public static class TacticCandidateLookup
 {
 private const string expectedHash = "BC940E472418FC5C214208D7CF30FECF600F689B6F9D71C11BA19A2DF0FE057F";
-public static TacticCandidateResult Read(int pid, uint targetClubUid)
+public static TacticCandidateResult Read(int pid, uint targetClubUid) => Read(pid, targetClubUid, null);
+public static TacticCandidateResult Read(int pid, uint targetClubUid, NativeReadContext? context)
 {
 if (pid <= 0 || targetClubUid == 0 || targetClubUid == uint.MaxValue) return new("invalid_input");
 try
@@ -20,9 +21,7 @@ try
     if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return new("wrong_process");
     var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
     if (module is null || string.IsNullOrEmpty(module.FileName)) { return new("module_unavailable"); }
-    using (var file = File.OpenRead(module.FileName))
-    using (var sha = SHA256.Create())
-        if (Convert.ToHexString(sha.ComputeHash(file)) != expectedHash) return new("unsupported_binary");
+    if (NativeReadContext.Hash(process, module, context) != expectedHash) return new("unsupported_binary");
     using var memory = new SafeProcessHandle(OpenProcess(0x1010, false, pid));
     if (memory.IsInvalid) { return new("process_unavailable"); }
     var clock = Stopwatch.StartNew();

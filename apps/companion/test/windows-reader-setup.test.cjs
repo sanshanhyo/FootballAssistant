@@ -49,3 +49,14 @@ test('only trusted settings frame can invoke onboarding IPC', () => {
   const context={role:'settings',trustedMainFrame:true,currentUrl:'file:///settings.html',pageUrl:'file:///settings.html'};
   for(const method of ['reader-onboarding-inspect','reader-onboarding-select','reader-onboarding-enable','reader-onboarding-verify']) { assert.equal(allowsWindowIpc(context,method),true); assert.equal(allowsWindowIpc({...context,role:'pet'},method),false); assert.equal(allowsWindowIpc({...context,trustedMainFrame:false},method),false); }
 });
+test('alpha.2 consent survives upgrade and setup never rewrites existing persona or companion preferences', async t => {
+  const f=await fixture(t);const userData=path.join(f.root,'user');await fs.mkdir(userData);
+  const settings={version:1,backend:{port:17827},bridgePrivateRoot:'',backendEnvFile:'',windowsReaderEnabled:true,windowsReaderGamePath:path.join(f.root,'fm.exe')};
+  await fs.writeFile(path.join(userData,'settings.json'),JSON.stringify(settings));
+  await fs.mkdir(path.join(userData,'backend'));
+  const originals={'backend/persona.md':'user-edited persona\n','companion-ui.json':JSON.stringify({characterId:'test.custom',bubbleDurationSeconds:17,motionEnabled:false,historyEnabled:true})};
+  for(const [name,content] of Object.entries(originals))await fs.writeFile(path.join(userData,name),content);
+  const setup=createWindowsReaderSetup({userData,resourcesPath:f.root,packaged:true,platform:'win32',discover:async()=>[],requestStatus:async verify=>{assert.equal(verify,false);return{state:'configured'};}});
+  assert.equal((await setup.inspect()).enabled,true);assert.deepEqual(await loadSettings(userData),settings);
+  for(const [name,content] of Object.entries(originals))assert.equal(await fs.readFile(path.join(userData,name),'utf8'),content);
+});

@@ -58,3 +58,15 @@ test('natural routing never fabricates unknown or mismatched club', async () => 
     assert.notEqual(reply.text,'fake'); assert.equal(reply.metadata.partial,true);
   }
 });
+
+test('native current-manager calendar selection is accepted without promoting full business readiness', async () => {
+  const { RealReaderClient } = require('../src/reader-clients.cjs');
+  const scope = { save_id: 'session:calendar-native', character_id: 'official.eckera' };
+  const client = new RealReaderClient({ request: async () => ({ status: 'partial', reply: '仅按已加载赛程回答。', character_context: scope,
+    selection: { selection: 'native_current_manager', club_uid: 34, start: '2026-02-02', end: '2026-03-03', club_name: null },
+    context: { status: 'partial', selected_club_uid: 34, start: '2026-02-02', end: '2026-03-03', unloaded: 1, unknown: 1 } }) });
+  const result = await client.reply({ message: '我们下一场打谁？', characterContext: scope });
+  assert.equal(result.text, '仅按已加载赛程回答。');
+  assert.equal(result.metadata.partial, true);
+  assert.ok(!result.metadata.limitations.some(x => x.includes('不代表已确认当前')));
+});

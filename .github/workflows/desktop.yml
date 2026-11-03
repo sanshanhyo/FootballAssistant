@@ -22,6 +22,8 @@ on:
       - contracts/**
       - scripts/*desktop_backend.py
       - scripts/build_windows_reader.py
+      - scripts/build_windows_match_payload.py
+      - scripts/reassemble_windows_match_archive.py
       - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
@@ -35,6 +37,8 @@ on:
       - contracts/**
       - scripts/*desktop_backend.py
       - scripts/build_windows_reader.py
+      - scripts/build_windows_match_payload.py
+      - scripts/reassemble_windows_match_archive.py
       - scripts/test_windows_reader_payload.py
       - pyproject.toml
       - uv.lock
@@ -49,9 +53,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
-            target: mac
-            artifact: macos-arm64
           - os: windows-latest
             target: win
             artifact: windows-x64
@@ -69,7 +70,7 @@ jobs:
         working-directory: .
         run: |
           python -c "import platform,sys; assert platform.machine().lower() in (('arm64','aarch64') if sys.platform == 'darwin' else ('amd64','x86_64')), 'Backend architecture must match Electron target'"
-          python -m pip install ".[agent]" "pyinstaller==6.16.0"
+          python -m pip install ".[agent,speech]" "pyinstaller==6.16.0"
           python scripts/build_desktop_backend.py
           python scripts/smoke_desktop_backend.py
       - uses: actions/setup-node@v4
@@ -111,6 +112,18 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $version.schema -ne 'fa-offseason-producer/1' -or $version.producer.id -ne 'footballassistant.offseason-reader' -or $version.producer.protocol -ne 'fa-offseason/0.1') { throw 'Unexpected reader producer identity' }
           $probe = & $reader --self-test | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $probe.schema -ne 'fa-offseason/0.1' -or $probe.status -ne 'offline_self_test' -or $probe.synthetic -ne $true -or $null -ne $probe.process) { throw 'Reader offline protocol self-test failed' }
+      - name: Build pinned Windows match plugin and licensed loader payload
+        if: runner.os == 'Windows'
+        working-directory: .
+        shell: pwsh
+        run: |
+          python scripts/build_windows_match_payload.py --prepare
+          if ($LASTEXITCODE -ne 0) { throw 'Offline pinned MatchReader dependency preparation failed' }
+          $core = (Resolve-Path 'build/windows-match-input/BepInEx/core').Path
+          dotnet build modules/game-bridge/match-reader/FootballAssistant.MatchReader.csproj --configuration Release --output build/match-plugin "-p:BepInExCoreDir=$core"
+          if ($LASTEXITCODE -ne 0) { throw 'MatchReader compilation failed' }
+          python scripts/build_windows_match_payload.py
+          if ($LASTEXITCODE -ne 0) { throw 'Match payload license/integrity preparation failed' }
       - name: Verify GameBridge offline transport on Windows
         if: runner.os == 'Windows'
         working-directory: .
@@ -141,6 +154,10 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: .
         run: python scripts/build_windows_reader.py --verify --output apps/companion/dist/win-unpacked/resources/reader-windows-x64
+      - name: Verify actual packaged Windows match payload
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: python scripts/build_windows_match_payload.py --verify --output apps/companion/dist/win-unpacked/resources/match-windows-x64
       - name: Audit actual packaged notices and retained license hashes
         shell: bash
         run: node packaging/audit-notices.cjs "" "$RUNNER_TEMP/companion-notices.json"
@@ -175,11 +192,11 @@ jobs:
           if ($report.bootstrap.backend.state -ne 'ready') { throw 'Embedded backend did not become ready' }
           if (-not $report.renderer.bridge -or $report.renderer.nodeExposed) { throw 'Desktop isolation check failed' }
           if (-not $report.renderer.ipcOk -or -not $report.settingsRenderer.ipcOk -or -not $report.settingsRenderer.aboutOk -or -not $report.settingsRenderer.customControls) { throw 'Packaged window IPC/controls check failed' }
-      - name: Verify NSIS installation, reinstall and uninstall preserve user data
+      - name: Verify NSIS rejects silent fresh installation without a game path
         if: runner.os == 'Windows'
         shell: powershell
         run: ./test/nsis-smoke.ps1
-      - name: Verify real two-version NSIS automatic upgrade (disposable fixture)
+      - name: Verify isolated updater primitive (not production game deployment)
         if: runner.os == 'Windows'
         run: |
           node test/update-native-fixture.cjs

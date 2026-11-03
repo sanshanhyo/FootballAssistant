@@ -10,7 +10,9 @@ namespace FootballAssistant.OffseasonReader;
 public static class PersonLookup
 {
     private const string ExpectedHash = "BC940E472418FC5C214208D7CF30FECF600F689B6F9D71C11BA19A2DF0FE057F";
-    public static PersonResult Read(int pid, int uid)
+    public static PersonResult Read(int pid, int uid) => pid <= 0 || uid <= 0 ? new("invalid_input", null, null) : Read(pid, uid, NativeReadProfile.Read(pid));
+    public static PersonResult Read(int pid, int uid, NativeReadProfile profile) => Read(pid, uid, profile, null);
+    public static PersonResult Read(int pid, int uid, NativeReadProfile profile, NativeReadContext? context)
     {
         if (pid <= 0 || uid <= 0) return new("invalid_input", null, null);
         try
@@ -19,9 +21,7 @@ public static class PersonLookup
             if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return new("wrong_process", null, null);
             var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             if (module is null || string.IsNullOrEmpty(module.FileName)) return new("module_unavailable", null, null);
-            using (var stream = File.OpenRead(module.FileName))
-            using (var sha = SHA256.Create())
-                if (Convert.ToHexString(sha.ComputeHash(stream)) != ExpectedHash) return new("unsupported_binary", null, null);
+            if (NativeReadContext.Hash(process, module, context) != ExpectedHash) return new("unsupported_binary", null, null);
             using var memory = new SafeProcessHandle(OpenProcess(0x1010, false, pid));
             if (memory.IsInvalid) return new("process_unavailable", null, null);
             var clock = Stopwatch.StartNew();
@@ -51,7 +51,21 @@ public static class PersonLookup
             PlayerDetails? details = null;
             CandidateAffiliation? affiliation = null;
             ContractSnapshot? contract = null;
-            if (personVtable == image + 0x04D27758 && item >= 0x288)
+            byte[]? positionBlock = null;
+            long positionPlayer = 0;
+            if (profile.Matched && personVtable == image + 0x04D27758 &&
+                Read32(memory, item - 4, out int positionDisplacement) && positionDisplacement is >= 0 and <= 4096)
+            {
+                positionPlayer = checked(item - positionDisplacement - 0x288);
+                if (!Read64(memory, positionPlayer, out long primary) || primary != image + 0x04D27228 ||
+                    !Read64(memory, positionPlayer + 8, out long secondary) || secondary != image + 0x04D2720C ||
+                    !ReadBytes(memory, positionPlayer + 0x150, 15, out positionBlock))
+                    return new("unavailable", null, null);
+            }
+            // The legacy attribute layout is proven only at displacement zero.
+            // Named positions can use the separately verified adjustment above.
+            if (personVtable == image + 0x04D27758 && item >= 0x288 &&
+                Read32(memory, item - 4, out int legacyDisplacement) && legacyDisplacement == 0)
             {
                 details = ReadDetails(memory, item, item - 0x288);
                 affiliation = ReadAffiliation(memory, image, item, item - 0x288);
@@ -64,10 +78,14 @@ public static class PersonLookup
                 (details is not null && ReadDetails(memory, item, item - 0x288) != details) ||
                 (affiliation is not null && ReadAffiliation(memory, image, item, item - 0x288) != affiliation) ||
                 (contract is not null && ReadContract(memory, image, item, item - 0x288) != contract) ||
+                (positionBlock is not null && (!Read32(memory, item - 4, out int finalDisplacement) || item - finalDisplacement - 0x288 != positionPlayer ||
+                    !Read64(memory, positionPlayer, out long finalPrimary) || finalPrimary != image + 0x04D27228 ||
+                    !Read64(memory, positionPlayer + 8, out long finalSecondary) || finalSecondary != image + 0x04D2720C ||
+                    !ReadBytes(memory, positionPlayer + 0x150, 15, out var finalBlock) || !positionBlock.SequenceEqual(finalBlock))) ||
                 clock.ElapsedMilliseconds >= 2000)
                 return new("changed_during_read", null, null);
             var display = string.IsNullOrWhiteSpace(common) ? $"{first} {last}".Trim() : common;
-            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details, affiliation, contract?.Value);
+            return string.IsNullOrWhiteSpace(display) ? new("unavailable", null, null) : new("experimental", uid, display, details, affiliation, contract?.Value, positionBlock is null ? new NativePlayerPositions("unavailable", profile.Matched ? "unsupported_player_type" : profile.Reason ?? "unsupported_native_profile") : PositionFields.Decode(positionBlock));
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or OverflowException)
         { return new("unavailable", null, null); }
@@ -163,7 +181,7 @@ public static class PersonLookup
 }
 
 public sealed record PersonResult(string Status, int? Uid, string? DisplayName, PlayerDetails? Details = null,
-    CandidateAffiliation? Affiliation = null, PlayerContractCandidate? Contract = null);
+    CandidateAffiliation? Affiliation = null, PlayerContractCandidate? Contract = null, NativePlayerPositions? Positions = null);
 public sealed record PlayerDetails(byte? ReflexesRaw, byte? HandlingRaw, byte? AnticipationRaw,
     byte? JumpingRaw, int? HeightCm, string? DateOfBirth);
 public sealed record CandidateAffiliation(uint TeamUid, uint ClubUid, string ClubShortName);

@@ -5,6 +5,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { createTtsProviders, speechSettings } = require('./tts-providers.cjs');
 const { createSpeech } = require('./tts.cjs');
 const { createLocalWhisper } = require('./local-whisper.cjs');
 
@@ -130,6 +131,17 @@ function createSpeechService(options = {}) {
   const env = options.env || process.env;
   const platform = options.platform || process.platform;
   const config = snapshotConfig(env, platform);
+  // TTS configuration is isolated from STT: never reuse a speech key across consent scopes.
+  const ttsConfig = snapshotConfig(options.ttsEnv === undefined ? env : { PATH: env.PATH, FA_SPEECH_EDGE_PATH: env.FA_SPEECH_EDGE_PATH, ...options.ttsEnv }, platform);
+  // Main-process-only installed backend path; never forwarded from renderer payloads.
+  let edgeArgs = [];
+  if (!ttsConfig.edgePath && options.bundledEdgePath && path.isAbsolute(options.bundledEdgePath)) {
+    try {
+      fs.accessSync(options.bundledEdgePath, platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+      ttsConfig.edgePath = fs.realpathSync(options.bundledEdgePath);
+      edgeArgs = ['--edge-tts'];
+    } catch { /* Missing bundle remains visibly unavailable. */ }
+  }
   const fetchImpl = options.fetch || globalThis.fetch;
   const spawnImpl = options.spawn || spawn;
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
@@ -148,10 +160,10 @@ function createSpeechService(options = {}) {
 
   function capabilities() {
     const openaiStt = Boolean(config.baseUrl && config.apiKey && config.sttModel);
-    const openaiTts = Boolean(config.baseUrl && config.apiKey && config.ttsModel);
-    const azure = Boolean(config.azureKey && /^[a-z0-9-]{1,60}$/u.test(config.azureRegion));
+    const openaiTts = Boolean(ttsConfig.baseUrl && ttsConfig.apiKey && ttsConfig.ttsModel);
+    const azure = Boolean(ttsConfig.azureKey && /^[a-z0-9-]{1,60}$/u.test(ttsConfig.azureRegion));
     const system = ['darwin', 'win32'].includes(platform);
-    const capability = (id, label, configured, reason, synthetic = false) => ({ id, label, configured, available: configured, reason: configured ? null : reason, synthetic });
+    const capability = (id, label, configured, reason, synthetic = false) => ({ id, label, configured, available: configured, reason: configured ? null : reason, synthetic, connectivity: ['system', 'mock'].includes(id) ? 'local' : 'unverified' });
     return {
       stt: [
         localWhisper.capability(),
@@ -160,10 +172,11 @@ function createSpeechService(options = {}) {
       ],
       tts: [
         capability('system', '系统语音', system, '当前平台没有系统语音适配。'),
-        capability('edge', 'Edge TTS', Boolean(config.edgePath), '未检测到 Edge TTS，请在主进程配置可执行文件。'),
+        capability('edge', 'Edge TTS', Boolean(ttsConfig.edgePath), '未检测到 Edge TTS，请在主进程配置可执行文件。'),
         capability('openai', 'OpenAI 兼容语音', openaiTts, '尚未配置语音服务、密钥或模型。'),
         capability('azure', 'Azure 语音', azure, '尚未配置 Azure 语音密钥或区域。'),
         capability('mock', '模拟播报（无音频）', true, null, true),
+        ...[...providers].filter(([id]) => !['edge', 'openai', 'azure'].includes(id)).map(([id]) => capability(id, id, true, null)),
       ],
       limits: { maxAudioBytes: MAX_AUDIO_BYTES, maxTextLength: MAX_TEXT_LENGTH, timeoutMs },
     };
@@ -281,7 +294,7 @@ function createSpeechService(options = {}) {
     });
   }
 
-  async function edgeAudio(text, voice, signal) {
+  async function edgeAudio(text, voice, signal, settings) {
     const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'football-speech-'));
     const input = path.join(directory, 'input.txt');
     const output = path.join(directory, 'speech.mp3');
@@ -289,7 +302,7 @@ function createSpeechService(options = {}) {
       await fsp.writeFile(input, text, { encoding: 'utf8', mode: 0o600 });
       await new Promise((resolve, reject) => {
         if (signal.aborted) { reject(signal.reason); return; }
-        const child = spawnImpl(config.edgePath, ['--file', input, '--voice', voice, '--write-media', output], {
+        const child = spawnImpl(ttsConfig.edgePath, [...edgeArgs, '--file', input, '--voice', voice, '--write-media', output, `--rate=${Math.round((settings.speed - 1) * 100) >= 0 ? '+' : ''}${Math.round((settings.speed - 1) * 100)}%`], {
           windowsHide: true, shell: false, stdio: ['ignore', 'ignore', 'ignore'],
         });
         let settled = false;
@@ -311,11 +324,18 @@ function createSpeechService(options = {}) {
       return new Uint8Array(await fsp.readFile(output));
     } finally { await fsp.rm(directory, { recursive: true, force: true }); }
   }
+  const providers = createTtsProviders({ config: ttsConfig, request, edgeAudio, requireVoice, escapeXml, fail, maxAudioBytes: MAX_AUDIO_BYTES });
+  // Extension adapters are main-process supplied; capability metadata must be non-secret.
+  for (const [id, adapter] of options.ttsProviders || []) {
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(id) || ['system', 'mock', 'edge', 'openai', 'azure'].includes(id) || typeof adapter?.synthesize !== 'function') throw new Error('Invalid TTS adapter');
+    providers.set(id, adapter);
+  }
   async function speak(payload) {
     const provider = payload?.provider;
     operationMetadata(payload);
     requireCapability('tts', provider);
     if (typeof payload.text !== 'string' || !payload.text.trim() || payload.text.length > MAX_TEXT_LENGTH) fail('invalid-text', '朗读文本为空或过长。');
+    speechSettings(payload, fail);
     for (const [operationId, record] of active) if (record.kind === 'tts') cancel(operationId);
     systemSpeech.stop();
     if (provider === 'system') {
@@ -329,29 +349,9 @@ function createSpeechService(options = {}) {
     }
     return withOperation('tts', payload, async signal => {
       if (provider === 'mock') return { ...metadata(payload, provider, ['模拟播报不生成音频。']), playback: 'none' };
-      let bytes;
-      if (provider === 'openai') {
-        if (payload.text.length > 4096) fail('invalid-text', '此语音服务单次最多支持 4096 个字符。');
-        bytes = await request(`${config.baseUrl}/audio/speech`, {
-          method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: config.ttsModel, input: payload.text, voice: requireVoice(payload.voice || config.ttsVoice), response_format: 'mp3' }),
-        }, MAX_AUDIO_BYTES, signal, true);
-      } else if (provider === 'azure') {
-        const voice = requireVoice(payload.voice || config.azureVoice);
-        const language = voice.match(/^[A-Za-z]{2,3}-[A-Za-z]{2,4}/u)?.[0];
-        if (!language) fail('invalid-voice', 'Azure 音色需要包含语言和区域。');
-        const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${language}"><voice name="${voice}">${escapeXml(payload.text)}</voice></speak>`;
-        bytes = await request(`https://${config.azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {
-          method: 'POST', headers: {
-            'Ocp-Apim-Subscription-Key': config.azureKey, 'Content-Type': 'application/ssml+xml',
-            'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3', 'User-Agent': 'FootballAssistant-Companion',
-          }, body: ssml,
-        }, MAX_AUDIO_BYTES, signal, true);
-      } else {
-        bytes = await edgeAudio(payload.text, requireVoice(payload.voice || config.edgeVoice), signal);
-      }
-      if (bytes.byteLength === 0) fail('invalid-response', '语音服务没有返回音频。');
-      return { ...metadata(payload, provider), playback: 'renderer', mimeType: 'audio/mpeg', audio: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+      const { bytes, mimeType, volume } = await providers.get(provider).synthesize(payload, signal);
+      if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > MAX_AUDIO_BYTES) fail('invalid-response', '语音服务没有返回音频。');
+      return { ...metadata(payload, provider), playback: 'renderer', mimeType, volume, audio: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
     });
   }
   function dispose() { stop(); disposed = true; }
