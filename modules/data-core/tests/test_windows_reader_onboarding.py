@@ -229,3 +229,49 @@ def test_oversized_output_is_killed_not_parsed_and_gate_is_released(tmp_path, mo
     assert processes[0].killed
     assert reader._PRODUCER_GATE.acquire(blocking=False)
     reader._PRODUCER_GATE.release()
+
+
+def test_producer_diagnostics_only_accept_bounded_fixed_stage_records(tmp_path, monkeypatch):
+    executable = tmp_path / 'reader.exe'; executable.touch()
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
+    private = 'secret-token/path/player-name'
+    async def spawn(*args, **kwargs):
+        child = FakeProcess(json.dumps(payload('fm_not_running', datetime.now(timezone.utc))).encode())
+        child.stderr = asyncio.StreamReader()
+        child.stderr.feed_data((private + '\n' + json.dumps({'schema': 'fa-reader-stage/1', 'stage': 'manager'}) + '\n' +
+            json.dumps({'schema': 'fa-reader-stage/1', 'stage': private}) + '\n' +
+            json.dumps({'schema': 'fa-reader-stage/1', 'stage': 'team', 'path': private}) + '\n').encode())
+        child.stderr.feed_eof()
+        return child
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    result = asyncio.run(reader.read_offseason(executable, 0, 0))
+    assert result['reason'] == 'fm_not_running'
+    assert result['producer_diagnostics']['stage'] == 'manager'
+    assert result['producer_diagnostics']['timeout_seconds'] == 20
+    assert result['producer_diagnostics']['elapsed_ms'] >= 0
+    assert private not in json.dumps(result)
+
+
+def test_timeout_reports_last_safe_stage_without_leaking_child_stderr(tmp_path, monkeypatch):
+    executable = tmp_path / 'reader.exe'; executable.touch()
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
+    children = []
+    async def spawn(*args, **kwargs):
+        child = FakeProcess(b'')
+        child.stdout = asyncio.StreamReader()  # Stalled producer, not a real game.
+        child.stderr = asyncio.StreamReader()
+        child.stderr.feed_data(b'{"schema":"fa-reader-stage/1","stage":"native_profile"}\n')
+        children.append(child)
+        return child
+    original_wait_for = asyncio.wait_for
+    async def deadline(coro, timeout):
+        assert timeout == 20
+        return await original_wait_for(coro, .02)
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', spawn)
+    monkeypatch.setattr(asyncio, 'wait_for', deadline)
+    result = asyncio.run(reader.read_offseason(executable, 0, 0))
+    assert result['reason'] == 'producer_timeout'
+    assert result['producer_diagnostics']['stage'] == 'native_profile'
+    assert children[0].killed
+    assert reader._PRODUCER_GATE.acquire(blocking=False)
+    reader._PRODUCER_GATE.release()

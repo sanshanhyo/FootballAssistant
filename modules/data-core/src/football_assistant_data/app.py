@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import asyncio
 import os
 import secrets
@@ -510,6 +511,11 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         offseason_conversations = OffseasonConversation()
 
         async def partial_offseason_reply(body):
+            # Exact social turns do not need memory scanning. Do not classify
+            # arbitrary text or contextual follow-ups as evidence-free.
+            social = re.sub(r"[\s，,。.!！?？~～]+", "", body.message).casefold()
+            if social in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "早上好", "早安", "晚上好", "晚安", "谢谢", "谢谢你", "你好埃克拉", "埃克拉你好"}:
+                return None
             # Read the consented server-owned producer, never client-supplied facts.
             # This is a partial observation channel, not a business-store publication.
             from .offseason_snapshot import consent_enabled
@@ -550,7 +556,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
 
         @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
         async def calendar_advice(body: CalendarAdviceRequest):
@@ -568,7 +574,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
 
         @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
         async def auto_calendar_advice(body: ChatRequest):
@@ -603,7 +609,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error)}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
 
         @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
         async def ui_advice(body: BusinessAdviceRequest):
@@ -619,7 +625,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
 
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
@@ -635,7 +641,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error)}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
 
         @app.get("/v1/characters/legacy-archive", dependencies=[Depends(authorized)])
         async def legacy_character_archive(request: Request):

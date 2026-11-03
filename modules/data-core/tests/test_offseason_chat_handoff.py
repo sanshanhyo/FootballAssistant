@@ -59,3 +59,35 @@ def test_reported_keeper_questions_return_scoped_confirmation_without_model(tmp_
             assert 'private persona' not in str(data)
 
         assert general_calls == ['你推荐我们选择哪个门将呢']  # Repeated confirmation no longer blocks the companion.
+
+
+def test_plain_greeting_never_waits_for_native_reader(tmp_path, monkeypatch):
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_EXE', str(tmp_path / 'reader.exe'))
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('A greeting must not launch a native scan')
+    monkeypatch.setattr(offseason_snapshot, 'read_offseason', forbidden)
+    app = create_app(settings(tmp_path))
+    scope = {'save_id': 'session:greeting', 'character_id': 'official.eckera'}
+    with TestClient(app, base_url='http://127.0.0.1') as client:
+        async def chat(message, conversation, **kwargs):
+            assert kwargs['character_context'] == scope
+            return {'reply': '嗨，今天想聊什么？', 'conversation_id': conversation, 'character_context': scope}
+        monkeypatch.setattr(app.state.agent, 'chat', chat)
+        for message in ('你好！', 'Hi', '埃克拉你好', '谢谢你'):
+            result = client.post('/v1/chat', headers=AUTH, json={'message': message, 'character_context': scope})
+            assert result.status_code == 200
+            assert result.json()['reply']
+
+
+def test_model_failure_classification_reaches_chat_without_private_error_data(tmp_path, monkeypatch):
+    from football_assistant_agent.service import ModelUnavailable
+    app = create_app(settings(tmp_path))
+    with TestClient(app, base_url='http://127.0.0.1') as client:
+        async def failure(*args, **kwargs):
+            raise ModelUnavailable('模型服务拒绝了认证。', reason='auth', stage='provider', status_code=401)
+        monkeypatch.setattr(app.state.agent, 'chat', failure)
+        result = client.post('/v1/chat', headers=AUTH, json={'message': '你好'})
+        assert result.status_code == 502
+        assert result.json()['detail'] == {'code': 'model_unavailable', 'message': '模型服务拒绝了认证。',
+            'reason': 'auth', 'stage': 'provider', 'status_code': 401}
