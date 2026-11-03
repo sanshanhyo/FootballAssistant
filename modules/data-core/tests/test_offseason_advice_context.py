@@ -82,7 +82,8 @@ def test_model_context_excludes_identity_and_preserves_character_scope():
     try:
         result = asyncio.run(agent.offseason_advice("今天日期是什么", "c", envelope(), character_context=scope))
         assert result["status"] == "partial" and result["source_status"] == "partial_native_candidates"
-        assert "部分候选" in result["reply"] and "observed_at" in result["context"]
+        assert result["reply"] == "Synthetic reply"
+        assert "observed_at" in result["context"] and result["context"]["limitations"]
         assert captured["kwargs"] == {"offseason": True, "character_context": scope}
         assert set(captured["context"]) == {"source_status", "facts", "limitations"}
         assert not any(key in str(captured["context"]) for key in ("sessionId", "process", "sha256", "DO NOT SEND"))
@@ -211,7 +212,8 @@ def test_incomplete_comparison_lists_actual_coverage_without_model():
         agent.close()
 
 
-def test_expiration_during_generation_suppresses_conclusion(monkeypatch):
+@pytest.mark.parametrize("message", ["日期", "我现在执教哪支球队？"])
+def test_expiration_during_generation_suppresses_conclusion(monkeypatch, message):
     from football_assistant_agent import service
     original = service.prepare_offseason_advice
     expired = False
@@ -225,7 +227,7 @@ def test_expiration_during_generation_suppresses_conclusion(monkeypatch):
         return {"reply": "MUST NOT DISPLAY"}
     agent._chat = delayed
     try:
-        result = asyncio.run(agent.offseason_advice("日期", None, envelope()))
+        result = asyncio.run(agent.offseason_advice(message, None, envelope()))
         assert result["context"]["freshness"] == "expired_during_generation"
         assert "已过期" in result["reply"] and "MUST NOT DISPLAY" not in result["reply"]
     finally:

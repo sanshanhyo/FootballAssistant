@@ -33,15 +33,14 @@ def test_unrelated_or_general_questions_are_not_identity_blocks(message):
     assert not asks_managed_team(message)
 
 
-@pytest.mark.parametrize('entry', ['chat', 'ui_advice', 'business_advice'])
-def test_all_agent_entries_block_identity_inference_before_provider_or_history(entry):
+@pytest.mark.parametrize('entry', ['ui_advice', 'business_advice'])
+def test_evidence_agent_entries_block_identity_inference_before_provider_or_history(entry):
     class Never:
         def __getattr__(self, name): pytest.fail('unexpected model/history/config access: ' + name)
     agent = AgentService(Never(), Never())
     poison = {'players': [{'club': 'TEST PLAYER CLUB NOT MANAGED TEAM'}],
               'managed_team_id': 'UNVERIFIED REQUEST VALUE'}
-    if entry == 'chat': result = asyncio.run(agent.chat(QUESTIONS[0], 'TEST-conversation', poison))
-    elif entry == 'ui_advice': result = asyncio.run(agent.ui_advice(QUESTIONS[0], 'TEST-conversation', 'schedule_analysis', poison))
+    if entry == 'ui_advice': result = asyncio.run(agent.ui_advice(QUESTIONS[0], 'TEST-conversation', 'schedule_analysis', poison))
     else: result = asyncio.run(agent.business_advice(QUESTIONS[0], 'TEST-conversation', 'player_info', poison))
     assert result['status'] == 'blocked' and result['identity'] is None
     assert result['reasons'] == ['managed_team_identity_unverified']
@@ -52,16 +51,20 @@ def test_all_agent_entries_block_identity_inference_before_provider_or_history(e
     assert 'TEST PLAYER CLUB' not in str(result) and 'UNVERIFIED REQUEST VALUE' not in str(result)
 
 
-def test_authenticated_chat_and_advice_routes_return_honest_local_answer_without_model(tmp_path):
+def test_authenticated_chat_requires_model_but_ui_identity_stays_unverified(tmp_path):
     app = create_app(settings(tmp_path))
     with TestClient(app, base_url='http://127.0.0.1') as client:
-        for path in ('/v1/chat', '/v1/agent/ui-advice', '/v1/agent/business-advice'):
+        for path in ('/v1/chat', '/v1/agent/ui-advice'):
             body = {'message': QUESTIONS[0], 'conversation_id': 'TEST'}
             if path != '/v1/chat': body['capability'] = 'player_info'
             assert client.post(path, json=body).status_code == 401
             response = client.post(path, json=body, headers=AUTH)
-            assert response.status_code == 200
-            assert response.json()['reasons'] == ['managed_team_identity_unverified']
+            if path == '/v1/chat':
+                assert response.status_code == 503
+                assert response.json()['detail']['code'] == 'model_not_configured'
+            else:
+                assert response.status_code == 200
+                assert response.json()['reasons'] == ['managed_team_identity_unverified']
 
 
 def test_immutable_policy_preserves_fact_and_failure_boundaries_without_fixing_persona_voice():

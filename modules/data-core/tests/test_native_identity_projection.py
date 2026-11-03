@@ -219,11 +219,13 @@ def run_advice(data, message="我执教哪支球队", related_people=()):
 def test_current_team_question_uses_only_valid_native_identity():
     response, context = run_advice(native_envelope())
     assert context["facts"]["current_manager"]["club_uid"] == 34
-    assert "未确认当前执教身份" not in response["reply"]
-    assert "不是网络权限" in response["reply"] or "不代表网络权限" in response["reply"]
+    assert response["reply"] == "fixture"
+    assert "不证明网络权限" in str(context["limitations"])
     response, context = run_advice(selected_envelope())
-    assert context == {}
-    assert "fixture" not in response["reply"]
+    assert context["facts"]["current_manager"] is None
+    assert context["facts"]["selected_club_is_current"] is None
+    assert response["reply"] == "fixture"
+    assert response["status"] == "partial"
 
 
 def test_related_read_can_inherit_valid_roster_positions_but_not_override_failure():

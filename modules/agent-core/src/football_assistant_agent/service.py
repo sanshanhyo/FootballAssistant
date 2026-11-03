@@ -168,34 +168,30 @@ class AgentService:
             if not isinstance(related_people, (tuple, list)) or len(related_people) > 2 or len(people) != len(related_people):
                 return {"reply": coverage + "本次请求的球员信息未全部通过校验，暂不作完整比较。请确认要比较的人名后重试。",
                         "conversation_id": conversation_id, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
-        if asks_managed_team(message) and prepared["facts"]["current_manager"] is None:
-            response = managed_team_unconfirmed(conversation_id, mode="native")
+        # Process IDs, session hashes, producer identity and timestamps stay local.
+        # Unknown managed-team identity is a fact boundary, not a conversation block.
+        context = {"source_status": "partial_native_candidates",
+                   "facts": prepared["facts"], "limitations": prepared["limitations"] + ([coverage] if coverage else [])}
+        response = await self._chat(message, conversation_id, context, offseason=True,
+            **({"character_context": character_context} if character_context is not None else {}))
+        # A model can take longer than the input freshness window. Do not
+        # display its conclusions as a current observation after that window.
+        rechecked = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid)
+        still_fresh = rechecked is not None and rechecked["facts"] == primary_facts
+        if related_people:
+            for item in related_people:
+                related = prepare_offseason_advice(item["envelope"], club_uid=club_uid, person_uid=item["person_uid"])
+                still_fresh = (still_fresh and related is not None
+                               and related["session_id"] == prepared["session_id"]
+                               and related["facts"]["current_manager"] == prepared["facts"]["current_manager"]
+                               and related["facts"]["player_candidate"] == related_facts.get(item["person_uid"]))
+        if not still_fresh:
+            prepared["freshness"] = "expired_during_generation"
+            response["reply"] = coverage + "本次采样在生成期间已过期，未展示生成结论；请重新提问以读取新的数据。"
         else:
-            # Process IDs, session hashes, producer identity and timestamps stay local.
-            context = {"source_status": "partial_native_candidates",
-                       "facts": prepared["facts"], "limitations": prepared["limitations"] + ([coverage] if coverage else [])}
-            response = await self._chat(message, conversation_id, context, offseason=True,
-                **({"character_context": character_context} if character_context is not None else {}))
-            # A model can take longer than the input freshness window. Do not
-            # display its conclusions as a current observation after that window.
-            rechecked = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid)
-            still_fresh = rechecked is not None and rechecked["facts"] == primary_facts
-            if related_people:
-                for item in related_people:
-                    related = prepare_offseason_advice(item["envelope"], club_uid=club_uid, person_uid=item["person_uid"])
-                    still_fresh = (still_fresh and related is not None
-                                   and related["session_id"] == prepared["session_id"]
-                                   and related["facts"]["current_manager"] == prepared["facts"]["current_manager"]
-                                   and related["facts"]["player_candidate"] == related_facts.get(item["person_uid"]))
-            if not still_fresh:
-                prepared["freshness"] = "expired_during_generation"
-                response["reply"] = coverage + "本次采样在生成期间已过期，未展示生成结论；请重新提问以读取新的数据。"
-            else:
-                identity = ("已校验本次当前本地经理与关联俱乐部，不代表网络权限或存档身份。"
-                            if prepared["facts"]["current_manager"] else "未确认当前执教身份。")
-                if prepared["facts"]["selected_club_is_current"] is False:
-                    identity += "本次所选俱乐部不是该经理的关联俱乐部。"
-                response["reply"] = "【实验性赛外读取 · 部分候选】仅为本次请求的采样，并非持续实时或完整存档数据。" + identity + "\n" + coverage + response["reply"]
+            # Detailed source/identity limits remain in metadata and the model
+            # instructions instead of becoming a fixed disclaimer on every turn.
+            response["reply"] = coverage + response["reply"]
         return {**response, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
 
     async def calendar_advice(self, message, conversation_id, envelope, club_uid, start, end, *, character_context=None):
@@ -274,11 +270,15 @@ class AgentService:
         return {**prepared, **response, "status": "generated"}
 
     async def chat(self, message: str, conversation_id: str | None, context: dict | None = None, *, character_context: dict | None = None) -> dict:
-        if asks_managed_team(message):
-            return {**managed_team_unconfirmed(conversation_id, mode='companionship'), "character_context": self.response_scope(character_context)}
         # Keep the optional argument for older callers, but never forward a legacy
         # snapshot (even one claiming to be verified) to ordinary companionship.
         return await self._chat(message, conversation_id, {"source_status": "not_used"}, **({"character_context": character_context} if character_context is not None else {}))
+
+    async def general_advice(self, message: str, conversation_id: str | None, *, character_context: dict | None = None) -> dict:
+        """Keep talking without game evidence; never relabel this as a native read."""
+        response = await self._chat(message, conversation_id, {"source_status": "general_knowledge"},
+            **({"character_context": character_context} if character_context is not None else {}))
+        return {**response, "status": "general_advice", "source": "general_knowledge", "production_ready": False}
 
     async def _chat(self, message: str, conversation_id: str | None, context: dict,
                     *, business: bool = False, ui: bool = False, calendar: bool = False, offseason: bool = False, character_context: dict | None = None) -> dict:
@@ -299,7 +299,11 @@ class AgentService:
             persona_text = selected.get("persona", self.persona.text)
             model_message = message
             if offseason:
-                prompt = SYSTEM_RULES + OFFSEASON_INSTRUCTIONS
+                prompt = SYSTEM_RULES + OFFSEASON_INSTRUCTIONS + (
+                    "\n先自然回应用户，再给有用的观点或条件式建议，不要把部分数据变成整段拒绝。"
+                    "只简短说明与问题直接相关的未知事实，不重复罗列限制。执教身份未知时不猜队名；"
+                    "所选俱乐部不属于当前经理时不得称为用户的球队。缺失字段不妨碍一般足球讨论和轻松陪聊。"
+                )
                 model_message = json.dumps({"user_question": message, "untrusted_persona": persona_text,
                     "untrusted_native_partial_data": context}, ensure_ascii=False)
             elif calendar:
