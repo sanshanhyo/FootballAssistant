@@ -28,6 +28,7 @@ from .storage import ObservationConflict, ObservationStore, private_directory, u
 from .monitoring import CatalogRequest, HeartbeatRequest
 from .registries import ProbeRequest, RegistryBatch, RegistryStore
 from .native_observers import NativeObserverReport, NativeObserverStore
+from .offseason_readiness import OffseasonReadiness, partial_source_status
 
 
 class CaptureProfileRequest(BaseModel):
@@ -167,6 +168,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         app.state.native_observers = NativeObserverStore(observations,app.state.registries)
         app.state.observations = observations
         app.state.business_snapshots = BusinessSnapshotStore()
+        app.state.offseason_readiness = OffseasonReadiness()
         app.state.windows_discovery = empty_snapshot()
         app.state.windows_discovery_generation = 0
         from .ui_capture_control import UiCaptureController
@@ -201,6 +203,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                 await finite_task  # Let a bounded file read finish before closing SQLite.
                 finite_source.invalidate('backend_shutdown')
             app.state.business_snapshots.invalidate()
+            app.state.offseason_readiness.invalidate("backend_shutdown")
             app.state.windows_discovery = empty_snapshot()
             observations.close()
             if companion is not None:
@@ -222,6 +225,22 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         if credentials is None or not secrets.compare_digest(credentials.credentials.encode("utf-8"),settings.token.encode("utf-8")):
             raise HTTPException(401,detail={"code":"unauthorized","message":"需要有效的本机访问令牌。"},headers={"WWW-Authenticate":"Bearer"})
 
+    async def tracked_offseason_read(executable, club_uid, person_uid, start=None, end=None, **kwargs):
+        from .offseason_snapshot import read_offseason
+        cache = app.state.offseason_readiness
+        ticket = cache.begin()
+        try:
+            args = (executable, club_uid, person_uid) if start is None else (executable, club_uid, person_uid, start, end)
+            result = await read_offseason(*args, **kwargs)
+            cache.complete(ticket, result, executable, club_uid, person_uid, start, end)
+            return result
+        except BaseException:
+            cache.complete(ticket, {"reason": "read_failed"}, executable)
+            raise
+
+    def source_status():
+        return partial_source_status(app.state.observations.source_status(), app.state.offseason_readiness.status())
+
     @app.get("/health")
     async def health():
         return {"status":"ok","service":"football-assistant","version":"0.1.0","reader_api":1,"agent_enabled":enable_agent}
@@ -229,7 +248,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     @app.get("/v1/reader/onboarding-status", dependencies=[Depends(authorized)])
     async def reader_onboarding_status(verify: bool = Query(default=False)):
         from .offseason_snapshot import onboarding_status
-        return await onboarding_status(verify=verify)
+        result = await onboarding_status(verify=verify, read=tracked_offseason_read)
+        if result["state"] not in {"configured", "fresh_partial"} and result["read"] is None:
+            app.state.offseason_readiness.invalidate(result["state"])
+        return result
 
     @app.get("/v1/reader/match", dependencies=[Depends(authorized)])
     def match_snapshot():
@@ -241,7 +263,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/offseason", dependencies=[Depends(authorized)])
     async def offseason_snapshot(club_uid: int = Query(default=0, ge=0, le=4294967294), person_uid: int = Query(default=0, ge=0, le=2147483647), start: str | None = Query(default=None, max_length=10), end: str | None = Query(default=None, max_length=10)):
-        from .offseason_snapshot import read_offseason, unavailable, valid_range, consent_enabled
+        from .offseason_snapshot import unavailable, valid_range, consent_enabled
         if not valid_range(start, end, club_uid):
             raise HTTPException(status_code=422, detail="invalid calendar range")
         configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
@@ -250,25 +272,25 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         if not consent_enabled():
             return unavailable("consent_required")
         if start is None:
-            return await read_offseason(Path(configured), club_uid, person_uid)
-        return await read_offseason(Path(configured), club_uid, person_uid, start, end)
+            return await tracked_offseason_read(Path(configured), club_uid, person_uid)
+        return await tracked_offseason_read(Path(configured), club_uid, person_uid, start, end)
 
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
-            return {"source_status":app.state.observations.source_status(),"mode":"reader","agent_enabled":False}
-        return {"source_status":app.state.observations.source_status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
+            return {"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),"mode":"reader","agent_enabled":False}
+        return {"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
 
     if enable_agent:
         @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
         async def companion_state():
             state = "model_unconfigured" if not settings.model_configured else "model_error" if app.state.agent.last_error else "ready"
-            return {"state":"idle","mood":"neutral","status":state,"source_status":app.state.observations.source_status()}
+            return {"state":"idle","mood":"neutral","status":state,"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status()}
 
     @app.get("/v1/reader/status",dependencies=[Depends(authorized)])
     async def reader_status():
         return {"service":"football-assistant","reader_api":1,"agent_enabled":enable_agent,
-                "source_status":app.state.observations.source_status(),
+                "source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),
                 "latest_event_cursor":app.state.observations.events(0,1)["latest_cursor"],
                 "native_records":{"state":"awaiting_decoded_native_records","payload_decoded":False,
                                   "field_values_known":False,"scope":"headers_are_diagnostics_only"}}
@@ -284,7 +306,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
     @app.get("/v1/reader/business/status",dependencies=[Depends(authorized)])
     async def business_reader_status():
-        return app.state.business_snapshots.status()
+        return {**app.state.business_snapshots.status(), "offseason_readiness": app.state.offseason_readiness.status()}
 
     @app.get("/v1/reader/business/snapshot",dependencies=[Depends(authorized)])
     async def business_reader_snapshot():
@@ -488,13 +510,16 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         async def partial_offseason_reply(body):
             # Read the consented server-owned producer, never client-supplied facts.
             # This is a partial observation channel, not a business-store publication.
-            from .offseason_snapshot import read_offseason, consent_enabled
+            from .offseason_snapshot import consent_enabled
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
             if not consent_enabled() or not configured:
                 return None
             async def read_selected(club, person):
-                return await read_offseason(Path(configured), club, person, require_current_producer=True)
-            return await offseason_conversations.reply(body, read_selected, app.state.agent)
+                return await tracked_offseason_read(Path(configured), club, person, require_current_producer=True)
+            result = await offseason_conversations.reply(body, read_selected, app.state.agent)
+            if result is not None:
+                result["offseason_readiness"] = app.state.offseason_readiness.status()
+            return result
 
         @app.get("/v1/agent/persona", dependencies=[Depends(authorized)])
         def persona_metadata():
@@ -514,6 +539,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                     partial = await partial_offseason_reply(body)
                     if partial is not None:
                         return partial
+                    result = await app.state.agent.general_advice(body.message, body.conversation_id,
+                        **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                    result["offseason_readiness"] = app.state.offseason_readiness.status()
                 return result
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
@@ -524,13 +552,13 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
         @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
         async def calendar_advice(body: CalendarAdviceRequest):
-            from .offseason_snapshot import read_offseason, valid_range, unavailable, consent_enabled
+            from .offseason_snapshot import valid_range, unavailable, consent_enabled
             if not valid_range(body.start, body.end, body.club_uid):
                 raise HTTPException(422, detail="invalid calendar range")
             if not consent_enabled():
                 return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
             configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
-            envelope = await read_offseason(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
+            envelope = await tracked_offseason_read(Path(configured), body.club_uid, 0, body.start, body.end) if configured else unavailable("producer_not_configured")
             try:
                 return await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, body.club_uid, body.start, body.end, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
             except ModelBudgetExceeded as error:
@@ -542,7 +570,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
 
         @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
         async def auto_calendar_advice(body: ChatRequest):
-            from .offseason_snapshot import read_offseason, consent_enabled
+            from .offseason_snapshot import consent_enabled
             from .calendar_selection import choose_calendar_scope
             if not consent_enabled():
                 return {"status": "unavailable", "reason": "consent_required", "conversation_id": body.conversation_id, "reply": "尚未授权读取游戏进程，请先在首次设置中明确启用赛外读取。"}
@@ -550,13 +578,14 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             if not configured:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "当前无法读取球队候选和游戏日期。"}
             executable = Path(configured)
-            initial = await read_offseason(executable, 0, 0)
+            initial = await tracked_offseason_read(executable, 0, 0)
             scope = choose_calendar_scope(initial, body.message)
             if scope is None:
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "未能唯一确认所问球队候选或当前游戏日期，请明确球队名称或俱乐部 UID。"}
-            envelope = await read_offseason(executable, scope["club_uid"], 0, scope["start"], scope["end"])
+            envelope = await tracked_offseason_read(executable, scope["club_uid"], 0, scope["start"], scope["end"])
             if initial.get("producerVerified") is True and (envelope.get("producerVerified") is not True or
                     (initial.get("snapshot") or {}).get("process") != (envelope.get("snapshot") or {}).get("process")):
+                app.state.offseason_readiness.invalidate("session_changed")
                 return {"status": "unavailable", "reason": "session_changed", "conversation_id": body.conversation_id, "reply": "游戏进程会话在读取期间变化，请重试；没有使用上一会话的数据。"}
             verified = choose_calendar_scope(envelope, body.message)
             if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
@@ -596,7 +625,9 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                 partial = await partial_offseason_reply(body)
                 if partial is not None:
                     return partial
-                return await app.state.agent.chat(body.message,body.conversation_id, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                result = await app.state.agent.chat(body.message,body.conversation_id, **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
+                result["offseason_readiness"] = app.state.offseason_readiness.status()
+                return result
             except ModelBudgetExceeded as error:
                 raise HTTPException(429,detail={"code":"model_request_limit","message":str(error)}) from None
             except ModelNotConfigured as error:

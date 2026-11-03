@@ -171,7 +171,7 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
             _PRODUCER_GATE.release()
 
 
-async def onboarding_status(*, verify: bool = False) -> dict:
+async def onboarding_status(*, verify: bool = False, read=None) -> dict:
     """Configuration inspection is passive. Only explicit verify runs the reader."""
     configured = os.environ.get("FOOTBALL_ASSISTANT_OFFSEASON_EXE")
     consent = consent_enabled()
@@ -182,7 +182,7 @@ async def onboarding_status(*, verify: bool = False) -> dict:
               "resourcePresent": resource_present, "state": state, "verified": False, "read": None}
     if not verify or state != "configured":
         return result
-    envelope = await read_offseason(executable, 0, 0, require_current_producer=True)
+    envelope = await (read or read_offseason)(executable, 0, 0, require_current_producer=True)
     snapshot = envelope.get("snapshot") or envelope.get("diagnostics") or {}
     result["state"] = snapshot.get("state") or envelope["reason"]
     result["verified"] = envelope.get("producerVerified") is True
