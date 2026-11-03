@@ -95,7 +95,7 @@ def validate_snapshot(data: dict, *, require_current_producer: bool = False, now
                 return unavailable("invalid_producer_identity")
             if state == "fresh_partial":
                 statuses = {
-                    "date": {"experimental"}, "team": {"experimental_candidates_incomplete"},
+                    "date": {"experimental"}, "manager": {"available"}, "team": {"experimental_candidates_incomplete"},
                     "schedule": {"experimental_records_unverified"}, "managerCandidates": {"experimental_candidates_incomplete"},
                     "tactic": {"experimental"}, "calendar": {"partial", "experimental_loaded_buckets_only"},
                 }

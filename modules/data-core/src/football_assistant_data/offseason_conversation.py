@@ -1,6 +1,6 @@
 """Bounded, process-session-scoped selection over the existing native reader.
 
-Selections are user choices, never proof of the active manager. No memory scanning,
+User choices remain distinct from a validated native current-local-manager binding. No memory scanning,
 new producer, filesystem persistence, or full-roster attribute fan-out lives here.
 """
 import asyncio
@@ -47,9 +47,16 @@ class OffseasonConversation:
             self.sessions.pop(key, None)
             return None
         session = initial['session_id']
+        manager = initial['facts'].get('current_manager')
+        def manager_key(context):
+            value = context['facts'].get('current_manager')
+            return (value['uid'], value['team_uid'], value['club_uid']) if value else None
+        binding = manager_key(initial)
         state = self.sessions.get(key)
-        if state is None or state['session'] != session:
-            state = {'session': session, 'club': 0, 'pending': [], 'roster': [], 'team': None, 'team_at': 0, 'people': {}, 'last_selected': [], 'question': '', 'touched': now}
+        if state is None or state['session'] != session or state.get('binding') != binding:
+            state = {'session': session, 'club': 0, 'pending': [], 'roster': [], 'team': None, 'team_at': 0, 'people': {}, 'last_selected': [], 'question': '', 'touched': now, 'binding': binding}
+            if manager:
+                state['club'] = manager['club_uid']
             self.sessions[key] = state
         state['touched'] = now
         self.sessions.move_to_end(key)
@@ -64,7 +71,7 @@ class OffseasonConversation:
                     **({'character_context': {name: scope[name] for name in ('save_id', 'character_id')}} if supplied else {})}
         def same(value):
             checked = prepare_offseason_advice(value)
-            return checked is not None and checked['session_id'] == session
+            return checked is not None and checked['session_id'] == session and manager_key(checked) == binding
         candidates = initial['facts']['manager_club_candidates']
         person_markers = re.findall(r'(?:球员|人物|person|player)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
         if not state['club'] and len(person_markers) == 1 and 0 < int(person_markers[0]) <= 2147483647:
@@ -95,6 +102,10 @@ class OffseasonConversation:
             if unique:
                 state['pending'] = list(unique.values())
                 return answer('已读到俱乐部关联候选：' + '、'.join(row['clubName'] for row in unique.values()) + '。你要看的是哪支球队？若只有这一支，回复“是的”即可；候选不代表已确认执教身份。')
+        continuation = bool(re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样)[。？?！!]*', message))
+        names_mentioned = any(row['name'] in message for row in state['roster'])
+        if manager and not relevant and not continuation and not names_mentioned and not club_markers and not person_markers:
+            return await agent.offseason_advice(message, conversation, envelope, character_context=supplied)
         if not state['club']:
             return await agent.offseason_advice(message, conversation, envelope, character_context=supplied)
         club = state['club']
@@ -111,6 +122,11 @@ class OffseasonConversation:
             roster = [r for r in rows if isinstance(r, dict) and type(r.get('uid')) is int and 0 < r['uid'] <= 2147483647 and r.get('clubUid') == club and r.get('linkStatus') == 'exact_types' and isinstance(r.get('name'), str) and 0 < len(r['name']) <= 128]
             state.update(roster=roster, team=team, team_at=now)
         roster = state['roster']
+        team_context = prepare_offseason_advice(state['team'], club_uid=club)
+        if team_context is None or manager_key(team_context) != binding:
+            state.update(roster=[], team=None, people={}, last_selected=[])
+            return answer('球队或当前经理的读取证据已失效，已停止使用旧名单，请重新提问。')
+        projected_roster = {row['uid']: row for row in team_context['facts']['team_candidates']}
         ids = re.findall(r'(?:球员|人物|person|player)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
         selected = [r for r in roster if str(r['uid']) in ids or r['name'] in message]
         by_name = {}
@@ -121,12 +137,19 @@ class OffseasonConversation:
         selected = list({r['uid']: r for r in selected}.values())
         if not selected and re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样)[。？?！!]*', message):
             selected = [r for r in roster if r['uid'] in state['last_selected']]
+        if not selected and not ids and re.search(r'门将|goalkeeper|keeper', message + ' ' + state['question'], re.I):
+            keepers = [row for row in roster if projected_roster.get(row['uid'], {}).get('positions', {}).get('is_goalkeeper') is True] if all(projected_roster.get(row['uid'], {}).get('positions') for row in roster) else []
+            if len(keepers) > 2:
+                return answer('本次名单中符合原生门将熟练度规则的有：' + '、'.join(row['name'] for row in keepers) + '。请先选至多两位姓名进行原始属性比较；不会漏读后声称比较了全部门将。')
+            selected = keepers
         if len(selected) > 2 or re.search(r'不是|不要|排除|别选', message):
             return answer('请明确本次要看的至多两位球员姓名，我会只读取选定人员。')
         if ids and not selected:
             return answer('所给球员不在这次所选俱乐部的已读关联名单中，不能替你改查其他人。')
         if not selected:
             names = '、'.join(row['name'] for row in roster)
+            if any(row.get('positions') for row in projected_roster.values()):
+                return answer('已读到名单：' + (names or '暂未读到') + '。目前未能从完整有效的位置字段筛出可自动比较的门将，请直接说要比较的球员姓名（至多两位）；不会把缺失位置当作非门将。')
             return answer('已读到所选俱乐部的球员关联名单（可能不完整）：' + (names or '暂未读到') + '。当前接口没有球员位置，请说其中哪些是你要比较的实际门将（一次最多两位）；我会按需读取已有属性，不需要截图。')
         state['last_selected'] = [r['uid'] for r in selected]
         related = []
