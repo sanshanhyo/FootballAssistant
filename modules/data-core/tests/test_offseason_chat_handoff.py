@@ -91,3 +91,33 @@ def test_model_failure_classification_reaches_chat_without_private_error_data(tm
         assert result.status_code == 502
         assert result.json()['detail'] == {'code': 'model_unavailable', 'message': '模型服务拒绝了认证。',
             'reason': 'auth', 'stage': 'provider', 'status_code': 401}
+
+
+def test_direct_chat_next_match_uses_calendar_reader_and_keeps_scope(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from test_native_identity_projection import native_envelope
+    data = native_envelope()
+    reads = []
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '1')
+    monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_EXE', str(tmp_path / 'reader.exe'))
+    async def read(executable, club, person, start=None, end=None, **kwargs):
+        reads.append((club, person, start, end)); return deepcopy(data)
+    monkeypatch.setattr(offseason_snapshot, 'read_offseason', read)
+    app = create_app(settings(tmp_path))
+    scope = {'save_id': 'session:calendar-chat', 'character_id': 'official.eckera'}
+    with TestClient(app, base_url='http://127.0.0.1') as client:
+        async def calendar(message, conversation, envelope, club, start, end, **kwargs):
+            assert club == data['snapshot']['manager']['clubUid']
+            assert kwargs['character_context'] == scope
+            return {'status': 'unavailable', 'reply': '这次没有读到对手，不能把未知赛程补出来。', 'conversation_id': conversation}
+        async def forbidden(*args, **kwargs):
+            raise AssertionError('Next opponent must not use ordinary chat or keeper selection')
+        monkeypatch.setattr(app.state.agent, 'calendar_advice', calendar)
+        monkeypatch.setattr(app.state.agent, 'chat', forbidden)
+        monkeypatch.setattr(app.state.agent, 'offseason_advice', forbidden)
+        result = client.post('/v1/chat', headers=AUTH, json={'message': '我们下一场打谁？', 'character_context': scope})
+        assert result.status_code == 200
+        assert result.json()['character_context'] == scope
+        assert result.json()['status'] == 'unavailable'
+        assert len(reads) == 2 and reads[0] == (0, 0, None, None)
+        assert reads[1][0] == 34 and reads[1][2] is not None

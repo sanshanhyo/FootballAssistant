@@ -10,6 +10,7 @@ from collections import OrderedDict
 from uuid import uuid4
 
 from football_assistant_agent.offseason_advice import prepare_offseason_advice
+from football_assistant_agent.managed_team_intent import asks_managed_team
 
 
 class OffseasonConversation:
@@ -40,6 +41,17 @@ class OffseasonConversation:
         # A new character/conversation must not resurrect a previous selection.
         for old in [k for k in self.sessions if k[0] == key[0] and k != key]:
             self.sessions.pop(old, None)
+        message = body.message.strip()
+        previous = self.sessions.get(key)
+        continuation = bool(re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样|然后呢|为什么呢?)[。？?！!]*', message))
+        affirmation = bool(re.fullmatch(r'(?:是|是的|对|对的|确认|就是这个|就是这支队|yes)[。！!，,\s]*', message, re.I))
+        explicit = bool(re.search(r'球队|队伍|俱乐部|执教|门将|球员|阵容|首发|战术|赛程|比赛|足球|几号|日期|游戏|UID|goalkeeper|keeper|squad|roster|football|fixture|tactic|club|player|game date', message, re.I))
+        named = bool(previous and any(row['name'] in message for row in previous['roster']))
+        selected_context = bool(previous and ((continuation and previous.get('question')) or (affirmation and previous['pending']) or named))
+        # A readable game is not evidence that every utterance is about that game.
+        # Keep casual conversation off the scanner and out of partial provenance.
+        if not explicit and not selected_context:
+            return None
         now = time.monotonic()
         for expired in [k for k, v in self.sessions.items() if now - v['touched'] > 600]:
             self.sessions.pop(expired)
@@ -64,10 +76,10 @@ class OffseasonConversation:
         self.sessions.move_to_end(key)
         while len(self.sessions) > 128:
             self.sessions.popitem(last=False)
-        message = body.message.strip()
-        if not state['question'] or re.search(r'谁.*(?:合适|适合)|哪个.*门将|which.*keeper', message, re.I):
+        if not state['question'] or (explicit and not continuation and not affirmation and not named):
             state['question'] = message
         def answer(text, context=initial):
+            agent.record_visible_turn(message, conversation, text, character_context=supplied)
             return {'status': 'partial', 'source_status': 'partial_native_candidates', 'reply': text,
                     'conversation_id': conversation, 'context': context,
                     **({'character_context': {name: scope[name] for name in ('save_id', 'character_id')}} if supplied else {})}
@@ -76,6 +88,10 @@ class OffseasonConversation:
         def same(value):
             checked = prepare_offseason_advice(value)
             return checked is not None and checked['session_id'] == session and manager_key(checked) == binding
+        if manager and asks_managed_team(message):
+            # Current-manager identity is already in this validated observation;
+            # a question about the team is not a request to compare every player.
+            return await agent.offseason_advice(message, conversation, envelope, character_context=supplied)
         candidates = initial['facts']['manager_club_candidates']
         person_markers = re.findall(r'(?:球员|人物|person|player)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
         if not state['club'] and len(person_markers) == 1 and 0 < int(person_markers[0]) <= 2147483647:
@@ -106,7 +122,6 @@ class OffseasonConversation:
             if unique:
                 state['pending'] = list(unique.values())
                 return answer('已读到俱乐部关联候选：' + '、'.join(row['clubName'] for row in unique.values()) + '。你要看的是哪支球队？若只有这一支，回复“是的”即可；候选不代表已确认执教身份。')
-        continuation = bool(re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样)[。？?！!]*', message))
         names_mentioned = any(row['name'] in message for row in state['roster'])
         if manager and not relevant and not continuation and not names_mentioned and not club_markers and not person_markers:
             return await agent.offseason_advice(message, conversation, envelope, character_context=supplied)
@@ -139,7 +154,7 @@ class OffseasonConversation:
         if any(len(by_name[r['name']]) > 1 and str(r['uid']) not in ids for r in selected):
             return answer('名单里有重名球员，请进一步确认要比较的是哪一位；不会猜身份。')
         selected = list({r['uid']: r for r in selected}.values())
-        if not selected and re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样)[。？?！!]*', message):
+        if not selected and continuation:
             selected = [r for r in roster if r['uid'] in state['last_selected']]
         if not selected and not ids and re.search(r'门将|goalkeeper|keeper', message + ' ' + state['question'], re.I):
             keepers = [row for row in roster if projected_roster.get(row['uid'], {}).get('positions', {}).get('is_goalkeeper') is True] if all(projected_roster.get(row['uid'], {}).get('positions') for row in roster) else []
@@ -162,6 +177,19 @@ class OffseasonConversation:
             value = cached[1] if cached and now - cached[0] <= 15 else await read(club, row['uid'])
             if not same(value):
                 return await general()
-            state['people'][row['uid']] = (now, value)
+            state['people'][row['uid']] = (time.monotonic(), value)
             related.append({'person_uid': row['uid'], 'envelope': value})
+        # Detail queries already carry a freshly read team. Reuse the latest
+        # matching roster rather than passing the older first roster after 2 reads.
+        # This changes no observation timestamp and does not extend freshness.
+        for item in reversed(related):
+            candidate = item['envelope']
+            projected = prepare_offseason_advice(candidate, club_uid=club)
+            if projected is None or manager_key(projected) != binding:
+                continue
+            latest = {r['uid']: r for r in projected['facts']['team_candidates']}
+            if all(latest.get(r['uid']) == projected_roster.get(r['uid']) for r in selected):
+                state['team'] = candidate
+                state['team_at'] = time.monotonic()
+                break
         return await agent.offseason_advice((state['question'] + '\n本轮用户补充：' + message) if state['question'] and state['question'] != message else message, conversation, state['team'], character_context=supplied, club_uid=club, related_people=related)

@@ -596,12 +596,13 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
                 app.state.offseason_readiness.invalidate("session_changed")
                 return {"status": "unavailable", "reason": "session_changed", "conversation_id": body.conversation_id, "reply": "游戏进程会话在读取期间变化，请重试；没有使用上一会话的数据。"}
             verified = choose_calendar_scope(envelope, body.message)
-            if verified is None or any(verified[key] != scope[key] for key in ("manager_uid", "club_uid", "start", "end")):
+            if verified is None or any(verified.get(key) != scope.get(key) for key in ("manager_uid", "club_uid", "team_uid", "selection", "start", "end")):
                 return {"status": "unavailable", "conversation_id": body.conversation_id, "reply": "球队候选或游戏日期在读取期间发生变化，请重试。"}
             try:
                 result = await app.state.agent.calendar_advice(body.message, body.conversation_id, envelope, scope["club_uid"], scope["start"], scope["end"], **({"character_context": body.character_context.model_dump(exclude_none=True)} if body.character_context else {}))
                 if result.get("status") == "partial":
-                    result["reply"] = "按经理关联球队候选读取，尚未确认当前执教身份。\n" + result["reply"]
+                    if scope["selection"] != "native_current_manager":
+                        result["reply"] = "按经理关联球队候选读取。\n" + result["reply"]
                     result["selection"] = {key: scope[key] for key in ("club_uid", "club_name", "selection", "start", "end")}
                 return result
             except ModelBudgetExceeded as error:
@@ -630,6 +631,13 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
             try:
+                # Direct chat and the desktop calendar route must select the same
+                # existing calendar reader, never guess fixtures from general chat.
+                if re.search(r'(?:下场|下一场|下一轮).{0,12}(?:打谁|对谁|对阵|对手)|(?:who|whom).{0,20}(?:play|playing).{0,10}next', body.message, re.I):
+                    result = await auto_calendar_advice(body)
+                    result["character_context"] = app.state.agent.response_scope(body.character_context.model_dump(exclude_none=True) if body.character_context else None)
+                    result["offseason_readiness"] = app.state.offseason_readiness.status()
+                    return result
                 partial = await partial_offseason_reply(body)
                 if partial is not None:
                     return partial

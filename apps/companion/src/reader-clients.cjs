@@ -390,13 +390,13 @@ class RealReaderClient {
       const selection = result?.selection, context = result?.context;
       if (result?.status !== 'partial' || context?.status !== 'partial' || !selection ||
           context.selected_club_uid !== selection.club_uid || context.start !== selection.start || context.end !== selection.end ||
-          !['named_candidate', 'unique_candidate_not_active_confirmed'].includes(selection.selection) ||
+          !['named_candidate', 'unique_candidate_not_active_confirmed', 'native_current_manager'].includes(selection.selection) ||
           typeof result.reply !== 'string' || !result.reply.trim()) {
         return { text: typeof result?.reply === 'string' && result.status === 'unavailable' ? result.reply : '赛程候选当前不可用。', conversationId, cards: [], metadata: meta };
       }
       return { text: result.reply, conversationId: result.conversation_id ?? conversationId, cards: [],
         metadata: { ...meta, sampledAt: context.observed_at ?? null, selectedClubUid: selection.club_uid,
-          limitations: [...meta.limitations, `未加载范围：${context.unloaded ?? '未知'}；未知项：${context.unknown ?? '未知'}。`] } };
+          limitations: [...(selection.selection === 'native_current_manager' ? ['仅包含当前经理关联俱乐部的已加载赛程，可能不完整。'] : meta.limitations), `未加载范围：${context.unloaded ?? '未知'}；未知项：${context.unknown ?? '未知'}。`] } };
     }
     if (/(比分|比赛情况|比赛怎么样|比赛进展|score)/i.test(message)) {
       const view = matchView(await this.match({ signal }));

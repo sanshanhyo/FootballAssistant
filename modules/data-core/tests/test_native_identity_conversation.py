@@ -161,3 +161,77 @@ def test_lost_native_binding_returns_to_confirmation_without_old_people():
         finally:
             agent.close()
     asyncio.run(scenario())
+
+
+def test_current_team_question_uses_only_validated_identity_and_casual_chat_skips_reads():
+    async def scenario():
+        data = native_envelope()
+        calls, contexts = [], []
+        async def read(club, person):
+            calls.append((club, person)); return deepcopy(data)
+        reader = OffseasonConversation()
+        agent = AgentService(None, None)
+        async def chat(message, conversation, context, **kwargs):
+            contexts.append(context)
+            return {'reply': '当前经理的俱乐部关联已经读到。', 'conversation_id': conversation}
+        agent._chat = chat
+        def body(message):
+            return SimpleNamespace(message=message, conversation_id='identity', character_context=None)
+        try:
+            answer = await reader.reply(body('我们现在执教哪支球队？'), read, agent)
+            assert answer['status'] == 'partial'
+            assert contexts[-1]['facts']['current_manager']['club_uid'] == 34
+            assert calls == [(0, 0)]  # Not a request for the entire roster/keeper comparison.
+            assert await reader.reply(body('你开心吗？'), read, agent) is None
+            assert calls == [(0, 0)]
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_sequential_detail_reads_reuse_latest_matching_team_without_extending_freshness(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from football_assistant_agent import offseason_advice, service
+    from football_assistant_data import offseason_conversation
+    clock = [datetime.now(timezone.utc)]
+    original = offseason_advice.prepare_offseason_advice
+    def prepare(value, **kwargs):
+        return original(value, now=clock[0], **kwargs)
+    monkeypatch.setattr(service, 'prepare_offseason_advice', prepare)
+    monkeypatch.setattr(offseason_conversation, 'prepare_offseason_advice', prepare)
+    async def scenario():
+        data = native_envelope()
+        calls = []
+        def stamp(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key in ('capturedAt', 'observedAt'):
+                        value[key] = clock[0].isoformat()
+                    else:
+                        stamp(item)
+            elif isinstance(value, list):
+                for item in value: stamp(item)
+        async def read(club, person):
+            calls.append((club, person)); clock[0] += timedelta(seconds=12)
+            value = deepcopy(data); stamp(value)
+            if person:
+                row = next(r for r in value['snapshot']['team']['players'] if r['uid'] == person)
+                value['snapshot']['player']['value'].update(uid=person, displayName=row['name'], positions=row['positions'])
+            return value
+        agent = AgentService(None, None)
+        async def chat(message, conversation, context, **kwargs):
+            assert len(context['facts']['player_candidates']) == 2
+            clock[0] += timedelta(seconds=10)
+            return {'reply': '按这次两人的已读属性比较。', 'conversation_id': conversation}
+        agent._chat = chat
+        reader = OffseasonConversation()
+        body = SimpleNamespace(message='你推荐谁给我们门将', conversation_id='slow-scans', character_context=None)
+        try:
+            result = await reader.reply(body, read, agent)
+            assert result['context']['freshness'] == 'observed_for_request'
+            assert '按这次两人的已读属性比较' in result['reply']
+            assert calls == [(0, 0), (34, 0), (34, 101), (34, 102)]
+            assert (clock[0] - datetime.fromisoformat(result['context']['observed_at'])).total_seconds() == 10
+        finally:
+            agent.close()
+    asyncio.run(scenario())
