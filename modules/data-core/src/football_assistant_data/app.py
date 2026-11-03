@@ -238,8 +238,10 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             cache.complete(ticket, {"reason": "read_failed"}, executable)
             raise
 
-    def source_status():
-        return partial_source_status(app.state.observations.source_status(), app.state.offseason_readiness.status())
+    def reader_state():
+        readiness = app.state.offseason_readiness.status()
+        return {"source_status": partial_source_status(app.state.observations.source_status(), readiness),
+                "offseason_readiness": readiness}
 
     @app.get("/health")
     async def health():
@@ -278,19 +280,19 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
     @app.get("/v1/status",dependencies=[Depends(authorized)])
     async def status():
         if not enable_agent:
-            return {"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),"mode":"reader","agent_enabled":False}
-        return {"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
+            return {**reader_state(),"mode":"reader","agent_enabled":False}
+        return {**reader_state(),"modelConfigured":settings.model_configured,"modelStatus":"unconfigured" if not settings.model_configured else "error" if app.state.agent.last_error else "ready","memory":app.state.agent.counts()}
 
     if enable_agent:
         @app.get("/v1/companion/state",dependencies=[Depends(authorized)])
         async def companion_state():
             state = "model_unconfigured" if not settings.model_configured else "model_error" if app.state.agent.last_error else "ready"
-            return {"state":"idle","mood":"neutral","status":state,"source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status()}
+            return {"state":"idle","mood":"neutral","status":state,**reader_state()}
 
     @app.get("/v1/reader/status",dependencies=[Depends(authorized)])
     async def reader_status():
         return {"service":"football-assistant","reader_api":1,"agent_enabled":enable_agent,
-                "source_status":source_status(),"offseason_readiness":app.state.offseason_readiness.status(),
+                **reader_state(),
                 "latest_event_cursor":app.state.observations.events(0,1)["latest_cursor"],
                 "native_records":{"state":"awaiting_decoded_native_records","payload_decoded":False,
                                   "field_values_known":False,"scope":"headers_are_diagnostics_only"}}
