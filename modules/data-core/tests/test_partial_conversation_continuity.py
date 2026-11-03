@@ -128,7 +128,7 @@ def test_validated_partial_storage_failure_is_sanitized(conversation, monkeypatc
     assert agent.last_error
 
 
-@pytest.mark.parametrize('output', ['\\n', '\\r\\n'])
+@pytest.mark.parametrize('output', [r'\n', r'\r\n', r'\\n', r'\\r\\n'])
 def test_newline_only_model_output_is_not_saved_as_a_success(conversation, output):
     agent, store, state = conversation
     state['output'] = output
@@ -137,6 +137,17 @@ def test_newline_only_model_output_is_not_saved_as_a_success(conversation, outpu
                     character_context={'save_id': 'fixture-save', 'character_id': 'official.eckera'}))
     assert caught.value.reason == 'invalid_response'
     assert store.counts()['messages'] == 0
+
+
+@pytest.mark.parametrize('output', [r'你好！\n今天想聊什么？', r'你好！\\n今天想聊什么？'])
+def test_greeting_normalizes_before_returning_and_recording_history(conversation, output):
+    agent, store, state = conversation
+    state['output'] = output
+    scope = {'save_id': 'fixture-save', 'character_id': 'official.eckera'}
+    result = asyncio.run(agent.general_advice('你好', 'greeting', character_context=scope))
+    assert result['reply'] == '你好！\n今天想聊什么？'
+    assert store.recent_messages('greeting', **scope)[-1]['content'] == result['reply']
+    assert len(state['calls']) == 1
 
 
 def test_visible_turn_helper_preserves_scope_validation_and_default_ephemeral_storage():
@@ -156,15 +167,30 @@ def test_visible_turn_helper_preserves_scope_validation_and_default_ephemeral_st
     ('第一段\\n第二段', '第一段\n第二段'),
     ('第一段\\r\\n第二段', '第一段\n第二段'),
     ('第一段\n第二段\\n第三段', '第一段\n第二段\n第三段'),
-    (r'保留\\n双反斜杠', r'保留\\n双反斜杠'),
+    (r'第一段\\n第二段', '第一段\n第二段'),
+    (r'第一段\\n\\n第二段', '第一段\n\n第二段'),
+    (r'第一段\\r\\n第二段', '第一段\n第二段'),
+    (r'保留 `\\n` 双反斜杠', r'保留 `\\n` 双反斜杠'),
+    (r'保留\\\n三层转义', r'保留\\\n三层转义'),
+    (r'保留\\\\n四层转义', r'保留\\\\n四层转义'),
     (r'C:\new\notes.txt', r'C:\new\notes.txt'),
+    (r'C:\\new\\notes.txt', r'C:\\new\\notes.txt'),
     (r'\\server\new\notes.txt', r'\\server\new\notes.txt'),
+    (r'\\\\server\\new\\notes.txt', r'\\\\server\\new\\notes.txt'),
+    (r'\\?\C:\new\notes.txt', r'\\?\C:\new\notes.txt'),
     (r'.\notes.txt', r'.\notes.txt'),
+    (r'..\new\notes.txt', r'..\new\notes.txt'),
+    (r'~\new\notes.txt', r'~\new\notes.txt'),
     (r'代码 `print("a\nb")`。\n下一段', '代码 `print("a\\nb")`。\n下一段'),
+    (r'代码 `print("a\\nb")`。\\n下一段', '代码 `print("a\\\\nb")`。\n下一段'),
     ('```python\nprint("a\\nb")\n```\\n说明', '```python\nprint("a\\nb")\n```\n说明'),
+    ('```python\nprint("a\\\\nb")\n```\\\\n说明', '```python\nprint("a\\\\nb")\n```\n说明'),
     ('```python\nprint("a\\nb")', '```python\nprint("a\\nb")'),
     (r'https://example.invalid/a\n?q=1', r'https://example.invalid/a\n?q=1'),
+    (r'https://example.invalid/a\\n?q=1', r'https://example.invalid/a\\n?q=1'),
+    (r'file://server/share/notes\n.txt', r'file://server/share/notes\n.txt'),
     (r'不要解码\t或\u4f60', r'不要解码\t或\u4f60'),
+    (r'不要解码\\t或\\u4f60', r'不要解码\\t或\\u4f60'),
 ])
 def test_only_prose_newline_escapes_are_normalized(text, expected):
     assert service._normalize_reply_newlines(text) == expected

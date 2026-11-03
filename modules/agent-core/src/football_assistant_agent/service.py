@@ -29,11 +29,16 @@ from .offseason_advice import prepare_offseason_advice
 
 def _normalize_reply_newlines(reply):
     """Repair escaped prose line breaks, not code, URLs, paths, or other escapes."""
+    # A UNC path needs both a server and a share, not merely two backslashes.
+    # Keep either literal or JSON-escaped paths intact, but do not mistake
+    # double-escaped prose line breaks for network paths.
+    unc_path = r"\\\\\\\\[^\\/\s]+\\\\(?!\\)[^\s]+|\\\\[^\\/\s]+\\(?!\\)[^\s]+"
     parts = re.split(
-        r"(```[\s\S]*?(?:```|$)|`[^`\n]*`|(?:[A-Za-z]:|\.{1,2}|~)\\[^\s]*|\\\\[^\s]+|(?:https?|file)://[^\s]+)", reply,
+        r"(```[\s\S]*?(?:```|$)|`[^`\n]*`|(?:[A-Za-z]:|\.{1,2}|~)\\[^\s]*|"
+        + unc_path + r"|(?:https?|file)://[^\s]+)", reply,
     )
     for index in range(0, len(parts), 2):
-        parts[index] = re.sub(r"(?<!\\)\\r\\n|(?<!\\)\\n", "\n", parts[index])
+        parts[index] = re.sub(r"(?<!\\)(?:\\\\r\\\\n|\\r\\n|\\{1,2}n)", "\n", parts[index])
     return "".join(parts)
 
 
