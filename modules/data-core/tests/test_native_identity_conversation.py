@@ -145,3 +145,19 @@ def test_native_keeper_http_chat_and_advice_keep_character_scope(tmp_path, monke
             assert 'PRIVATE_DO_NOT_ECHO' not in str(result)
         assert calls == [(0, 0), (34, 0), (34, 101), (34, 102)] * 2
         assert app.state.business_snapshots.read()['snapshot'] is None
+
+
+def test_lost_native_binding_returns_to_confirmation_without_old_people():
+    async def scenario():
+        reader, result, calls, contexts, data, read, body, agent = await run_scenario()()
+        try:
+            prior_reads, prior_contexts = len(calls), len(contexts)
+            data['snapshot']['manager'] = {'status': 'unavailable', 'reason': 'no_current_manager_selection'}
+            result = await reader.reply(body('你推荐我们选择哪个门将呢'), read, agent)
+            assert '哪支球队' in result['reply']
+            assert len(calls) == prior_reads + 1 and len(contexts) == prior_contexts
+            state = next(iter(reader.sessions.values()))
+            assert state['club'] == 0 and not state['people'] and not state['last_selected']
+        finally:
+            agent.close()
+    asyncio.run(scenario())
