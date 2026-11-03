@@ -70,28 +70,33 @@ try
         if (!matched) return Emit("unsupported_binary");
         using var access = Native.OpenProcess(0x1010, false, pid); // QUERY_LIMITED_INFORMATION | VM_READ
         if (access.IsInvalid) return Emit(Marshal.GetLastWin32Error() == 5 ? "process_access_denied" : "read_failed");
+        var nativeProfile = NativeReadProfile.Read(pid);
+        var manager = NativeManagerLookup.Read(pid, nativeProfile);
         var date = WorldDateLookup.Read(pid);
         PersonResult? person = null;
         DateTimeOffset? personObservedAt = null;
         if (personUid > 0)
         {
-            person = PersonLookup.Read(pid, personUid);
+            person = PersonLookup.Read(pid, personUid, nativeProfile);
             if (person.Status == "experimental") personObservedAt = DateTimeOffset.UtcNow;
         }
-        var team = clubUid > 0 ? TeamCandidateLookup.Read(pid, clubUid) : null;
+        var team = clubUid > 0 ? TeamCandidateLookup.Read(pid, clubUid, nativeProfile) : null;
         var schedule = clubUid > 0 ? ScheduleCandidateLookup.Read(pid, clubUid) : null;
         var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid) : ManagerCandidateLookup.ReadAll(pid);
         var tactic = clubUid > 0 ? TacticCandidateLookup.Read(pid, clubUid) : null;
         var calendar = args.Length == 4 ? FixtureCalendarLookup.Read(pid, clubUid, start, finish) : null;
+        var managerAfter = NativeManagerLookup.Read(pid, nativeProfile);
+        if (!NativeManagerResult.SameBinding(manager, managerAfter))
+            manager = new NativeManagerResult("unavailable", manager.Status == "available" || managerAfter.Status == "available" ? "changed_during_capture" : managerAfter.Reason ?? manager.Reason);
         if (process.HasExited || new DateTimeOffset(process.StartTime.ToUniversalTime()) != started) return Emit("no_session");
-        if (date.Status != "experimental" && person?.Status != "experimental" &&
+        if (manager.Status != "available" && date.Status != "experimental" && person?.Status != "experimental" &&
             team?.Status != "experimental_candidates_incomplete" && schedule?.Status != "experimental_records_unverified" && managerCandidates?.Status != "experimental_candidates_incomplete" &&
             tactic?.Status != "experimental" && calendar?.Status != "partial" && calendar?.Status != "experimental_loaded_buckets_only")
-            return Emit("no_data");
+            return Emit("no_data", new Dictionary<string, object?> { ["manager"] = manager, ["nativeProfile"] = nativeProfile });
         return Emit("fresh_partial", new Dictionary<string, object?> {
             ["date"] = date,
             ["player"] = person is null ? null : new { observedAt = personObservedAt, value = person },
-            ["manager"] = new { status = "unknown", reason = "active_manager_not_identified" },
+            ["manager"] = manager, ["nativeProfile"] = nativeProfile,
             ["managerCandidates"] = managerCandidates, ["team"] = team, ["schedule"] = schedule,
             ["tactic"] = tactic, ["calendar"] = calendar,
         });
