@@ -276,11 +276,12 @@ class AgentService:
 
     async def general_advice(self, message: str, conversation_id: str | None, *, character_context: dict | None = None) -> dict:
         """Keep talking without game evidence; never relabel this as a native read."""
+        scope = self.response_scope(character_context)
         response = await self._chat(message, conversation_id, {"source_status": "general_knowledge"},
             **({"character_context": character_context} if character_context is not None else {}))
         return {**response, "status": "general_advice", "source_status": "general_knowledge",
                 "source": "general_knowledge", "production_ready": False,
-                "character_context": self.response_scope(character_context)}
+                "character_context": scope}
 
     async def _chat(self, message: str, conversation_id: str | None, context: dict,
                     *, business: bool = False, ui: bool = False, calendar: bool = False, offseason: bool = False, character_context: dict | None = None) -> dict:
