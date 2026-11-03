@@ -8,7 +8,8 @@ namespace FootballAssistant.OffseasonReader;
 public static class NativeManagerLookup
 {
     public static NativeManagerResult Read(int pid) => Read(pid, NativeReadProfile.Read(pid));
-    public static NativeManagerResult Read(int pid, NativeReadProfile profile)
+    public static NativeManagerResult Read(int pid, NativeReadProfile profile) => Read(pid, profile, null);
+    public static NativeManagerResult Read(int pid, NativeReadProfile profile, NativeReadContext? context)
     {
         if (pid <= 0) return new("unavailable", "invalid_input");
         if (!profile.Matched) return new("unavailable", profile.Reason ?? "unsupported_native_profile");
@@ -18,6 +19,8 @@ public static class NativeManagerLookup
             if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return new("unavailable", "wrong_process");
             var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             if (module is null) return new("unavailable", "module_unavailable");
+            if (context is not null && NativeReadContext.Hash(process, module, context) != NativeReadProfile.NativeHash)
+                return new("unavailable", "unsupported_native_profile");
             using var memory = Native.OpenProcess(0x1010, false, pid);
             if (memory.IsInvalid) return new("unavailable", "process_unavailable");
             return new NativeManagerReader(new ProcessMemory(memory), module.BaseAddress.ToInt64()).Read();

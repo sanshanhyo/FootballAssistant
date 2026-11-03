@@ -64,9 +64,8 @@ try
         var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
         // A running executable without its game module is not yet a readable session.
         if (module is null || string.IsNullOrEmpty(module.FileName)) return Emit("no_session");
-        string binaryHash;
-        using (var file = File.OpenRead(module.FileName))
-            binaryHash = Convert.ToHexString(SHA256.HashData(file)).ToLowerInvariant();
+        using var readContext = NativeReadContext.Open(process, module);
+        string binaryHash = readContext.Sha256.ToLowerInvariant();
         bool matched = binaryHash == ExpectedHash;
         binaryIdentity = new { module = "game_plugin.dll", sha256 = binaryHash, matched };
         // Never call any memory lookup for an unknown game binary.
@@ -74,50 +73,50 @@ try
         using var access = Native.OpenProcess(0x1010, false, pid); // QUERY_LIMITED_INFORMATION | VM_READ
         if (access.IsInvalid) return Emit(Marshal.GetLastWin32Error() == 5 ? "process_access_denied" : "read_failed");
         ReaderDiagnostics.Stage(ReaderStage.NativeProfile);
-        var nativeProfile = NativeReadProfile.Read(pid);
+        var nativeProfile = NativeReadProfile.Read(pid, readContext);
         ReaderDiagnostics.Stage(ReaderStage.Manager);
-        var manager = NativeManagerLookup.Read(pid, nativeProfile);
+        var manager = NativeManagerLookup.Read(pid, nativeProfile, readContext);
         ReaderDiagnostics.Stage(ReaderStage.Date);
-        var date = WorldDateLookup.Read(pid);
+        var date = WorldDateLookup.Read(pid, readContext);
         PersonResult? person = null;
         DateTimeOffset? personObservedAt = null;
         if (personUid > 0)
         {
             ReaderDiagnostics.Stage(ReaderStage.Person);
-            person = PersonLookup.Read(pid, personUid, nativeProfile);
+            person = PersonLookup.Read(pid, personUid, nativeProfile, readContext);
             if (person.Status == "experimental") personObservedAt = DateTimeOffset.UtcNow;
         }
         TeamCandidateResult? team = null;
         if (clubUid > 0)
         {
             ReaderDiagnostics.Stage(ReaderStage.Team);
-            team = TeamCandidateLookup.Read(pid, clubUid, nativeProfile);
+            team = TeamCandidateLookup.Read(pid, clubUid, nativeProfile, readContext);
         }
         ScheduleCandidateResult? schedule = null;
         if (clubUid > 0)
         {
             ReaderDiagnostics.Stage(ReaderStage.Schedule);
-            schedule = ScheduleCandidateLookup.Read(pid, clubUid);
+            schedule = ScheduleCandidateLookup.Read(pid, clubUid, readContext);
         }
         ReaderDiagnostics.Stage(ReaderStage.ManagerCandidates);
-        var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid) : ManagerCandidateLookup.ReadAll(pid);
+        var managerCandidates = clubUid > 0 ? ManagerCandidateLookup.Read(pid, clubUid, readContext) : ManagerCandidateLookup.ReadAll(pid, readContext);
         TacticCandidateResult? tactic = null;
         if (clubUid > 0)
         {
             ReaderDiagnostics.Stage(ReaderStage.Tactic);
-            tactic = TacticCandidateLookup.Read(pid, clubUid);
+            tactic = TacticCandidateLookup.Read(pid, clubUid, readContext);
         }
         FixtureCalendarResult? calendar = null;
         if (args.Length == 4)
         {
             ReaderDiagnostics.Stage(ReaderStage.Calendar);
-            calendar = FixtureCalendarLookup.Read(pid, clubUid, start, finish);
+            calendar = FixtureCalendarLookup.Read(pid, clubUid, start, finish, readContext);
         }
         ReaderDiagnostics.Stage(ReaderStage.Revalidate);
-        var managerAfter = NativeManagerLookup.Read(pid, nativeProfile);
+        var managerAfter = NativeManagerLookup.Read(pid, nativeProfile, readContext);
         if (!NativeManagerResult.SameBinding(manager, managerAfter))
             manager = new NativeManagerResult("unavailable", manager.Status == "available" || managerAfter.Status == "available" ? "changed_during_capture" : managerAfter.Reason ?? manager.Reason);
-        if (process.HasExited || new DateTimeOffset(process.StartTime.ToUniversalTime()) != started) return Emit("no_session");
+        if (!readContext.IsCurrent(process) || process.HasExited || new DateTimeOffset(process.StartTime.ToUniversalTime()) != started) return Emit("no_session");
         if (manager.Status != "available" && date.Status != "experimental" && person?.Status != "experimental" &&
             team?.Status != "experimental_candidates_incomplete" && schedule?.Status != "experimental_records_unverified" && managerCandidates?.Status != "experimental_candidates_incomplete" &&
             tactic?.Status != "experimental" && calendar?.Status != "partial" && calendar?.Status != "experimental_loaded_buckets_only")

@@ -14,7 +14,8 @@ public sealed record NativeReadProfile(string Status, string? Reason = null,
     public bool Matched => Status == "available" && GamePluginSha256 == NativeHash &&
         GameAssemblySha256 == AssemblyHash && MetadataSha256 == MetadataHash;
 
-    public static NativeReadProfile Read(int pid)
+    public static NativeReadProfile Read(int pid) => Read(pid, null);
+    public static NativeReadProfile Read(int pid, NativeReadContext? context)
     {
         if (pid <= 0) return new("unavailable", "invalid_input");
         try
@@ -31,7 +32,7 @@ public sealed record NativeReadProfile(string Status, string? Reason = null,
             // Derive Unity's standard metadata location from the running executable,
             // never from a hard-coded installation directory or a private capture.
             var metadata = Path.Combine(Path.GetDirectoryName(executable)!, Path.GetFileNameWithoutExtension(executable) + "_Data", "il2cpp_data", "Metadata", "global-metadata.dat");
-            return FromHashes(Hash(nativePath), Hash(assemblyPath), Hash(metadata));
+            return FromHashes(NativeReadContext.Hash(process, native!, context), Hash(assemblyPath), Hash(metadata));
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or NotSupportedException or CryptographicException)
         { return new("unavailable", "profile_files_unavailable"); }

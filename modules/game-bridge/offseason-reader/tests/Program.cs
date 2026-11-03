@@ -110,6 +110,7 @@ try { syntheticTracked.Bytes(0, 4); throw new Exception("bad address accepted");
 // Alpha8 synthetic native selection and familiarity regressions. No game process,
 // private samples, SDK, UI, or installed game files are needed by these tests.
 NativeIdentityChecks.Run();
+NativeBinaryLeaseChecks.Run();
 
 static class NativeIdentityChecks
 {
@@ -246,5 +247,63 @@ static class NativeIdentityChecks
             for (int i = 0; i < length; i++) if (!data.TryGetValue(address + i, out bytes[i])) throw new InvalidOperationException("Missing synthetic address");
             return bytes;
         }
+    }
+}
+
+
+static class NativeBinaryLeaseChecks
+{
+    static void Check(bool value, string reason) { if (!value) throw new Exception("Native file lease check: " + reason); }
+    static void Rejected(Action action, string reason)
+    {
+        try { action(); } catch (InvalidOperationException) { return; }
+        throw new Exception("Native file lease accepted " + reason);
+    }
+    public static void Run()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "fa-native-lease-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "synthetic.bin");
+        byte[] original = Enumerable.Range(0, 256).Select(value => (byte)value).ToArray();
+        File.WriteAllBytes(path, original);
+        var identity = new NativeBinaryIdentity(100, 200, 0x10000000, Path.GetFullPath(path));
+        try
+        {
+            string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(original));
+            using (var lease = PinnedNativeBinary.Open(identity))
+            {
+                Check(lease.Sha256 == hash, "actual SHA-256 measured");
+                for (int i = 0; i < 1000; i++) Check(lease.ReadHash(identity) == hash, "same-capture reuse");
+                Rejected(() => lease.ReadHash(identity with { ProcessId = 101 }), "another PID");
+                Rejected(() => lease.ReadHash(identity with { StartedAtTicks = 201 }), "reused PID/new process");
+                Rejected(() => lease.ReadHash(identity with { ImageBase = 0x20000000 }), "another module base");
+                Rejected(() => lease.ReadHash(identity with { Path = Path.Combine(directory, "another.bin") }), "another canonical path");
+                // The actual producer is Windows-only. Test its mandatory share
+                // lock on Windows; do not claim Unix enforces Windows sharing.
+                if (OperatingSystem.IsWindows())
+                {
+                    bool denied = false;
+                    try { using var writer = File.Open(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite); }
+                    catch (IOException) { denied = true; }
+                    Check(denied, "Windows write denied while verified lease is alive");
+                    denied = false;
+                    try { File.Move(path, path + ".moved"); }
+                    catch (IOException) { denied = true; }
+                    Check(denied, "Windows replacement denied while verified lease is alive");
+                }
+                lease.Dispose();
+                Rejected(() => lease.ReadHash(identity), "disposed capture reuse");
+            }
+            // No global/static hash cache: the next lease must read new bytes.
+            File.WriteAllBytes(path, new byte[] { 8, 9, 10 });
+            using (var next = PinnedNativeBinary.Open(identity))
+                Check(next.ReadHash(identity) != hash, "next capture independently hashed");
+            Rejected(() => PinnedNativeBinary.Open(identity with { ProcessId = 0 }), "invalid PID");
+            Rejected(() => PinnedNativeBinary.Open(identity with { StartedAtTicks = 0 }), "invalid start identity");
+            Rejected(() => PinnedNativeBinary.Open(identity with { ImageBase = 0 }), "invalid module base");
+            Rejected(() => PinnedNativeBinary.Open(identity with { Path = "relative.bin" }), "noncanonical path");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+        Console.WriteLine("Native file lease: pinned hash, bounded-scope reuse, identity changes and fresh capture checks passed");
     }
 }

@@ -11,7 +11,8 @@ public static class PersonLookup
 {
     private const string ExpectedHash = "BC940E472418FC5C214208D7CF30FECF600F689B6F9D71C11BA19A2DF0FE057F";
     public static PersonResult Read(int pid, int uid) => pid <= 0 || uid <= 0 ? new("invalid_input", null, null) : Read(pid, uid, NativeReadProfile.Read(pid));
-    public static PersonResult Read(int pid, int uid, NativeReadProfile profile)
+    public static PersonResult Read(int pid, int uid, NativeReadProfile profile) => Read(pid, uid, profile, null);
+    public static PersonResult Read(int pid, int uid, NativeReadProfile profile, NativeReadContext? context)
     {
         if (pid <= 0 || uid <= 0) return new("invalid_input", null, null);
         try
@@ -20,9 +21,7 @@ public static class PersonLookup
             if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return new("wrong_process", null, null);
             var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             if (module is null || string.IsNullOrEmpty(module.FileName)) return new("module_unavailable", null, null);
-            using (var stream = File.OpenRead(module.FileName))
-            using (var sha = SHA256.Create())
-                if (Convert.ToHexString(sha.ComputeHash(stream)) != ExpectedHash) return new("unsupported_binary", null, null);
+            if (NativeReadContext.Hash(process, module, context) != ExpectedHash) return new("unsupported_binary", null, null);
             using var memory = new SafeProcessHandle(OpenProcess(0x1010, false, pid));
             if (memory.IsInvalid) return new("process_unavailable", null, null);
             var clock = Stopwatch.StartNew();

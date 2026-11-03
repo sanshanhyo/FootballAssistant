@@ -12,7 +12,8 @@ public static class TeamCandidateLookup
 {
     private const string ExpectedHash = "BC940E472418FC5C214208D7CF30FECF600F689B6F9D71C11BA19A2DF0FE057F";
     public static TeamCandidateResult Read(int pid, uint clubUid) => pid <= 0 || clubUid is 0 or uint.MaxValue ? new("invalid_input") : Read(pid, clubUid, NativeReadProfile.Read(pid));
-    public static TeamCandidateResult Read(int pid, uint clubUid, NativeReadProfile profile)
+    public static TeamCandidateResult Read(int pid, uint clubUid, NativeReadProfile profile) => Read(pid, clubUid, profile, null);
+    public static TeamCandidateResult Read(int pid, uint clubUid, NativeReadProfile profile, NativeReadContext? context)
     {
         if (pid <= 0 || clubUid is 0 or uint.MaxValue) return new("invalid_input");
         try
@@ -21,9 +22,7 @@ public static class TeamCandidateLookup
             if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return new("wrong_process");
             var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             if (module is null || string.IsNullOrEmpty(module.FileName)) return new("module_unavailable");
-            using (var file = File.OpenRead(module.FileName))
-            using (var sha = SHA256.Create())
-                if (Convert.ToHexString(sha.ComputeHash(file)) != ExpectedHash) return new("unsupported_binary");
+            if (NativeReadContext.Hash(process, module, context) != ExpectedHash) return new("unsupported_binary");
             using var memory = Native.OpenProcess(0x1010, false, pid);
             if (memory.IsInvalid) return new("process_unavailable");
             return ReadSnapshot((address, count) => {

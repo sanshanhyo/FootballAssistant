@@ -9,14 +9,16 @@ namespace FootballAssistant.OffseasonReader;
 public static class ManagerCandidateLookup
 {
     private const string ExpectedHash = "BC940E472418FC5C214208D7CF30FECF600F689B6F9D71C11BA19A2DF0FE057F";
-    public static Result Read(int pid, uint clubUid)
+    public static Result Read(int pid, uint clubUid) => Read(pid, clubUid, null);
+    public static Result Read(int pid, uint clubUid, NativeReadContext? context)
     {
         if (pid <= 0 || clubUid is 0 or uint.MaxValue) return Unknown();
-        return ReadCandidates(pid, clubUid);
+        return ReadCandidates(pid, clubUid, context);
     }
     // These are human-manager candidates, not proof of the current user.
-    public static Result ReadAll(int pid) => pid <= 0 ? Unknown() : ReadCandidates(pid, 0);
-    private static Result ReadCandidates(int pid, uint clubUid)
+    public static Result ReadAll(int pid) => ReadAll(pid, null);
+    public static Result ReadAll(int pid, NativeReadContext? context) => pid <= 0 ? Unknown() : ReadCandidates(pid, 0, context);
+    private static Result ReadCandidates(int pid, uint clubUid, NativeReadContext? context)
     {
         try
         {
@@ -24,9 +26,7 @@ public static class ManagerCandidateLookup
             if (!string.Equals(process.ProcessName, "fm", StringComparison.OrdinalIgnoreCase)) return Unknown();
             var module = process.Modules.Cast<ProcessModule>().SingleOrDefault(m => string.Equals(m.ModuleName, "game_plugin.dll", StringComparison.OrdinalIgnoreCase));
             if (module is null || string.IsNullOrEmpty(module.FileName)) return Unknown();
-            using (var file = File.OpenRead(module.FileName))
-            using (var sha = SHA256.Create())
-                if (Convert.ToHexString(sha.ComputeHash(file)) != ExpectedHash) return Unknown();
+            if (NativeReadContext.Hash(process, module, context) != ExpectedHash) return Unknown();
             using var handle = Native.OpenProcess(0x1010, false, pid);
             if (handle.IsInvalid) return Unknown();
             var reader = new ManagerCandidateReader(new ProcessMemory(handle), module.BaseAddress.ToInt64());
