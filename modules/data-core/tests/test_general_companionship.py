@@ -127,7 +127,7 @@ def test_partial_unknown_identity_uses_validated_projection_not_fixed_refusal(tm
         assert result['context']['limitations']
         payload = json.loads(captured_model['message'])
         native = payload['untrusted_native_partial_data']
-        assert set(native) == {'source_status', 'facts', 'limitations'}
+        assert set(native) == {'facts', 'limitations'}
         assert native['facts']['current_manager'] is None
         assert native['facts']['manager_club_candidates'][0]['clubName'] == 'Synthetic club'
         assert 'TEST_UNTRUSTED_PAYLOAD_PROOF' not in str(captured_model)

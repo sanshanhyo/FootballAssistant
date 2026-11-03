@@ -55,7 +55,7 @@ def assert_safe(error, reason, stage, status=None):
     assert error.reason == reason
     assert error.stage == stage
     assert error.status_code == status
-    assert set(vars(error)) == {'reason', 'stage', 'status_code'}
+    assert set(vars(error)) == {'reason', 'stage', 'status_code', 'subtype'}
     assert PRIVATE not in str(error) + str(vars(error))
     assert 'https://' not in str(error) + str(vars(error))
 
@@ -206,5 +206,69 @@ def test_real_sdk_in_memory_transport_preserves_request_and_sanitized_failure(tm
 
 
 def test_diagnostic_fields_reject_free_form_or_invalid_values():
-    error = service.ModelUnavailable('fixture', reason=PRIVATE, stage=PRIVATE, status_code=True)
+    error = service.ModelUnavailable('fixture', reason=PRIVATE, stage=PRIVATE, status_code=True, subtype=PRIVATE)
     assert_safe(error, 'unknown', 'provider')
+    assert error.subtype == 'unknown'
+
+
+@pytest.mark.parametrize('case,subtype,stage', [
+    ('reasoning_length', 'token_limit', 'provider'),
+    ('empty_length', 'token_limit', 'provider'),
+    ('reasoning_stop', 'reasoning_only', 'provider'),
+    ('empty_stop', 'empty', 'provider'),
+    ('blank_text', 'empty_text', 'response'),
+    ('unexpected_tool', 'tool', 'provider'),
+    ('invalid_schema', 'schema', 'provider'),
+    ('empty_choices', 'unknown', 'provider'),
+    ('non_json', 'unknown', 'provider'),
+])
+def test_real_sdk_response_shape_subtypes_without_content_or_retry(tmp_path, monkeypatch, case, subtype, stage):
+    original_client = service.AsyncOpenAI
+    requests = []
+    def handle(request):
+        requests.append(json.loads(request.content))
+        if case == 'non_json':
+            return httpx.Response(200, text=PRIVATE)
+        message = {'role': 'assistant', 'content': None}
+        finish = 'length' if case.endswith('length') else 'stop'
+        if case.startswith('reasoning'):
+            message['reasoning_content'] = PRIVATE
+        elif case == 'blank_text':
+            message['content'] = '  '
+        elif case == 'unexpected_tool':
+            finish = 'tool_calls'
+            message['tool_calls'] = [{'id': PRIVATE, 'type': 'function', 'function': {'name': PRIVATE, 'arguments': '{}'}}]
+        elif case == 'invalid_schema':
+            message['content'] = {'invalid': PRIVATE}
+        body = {'id': PRIVATE, 'created': 0, 'object': 'chat.completion', 'model': 'fixture-model',
+                'choices': [{'index': 0, 'message': message, 'finish_reason': finish}],
+                'usage': {'prompt_tokens': 1, 'completion_tokens': 180, 'total_tokens': 181}}
+        if case == 'empty_choices':
+            body['choices'] = []
+        return httpx.Response(200, json=body)
+    def client(**kwargs):
+        kwargs['http_client'] = httpx.AsyncClient(transport=httpx.MockTransport(handle), trust_env=False)
+        return original_client(**kwargs)
+    monkeypatch.setattr(service, 'AsyncOpenAI', client)
+    store = CompanionStore(None)
+    agent = service.AgentService(settings(tmp_path, base_url='https://model.invalid/v1',
+                                         model='fixture-model', api_key='FIXTURE-KEY'), store)
+    try:
+        with pytest.raises(service.ModelUnavailable) as caught:
+            invoke(agent)
+        assert_safe(caught.value, 'unknown' if case == 'empty_choices' else 'invalid_response', stage)
+        assert caught.value.subtype == subtype
+        assert len(requests) == 1
+        assert requests[0].get('max_completion_tokens', requests[0].get('max_tokens')) == 180
+        assert store.counts()['messages'] == 0
+        assert 'run_messages' not in vars(caught.value)
+    finally:
+        agent.close()
+        store.close()
+
+
+def test_error_words_are_not_used_to_invent_a_response_subtype():
+    error = UnexpectedModelBehavior('token limit schema tool empty ' + PRIVATE, body=PRIVATE)
+    public = service._model_failure(error, 'provider')
+    assert_safe(public, 'invalid_response', 'provider')
+    assert public.subtype == 'unknown'
