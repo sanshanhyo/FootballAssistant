@@ -21,6 +21,23 @@ def configured(tmp_path, **kwargs):
                     api_key='TEST-NOT-A-KEY', **kwargs)
 
 
+def test_general_advice_explicitly_owns_source_and_scope_markers():
+    agent = service.AgentService(None, None)
+    selected = {'save_id': 'session:test', 'character_id': 'official.eckera', 'persona': 'PRIVATE_STYLE'}
+    async def legacy_chat(*args, **kwargs):
+        return {'reply': 'fixture', 'source_status': 'not_used'}
+    agent._chat = legacy_chat
+    try:
+        result = asyncio.run(agent.general_advice('聊聊足球', None, character_context=selected))
+        assert result['status'] == 'general_advice'
+        assert result['source_status'] == result['source'] == 'general_knowledge'
+        assert result['production_ready'] is False
+        assert result['character_context'] == {key: selected[key] for key in ('save_id', 'character_id')}
+        assert 'PRIVATE_STYLE' not in str(result)
+    finally:
+        agent.close()
+
+
 @pytest.mark.parametrize('entry', ['chat', 'general_advice'])
 def test_unknown_identity_reaches_natural_companionship_without_promoting_proof(tmp_path, captured_model, entry):
     original = b'USER OWNED PERSONA\r\nDo not replace.\r\n'
