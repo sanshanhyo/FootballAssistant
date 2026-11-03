@@ -90,7 +90,7 @@ def test_model_failure_classification_reaches_chat_without_private_error_data(tm
         result = client.post('/v1/chat', headers=AUTH, json={'message': '你好'})
         assert result.status_code == 502
         assert result.json()['detail'] == {'code': 'model_unavailable', 'message': '模型服务拒绝了认证。',
-            'reason': 'auth', 'stage': 'provider', 'status_code': 401}
+            'reason': 'auth', 'stage': 'provider', 'status_code': 401, 'subtype': 'unknown'}
 
 
 def test_direct_chat_next_match_uses_calendar_reader_and_keeps_scope(tmp_path, monkeypatch):

@@ -235,3 +235,39 @@ def test_sequential_detail_reads_reuse_latest_matching_team_without_extending_fr
         finally:
             agent.close()
     asyncio.run(scenario())
+
+
+def test_explicit_topic_exit_beats_football_keywords_and_clears_followup_target():
+    async def scenario():
+        reader, result, calls, contexts, data, read, body, agent = await run_scenario()()
+        try:
+            count = len(calls)
+            assert await reader.reply(body('我们不聊足球了，给我讲个笑话'), read, agent) is None
+            assert len(calls) == count
+            state = next(iter(reader.sessions.values()))
+            assert state['question'] == '' and state['last_selected'] == []
+            assert await reader.reply(body('你看一下吧'), read, agent) is None
+            assert len(calls) == count
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_failed_roster_handoff_reports_only_bounded_reason_and_stage():
+    def change(value, club, person, calls):
+        if club and not person:
+            value.clear()
+            value.update(status='unavailable', reason='producer_timeout', producer_diagnostics={
+                'schema': 'fa-reader-diagnostics/1', 'stage': 'team', 'elapsed_ms': 20001,
+                'private_path': 'SECRET_DO_NOT_RETURN'})
+    async def scenario():
+        reader, result, calls, contexts, *_rest, agent = await run_scenario(change)()
+        try:
+            assert result['source_status'] == 'general_knowledge'
+            assert result['reader_handoff'] == {'reason': 'team_identity_or_freshness',
+                'reader_reason': 'producer_timeout', 'stage': 'team', 'elapsed_ms': 20001}
+            assert 'SECRET_DO_NOT_RETURN' not in str(result)
+            assert not contexts[-1].get('facts')
+        finally:
+            agent.close()
+    asyncio.run(scenario())

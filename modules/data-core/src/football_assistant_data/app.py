@@ -556,7 +556,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/calendar-advice", dependencies=[Depends(authorized)])
         async def calendar_advice(body: CalendarAdviceRequest):
@@ -574,7 +574,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/auto-calendar-advice", dependencies=[Depends(authorized)])
         async def auto_calendar_advice(body: ChatRequest):
@@ -610,7 +610,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503, detail={"code": "model_not_configured", "message": str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
+                raise HTTPException(502, detail={"code": "model_unavailable", "message": str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/agent/ui-advice",dependencies=[Depends(authorized)])
         async def ui_advice(body: BusinessAdviceRequest):
@@ -626,7 +626,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.post("/v1/chat",dependencies=[Depends(authorized)])
         async def chat(body: ChatRequest):
@@ -649,7 +649,7 @@ def create_app(settings: Settings | None = None, *, enable_agent: bool = True) -
             except ModelNotConfigured as error:
                 raise HTTPException(503,detail={"code":"model_not_configured","message":str(error)}) from None
             except ModelUnavailable as error:
-                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code}) from None
+                raise HTTPException(502,detail={"code":"model_unavailable","message":str(error), "reason": error.reason, "stage": error.stage, "status_code": error.status_code, "subtype": error.subtype}) from None
 
         @app.get("/v1/characters/legacy-archive", dependencies=[Depends(authorized)])
         async def legacy_character_archive(request: Request):

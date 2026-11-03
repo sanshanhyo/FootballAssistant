@@ -43,6 +43,12 @@ class OffseasonConversation:
             self.sessions.pop(old, None)
         message = body.message.strip()
         previous = self.sessions.get(key)
+        stop_topic = bool(re.search(r'(?:不聊|不谈|别聊|别谈|停止(?:讨论|聊)?|先放下).{0,12}(?:足球|球队|比赛)|换个话题|聊点别的', message))
+        joke = bool(re.search(r'(?:讲|说|来|听).{0,8}(?:笑话|段子)', message)) and not bool(re.search(r'(?:别|不要|不想).{0,5}(?:讲|说|听).{0,8}(?:笑话|段子)', message))
+        if stop_topic or joke:
+            if previous:
+                previous.update(question='', pending=[], last_selected=[])
+            return None
         continuation = bool(re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样|然后呢|为什么呢?)[。？?！!]*', message))
         affirmation = bool(re.fullmatch(r'(?:是|是的|对|对的|确认|就是这个|就是这支队|yes)[。！!，,\s]*', message, re.I))
         explicit = bool(re.search(r'球队|队伍|俱乐部|执教|门将|球员|阵容|首发|战术|赛程|比赛|足球|几号|日期|游戏|UID|goalkeeper|keeper|squad|roster|football|fixture|tactic|club|player|game date', message, re.I))
@@ -83,8 +89,24 @@ class OffseasonConversation:
             return {'status': 'partial', 'source_status': 'partial_native_candidates', 'reply': text,
                     'conversation_id': conversation, 'context': context,
                     **({'character_context': {name: scope[name] for name in ('save_id', 'character_id')}} if supplied else {})}
-        async def general():
-            return await agent.general_advice(message, conversation, character_context=supplied)
+        async def general(reason="conversation_only", observed=None):
+            result = await agent.general_advice(message, conversation, character_context=supplied)
+            # Bounded handoff evidence explains fallback without exposing native
+            # facts, identities, paths or arbitrary subprocess output.
+            result["reader_handoff"] = {"reason": reason}
+            if isinstance(observed, dict):
+                code = observed.get("reason")
+                if code in {"producer_busy", "producer_timeout", "producer_failed", "producer_invalid_output", "no_data", "no_session", "fm_not_running", "process_access_denied", "read_failed", "experimental_candidates"}:
+                    result["reader_handoff"]["reader_reason"] = code
+                diagnostics = observed.get("producer_diagnostics")
+                if isinstance(diagnostics, dict) and diagnostics.get("schema") == "fa-reader-diagnostics/1":
+                    stage = diagnostics.get("stage")
+                    if stage in {"process", "module_hash", "native_profile", "manager", "date", "person", "team", "schedule", "manager_candidates", "tactic", "calendar", "revalidate", "complete"}:
+                        result["reader_handoff"]["stage"] = stage
+                    elapsed = diagnostics.get("elapsed_ms")
+                    if type(elapsed) is int and 0 <= elapsed <= 600000:
+                        result["reader_handoff"]["elapsed_ms"] = elapsed
+            return result
         def same(value):
             checked = prepare_offseason_advice(value)
             return checked is not None and checked['session_id'] == session and manager_key(checked) == binding
@@ -98,7 +120,7 @@ class OffseasonConversation:
             person = int(person_markers[0])
             selected = await read(0, person)
             if not same(selected):
-                return await general()
+                return await general('person_identity_or_freshness', selected)
             return await agent.offseason_advice(message, conversation, selected, character_context=supplied, person_uid=person)
         # An explicitly supplied UID is a user selection, not inferred identity.
         club_markers = re.findall(r'(?:俱乐部|club)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
@@ -115,7 +137,7 @@ class OffseasonConversation:
             if choice:
                 state.update(club=choice['clubUid'], roster=[], team=None, people={}, last_selected=[], pending=[])
             elif re.search(r'门将|球队|队伍|阵容|球员|看一下|看看|确认|不是|不对', message):
-                return await general()
+                return await general('team_confirmation_pending')
         relevant = bool(re.search(r'门将|球队|队伍|阵容|球员|首发|goalkeeper|squad|roster', message, re.I))
         if not state['club'] and relevant:
             unique = {row['clubUid']: row for row in candidates}
@@ -132,19 +154,20 @@ class OffseasonConversation:
             team = await read(club, 0)
             if not same(team):
                 state.update(roster=[], team=None, people={})
-                return await general()
+                return await general('team_identity_or_freshness', team)
             raw = (team.get('snapshot') or {}).get('team') or {}
             rows = raw.get('players')
             if raw.get('status') != 'experimental_candidates_incomplete' or not isinstance(rows, list) or len(rows) > 256:
                 state.update(roster=[], team=None, people={})
-                return await general()
+                return await general('team_payload_unavailable', team)
             roster = [r for r in rows if isinstance(r, dict) and type(r.get('uid')) is int and 0 < r['uid'] <= 2147483647 and r.get('clubUid') == club and r.get('linkStatus') == 'exact_types' and isinstance(r.get('name'), str) and 0 < len(r['name']) <= 128]
             state.update(roster=roster, team=team, team_at=now)
         roster = state['roster']
         team_context = prepare_offseason_advice(state['team'], club_uid=club)
         if team_context is None or manager_key(team_context) != binding:
+            failed_team = state['team']
             state.update(roster=[], team=None, people={}, last_selected=[])
-            return await general()
+            return await general('team_projection_unavailable', failed_team)
         projected_roster = {row['uid']: row for row in team_context['facts']['team_candidates']}
         ids = re.findall(r'(?:球员|人物|person|player)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
         selected = [r for r in roster if str(r['uid']) in ids or r['name'] in message]
@@ -176,7 +199,7 @@ class OffseasonConversation:
             cached = state['people'].get(row['uid'])
             value = cached[1] if cached and now - cached[0] <= 15 else await read(club, row['uid'])
             if not same(value):
-                return await general()
+                return await general('person_identity_or_freshness', value)
             state['people'][row['uid']] = (time.monotonic(), value)
             related.append({'person_uid': row['uid'], 'envelope': value})
         # Detail queries already carry a freshly read team. Reuse the latest

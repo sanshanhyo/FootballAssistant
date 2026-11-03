@@ -137,12 +137,14 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
     started = time.monotonic()
     stage = None
     stage_started = started
+    stage_timings = {}
     def finish(result):
         now = time.monotonic()
         return {**result, "producer_diagnostics": {
             "schema": "fa-reader-diagnostics/1", "stage": stage,
             "elapsed_ms": round((now - started) * 1000),
             "stage_elapsed_ms": round((now - stage_started) * 1000) if stage else None,
+            "stage_timings_ms": {**stage_timings, **({stage: stage_timings.get(stage, 0) + round((now - stage_started) * 1000)} if stage else {})},
             "timeout_seconds": 40 if start is not None else 20,
             "exit_code": proc.returncode if proc is not None else None,
         }}
@@ -176,7 +178,10 @@ async def read_offseason(executable: Path, club_uid: int, person_uid: int, start
                     if (isinstance(entry, dict) and set(entry) == {"schema", "stage"}
                             and entry["schema"] == "fa-reader-stage/1"
                             and isinstance(entry["stage"], str) and entry["stage"] in _STAGES):
-                        stage, stage_started = entry["stage"], time.monotonic()
+                        tick = time.monotonic()
+                        if stage is not None:
+                            stage_timings[stage] = stage_timings.get(stage, 0) + round((tick - stage_started) * 1000)
+                        stage, stage_started = entry["stage"], tick
         async def collect() -> bytes:
             assert proc.stdout is not None
             diagnostic_task = asyncio.create_task(collect_stages())

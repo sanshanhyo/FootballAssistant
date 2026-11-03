@@ -247,6 +247,8 @@ def test_producer_diagnostics_only_accept_bounded_fixed_stage_records(tmp_path, 
     result = asyncio.run(reader.read_offseason(executable, 0, 0))
     assert result['reason'] == 'fm_not_running'
     assert result['producer_diagnostics']['stage'] == 'manager'
+    assert set(result['producer_diagnostics']['stage_timings_ms']) == {'manager'}
+    assert result['producer_diagnostics']['stage_timings_ms']['manager'] >= 0
     assert result['producer_diagnostics']['timeout_seconds'] == 20
     assert result['producer_diagnostics']['elapsed_ms'] >= 0
     assert private not in json.dumps(result)
