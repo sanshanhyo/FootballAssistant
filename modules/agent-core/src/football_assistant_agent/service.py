@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from uuid import uuid4
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError, ModelConnectionError, ModelTimeoutError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, APIStatusError, APIResponseValidationError
 
 from football_assistant_data.config import Settings
 from football_assistant_data.tactics_projection import DISPLAY_FIELDS, LIMITATIONS as TACTICS_LIMITATIONS
@@ -52,7 +54,52 @@ class ModelBudgetExceeded(Exception):
 
 
 class ModelUnavailable(Exception):
-    pass
+    """Only fixed classifications cross the API; never attach provider error data."""
+
+    def __init__(self, message, *, reason="unknown", stage="provider", status_code=None):
+        super().__init__(message)
+        self.reason = reason if reason in {
+            "busy", "timeout", "auth", "rate_limit", "connection", "invalid_response",
+            "storage", "configuration", "dependency", "request_rejected", "provider_error", "unknown",
+        } else "unknown"
+        self.stage = stage if stage in {"lock", "prepare", "client", "provider", "response", "storage"} else "provider"
+        self.status_code = status_code if type(status_code) is int and 100 <= status_code <= 599 else None
+
+
+def _model_failure(error, stage):
+    """Classify known exception types/statuses without reading messages or bodies."""
+    chain, seen = [], set()
+    while isinstance(error, Exception) and id(error) not in seen and len(chain) < 5:
+        chain.append(error)
+        seen.add(id(error))
+        error = error.__cause__
+    status = next((item.status_code for item in chain if isinstance(item, (ModelHTTPError, APIStatusError))
+                   and type(item.status_code) is int and 100 <= item.status_code <= 599), None)
+    if stage == "storage" or any(isinstance(item, sqlite3.Error) for item in chain):
+        reason, message = "storage", "本地对话存储读写失败，请稍后重试。"
+    elif any(isinstance(item, (TimeoutError, APITimeoutError, ModelTimeoutError)) for item in chain) or status in (408, 504):
+        reason, message = "timeout", "模型服务响应超时，请稍后重试。"
+    elif status in (401, 403):
+        reason, message = "auth", "模型服务拒绝了认证或访问权限，请检查该服务的配置。"
+    elif status == 429:
+        reason, message = "rate_limit", "模型服务限制了请求，请稍后重试或检查服务额度。"
+    elif status in (400, 404, 422):
+        reason, message = "request_rejected", "模型服务拒绝了请求，请检查模型名称、接口和请求设置。"
+    elif status is not None:
+        reason, message = "provider_error", "模型服务返回了错误，请稍后重试。"
+    elif any(isinstance(item, (APIConnectionError, ModelConnectionError)) for item in chain):
+        reason, message = "connection", "未能连接模型服务，请检查网络与服务地址。"
+    elif any(isinstance(item, ImportError) for item in chain):
+        reason, message = "dependency", "模型客户端缺少运行依赖，暂时无法发起请求。"
+    elif stage == "response" or any(isinstance(item, (UnexpectedModelBehavior, APIResponseValidationError)) for item in chain):
+        reason, message = "invalid_response", "模型服务没有返回可用的文本响应。"
+    elif any(isinstance(item, UserError) for item in chain) or (
+        stage == "client" and any(isinstance(item, (TypeError, ValueError)) for item in chain)
+    ):
+        reason, message = "configuration", "模型客户端未能初始化，请检查兼容服务配置。"
+    else:
+        reason, message = "unknown", "模型服务调用未完成，请稍后重试。"
+    return ModelUnavailable(message, reason=reason, stage=stage, status_code=status)
 
 
 class AgentService:
@@ -296,7 +343,8 @@ class AgentService:
         try:
             await asyncio.wait_for(self._lock.acquire(), timeout=1)
         except TimeoutError:
-            raise ModelUnavailable("已有对话正在生成，请稍后重试。") from None
+            raise ModelUnavailable("已有对话正在生成，请稍后重试。", reason="busy", stage="lock") from None
+        stage = "prepare"
         try:
             self.persona = load_persona(self.settings)
             persona_text = selected.get("persona", self.persona.text)
@@ -325,15 +373,20 @@ class AgentService:
                 # continuity, but never replay old assistant assertions as model
                 # responses or promote free-form memories into the system prompt.
                 prompt = SYSTEM_RULES + COMPANIONSHIP_INSTRUCTIONS
+                stage = "storage"
+                memories = scoped_store.memories(**scope)
+                recent = scoped_store.recent_messages(conversation_id, **scope)
+                stage = "prepare"
                 model_message = json.dumps({
                     "user_message": message,
                     "untrusted_persona": persona_text,
                     "untrusted_companionship": {
-                        "explicit_memories": scoped_store.memories(**scope),
-                        "historical_conversation": scoped_store.recent_messages(conversation_id, **scope),
+                        "explicit_memories": memories,
+                        "historical_conversation": recent,
                     },
                 }, ensure_ascii=False)
             history = []
+            stage = "storage"
             if not self.store.reserve_model_request(self.settings.model_budget_id,self.settings.model_request_limit):
                 raise ModelBudgetExceeded("本轮已授权的模型请求次数已用完，需要另行确认。")
             # Explicit client prevents ambient OPENAI_* configuration from supplying credentials.
@@ -341,28 +394,33 @@ class AgentService:
             # Local scope/history are explicit. Never reuse a provider-side session
             # across roles or expose a game/save/character identity in routing headers.
             headers["x-opencode-session"] = str(uuid4())
+            stage = "client"
             async with AsyncOpenAI(api_key=self.settings.api_key, base_url=self.settings.base_url, timeout=self.settings.model_timeout, max_retries=0, default_headers=headers) as client:
                 provider = OpenAICompatibleProvider("footballassistant-configured", openai_client=client)
                 model = OpenAIChatModel(self.settings.model, provider=provider)
                 agent = Agent(model, system_prompt=prompt, retries=0)
+                stage = "provider"
                 result = await asyncio.wait_for(agent.run(model_message, message_history=history, model_settings={"max_tokens":self.settings.max_output_tokens,"extra_body":self.settings.model_extra_body}), timeout=self.settings.model_timeout + 2)
+            stage = "response"
             reply = result.output
             if not isinstance(reply,str) or not reply.strip():
-                raise ModelUnavailable("模型服务没有返回可用文本。")
+                raise ModelUnavailable("模型服务没有返回可用文本。", reason="invalid_response", stage="response")
             # Partial evidence replies are validated again by their caller. Do
             # not persist raw conclusions that may be suppressed after expiry.
             if not ui and not offseason:
+                stage = "storage"
                 scoped_store.append_turn(conversation_id,message,reply, **scope)
             self.last_error = False
             return {"reply":reply,"conversation_id":conversation_id,"source_status":context["source_status"], "character_context":scope}
         except ModelBudgetExceeded:
             raise
-        except ModelUnavailable:
-            self.last_error = True
+        except ModelUnavailable as error:
+            if error.reason != "busy":
+                self.last_error = True
             raise
-        except Exception:
+        except Exception as error:
             self.last_error = True
             # SDK errors may contain bearer credentials, endpoint query values or prompt bodies.
-            raise ModelUnavailable("模型服务连接或响应失败，请检查地址、模型、密钥与网络。") from None
+            raise _model_failure(error, stage) from None
         finally:
             self._lock.release()
