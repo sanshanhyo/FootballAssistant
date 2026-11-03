@@ -192,7 +192,7 @@ def test_cli_offline_entry_precedes_all_game_access_and_unknown_binary_blocks_lo
     source = (root / 'game-bridge/offseason-reader-cli/Program.cs').read_text()
     assert source.index('args[0] == "--self-test"') < source.index('Process.GetProcessesByName')
     assert source.index('args[0] == "--version"') < source.index('Process.GetProcessesByName')
-    assert source.index('if (!matched) return Emit("unsupported_binary")') < source.index('WorldDateLookup.Read(pid)')
+    assert source.index('if (!matched) return Emit("unsupported_binary")') < source.index('WorldDateLookup.Read(pid, readContext)')
     assert 'return Emit("offline_self_test", synthetic: true)' in source
     assert 'WriteProcessMemory' not in source and 'BepInEx' not in source
 
