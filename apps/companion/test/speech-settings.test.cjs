@@ -86,3 +86,15 @@ test('newer speech edits are saved after an older request fails, without retryin
   speed.value='1.5';speed.listeners.input();const second=h.ui.flush();
   resolve({ok:false});assert.deepEqual(await Promise.all([first,second]),[true,true]);assert.equal(calls.length,2);assert.equal(calls[1].speed,1.5);h.ui.dispose();
 });
+
+test('compatible TTS entry is hidden without rewriting the existing provider or speed on load', async () => {
+  let saves = 0;
+  const h = harness({ getSpeechConfig: async () => ({ ok: true, value: { ...saved, provider: 'openai', speed: 0.85 } }), saveSpeechConfig: async () => { saves++; } });
+  await h.ui.ready;
+  const provider = h.byId.get('tts-provider');
+  assert.deepEqual(provider.children.filter(x => !x.hidden && !x.disabled).map(x => x.value), ['edge']);
+  assert.equal(provider.value, 'openai');
+  assert.equal(h.byId.get('tts-speed').value, 0.85);
+  for (const name of ['voice', 'baseUrl', 'model', 'apiKey', 'removeKey']) assert.equal(h.byId.get(`tts-${name}`).parentElement.hidden, true);
+  assert.equal(saves, 0); h.ui.dispose();
+});

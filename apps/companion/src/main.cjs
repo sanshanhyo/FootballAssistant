@@ -369,7 +369,7 @@ async function buildWindow() {
         while (!document.getElementById('tts-provider') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
         document.querySelector('[data-page="voice"]').click();
         const provider = document.getElementById('tts-provider');
-        if (!provider || JSON.stringify(Array.from(provider.options, item => item.value)) !== '["edge","openai"]') throw new Error('Unexpected speech providers');
+        if (!provider || JSON.stringify(Array.from(provider.options).filter(item => !item.hidden && !item.disabled).map(item => item.value)) !== '["edge"]') throw new Error('Unexpected speech providers');
         if (document.getElementById('tts-networkConsent') || panel.querySelector('button[type="submit"]')) throw new Error('Redundant speech save or consent control');
         const speed = document.getElementById('tts-speed'), volume = document.getElementById('tts-volume');
         if (speed?.type !== 'range' || volume?.type !== 'range' || Math.abs(speed.getBoundingClientRect().y - volume.getBoundingClientRect().y) > 2) throw new Error('Speech sliders are not aligned');

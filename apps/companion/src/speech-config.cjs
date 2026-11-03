@@ -3,7 +3,7 @@
 const path = require('node:path');
 const { createCredentialConfig, validateModelConfig } = require('./credentials.cjs');
 const { readStateFile, writeStateFile } = require('./state-file.cjs');
-const DEFAULTS = Object.freeze({ enabled: false, networkConsent: false, provider: 'system', voice: '', speed: 1, volume: 1 });
+const DEFAULTS = Object.freeze({ enabled: false, networkConsent: false, provider: 'system', voice: '', speed: 1.25, volume: 1 });
 const FIELDS = Object.keys(DEFAULTS);
 function validate(input, persisted = false) {
   if (!input || Object.getPrototypeOf(input) !== Object.prototype) throw Error('语音设置格式无效。');

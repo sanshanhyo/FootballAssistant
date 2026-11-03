@@ -15,7 +15,7 @@
     field('enabled', '在线自动朗读', 'checkbox');
     const providerRow = make('div', '', 'setting-row tts-provider-row');
     const select = make('select'); select.id = 'tts-provider'; select.setAttribute('aria-label', '语音服务');
-    for (const [value, label] of [['edge', 'Edge TTS'], ['openai', 'OpenAI 兼容语音']]) { const item = make('option', label); item.value = value; select.append(item); }
+    for (const [value, label] of [['edge', 'Edge TTS'], ['openai', 'OpenAI 兼容语音']]) { const item = make('option', label); item.value = value; if (value === 'openai') { item.hidden = true; item.disabled = true; } select.append(item); }
     providerRow.append(select); form.append(providerRow); elements.provider = select;
     field('baseUrl', 'API 地址', 'url');
     field('model', '模型');
@@ -32,7 +32,7 @@
     function state() {
       key.placeholder = select.value === 'openai' && credentialConfig?.hasApiKey && normalizedUrl(elements.baseUrl.value) === normalizedUrl(credentialConfig.baseUrl) ? '••••••••' : '';
       for (const input of Object.values(elements)) input.disabled = loading;
-      for (const name of ['voice', 'baseUrl', 'model', 'apiKey', 'removeKey']) elements[name].parentElement.hidden = select.value !== 'openai';
+      for (const name of ['voice', 'baseUrl', 'model', 'apiKey', 'removeKey']) elements[name].parentElement.hidden = true;
     }
     function render(value) {
       // A legacy local provider is displayed as an OFF online configuration, never silently opted in.

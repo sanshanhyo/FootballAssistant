@@ -88,3 +88,16 @@ test('damaged credential config fails closed without preventing desktop startup'
   await assert.rejects(disabled.save(defaults), /保留原文件/);
   assert.equal(await fs.readFile(file, 'utf8'), '{broken');
 });
+
+test('new or missing speed defaults to 1.25 without replacing a stored user speed', async t => {
+  const { config, userData } = await setup(t);
+  assert.equal(config.getPublicConfig().speed, 1.25);
+  await config.save({ ...defaults, speed: 0.9 });
+  const before = await fs.readFile(path.join(userData, 'tts/preferences.json'));
+  const reopened = await createSpeechConfig({ userData, safeStorage });
+  assert.equal(reopened.getPublicConfig().speed, 0.9);
+  assert.deepEqual(await fs.readFile(path.join(userData, 'tts/preferences.json')), before);
+  const missing = { schema_version: 1, ...defaults }; delete missing.speed;
+  await fs.writeFile(path.join(userData, 'tts/preferences.json'), JSON.stringify(missing));
+  assert.equal((await createSpeechConfig({ userData, safeStorage })).getPublicConfig().speed, 1.25);
+});
