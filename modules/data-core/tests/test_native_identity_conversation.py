@@ -73,8 +73,8 @@ def test_mid_read_manager_change_stops_comparison():
     async def scenario():
         reader, result, calls, contexts, *_rest, agent = await run_scenario(change)()
         try:
-            assert '已停止比较' in result['reply']
-            assert not contexts and calls == [(0, 0), (34, 0), (34, 101)]
+            assert result['source_status'] == 'general_knowledge'
+            assert not contexts[-1].get('facts') and calls == [(0, 0), (34, 0), (34, 101)]
         finally:
             agent.close()
     asyncio.run(scenario())

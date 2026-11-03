@@ -33,7 +33,8 @@ def test_keeper_question_followup_confirmation_names_and_bounded_attributes():
             cid = first['conversation_id']
             assert '示例队' in first['reply'] and '哪支球队' in first['reply']
             follow = await reader.reply(body('你看一下吧', cid), read, agent)
-            assert '先确认' in follow['reply'] and not contexts
+            assert follow['source_status'] == 'general_knowledge'
+            assert not contexts[-1][1].get('facts')
             confirmed = await reader.reply(body('是的', cid), read, agent)
             assert '甲球员' in confirmed['reply'] and '没有球员位置' in confirmed['reply']
             result = await reader.reply(body('甲球员和乙球员是实际门将，比较他们', cid), read, agent)
@@ -62,18 +63,22 @@ def test_keeper_question_followup_confirmation_names_and_bounded_attributes():
     asyncio.run(scenario())
 
 
-def test_busy_reader_does_not_queue_later_messages_indefinitely():
-    from football_assistant_agent.service import ModelUnavailable
+def test_busy_reader_keeps_chat_useful_without_other_requests_data():
     async def scenario():
         reader = OffseasonConversation()
         await reader.lock.acquire()
+        calls = []
+        class Agent:
+            async def general_advice(self, message, conversation, **kwargs):
+                calls.append((message, conversation, kwargs))
+                return {'reply': '先聊思路，我更喜欢接球稳、出击判断好的门将。', 'status': 'general_advice', 'source_status': 'general_knowledge'}
+        body = SimpleNamespace(message='你看一下吧', conversation_id='busy', character_context=None)
+        async def forbidden(*args):
+            raise AssertionError('Busy request must not read or reuse another selection')
         try:
-            try:
-                await reader.reply(SimpleNamespace(), None, None)
-            except ModelUnavailable as error:
-                assert '仍在处理' in str(error)
-            else:
-                raise AssertionError('Busy request did not fail promptly')
+            result = await reader.reply(body, forbidden, Agent())
+            assert '上一条' not in result['reply'] and result['source_status'] == 'general_knowledge'
+            assert len(calls) == 1 and reader.lock.locked() and not reader.sessions
         finally:
             reader.lock.release()
     asyncio.run(asyncio.wait_for(scenario(), timeout=2))

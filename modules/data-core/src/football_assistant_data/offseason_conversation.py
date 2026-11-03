@@ -23,8 +23,10 @@ class OffseasonConversation:
         try:
             await asyncio.wait_for(self.lock.acquire(), timeout=1)
         except TimeoutError:
-            from football_assistant_agent.service import ModelUnavailable
-            raise ModelUnavailable("上一条读取或回复仍在处理，请稍后再试。") from None
+            # The reader is busy, not the companion. Never queue indefinitely or
+            # reuse the other request's observations, but keep this turn useful.
+            supplied = body.character_context.model_dump(exclude_none=True) if body.character_context else None
+            return await agent.general_advice(body.message, body.conversation_id, character_context=supplied)
         try:
             return await self._reply(body, read, agent)
         finally:
@@ -69,6 +71,8 @@ class OffseasonConversation:
             return {'status': 'partial', 'source_status': 'partial_native_candidates', 'reply': text,
                     'conversation_id': conversation, 'context': context,
                     **({'character_context': {name: scope[name] for name in ('save_id', 'character_id')}} if supplied else {})}
+        async def general():
+            return await agent.general_advice(message, conversation, character_context=supplied)
         def same(value):
             checked = prepare_offseason_advice(value)
             return checked is not None and checked['session_id'] == session and manager_key(checked) == binding
@@ -78,7 +82,7 @@ class OffseasonConversation:
             person = int(person_markers[0])
             selected = await read(0, person)
             if not same(selected):
-                return answer('指定球员没有同一新鲜会话的读取结果。')
+                return await general()
             return await agent.offseason_advice(message, conversation, selected, character_context=supplied, person_uid=person)
         # An explicitly supplied UID is a user selection, not inferred identity.
         club_markers = re.findall(r'(?:俱乐部|club)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
@@ -95,7 +99,7 @@ class OffseasonConversation:
             if choice:
                 state.update(club=choice['clubUid'], roster=[], team=None, people={}, last_selected=[], pending=[])
             elif re.search(r'门将|球队|队伍|阵容|球员|看一下|看看|确认|不是|不对', message):
-                return answer('请先确认要看的球队名称：' + '、'.join(row['clubName'] for row in allowed.values()) + '。候选关联还不能证明当前执教身份。')
+                return await general()
         relevant = bool(re.search(r'门将|球队|队伍|阵容|球员|首发|goalkeeper|squad|roster', message, re.I))
         if not state['club'] and relevant:
             unique = {row['clubUid']: row for row in candidates}
@@ -113,19 +117,19 @@ class OffseasonConversation:
             team = await read(club, 0)
             if not same(team):
                 state.update(roster=[], team=None, people={})
-                return answer('这次所选球队的读取没有通过同一进程和新鲜度校验，请稍后再读；不会改查其他球队。')
+                return await general()
             raw = (team.get('snapshot') or {}).get('team') or {}
             rows = raw.get('players')
             if raw.get('status') != 'experimental_candidates_incomplete' or not isinstance(rows, list) or len(rows) > 256:
                 state.update(roster=[], team=None, people={})
-                return answer('所选俱乐部的名单目前未知，不能据此判断门将。')
+                return await general()
             roster = [r for r in rows if isinstance(r, dict) and type(r.get('uid')) is int and 0 < r['uid'] <= 2147483647 and r.get('clubUid') == club and r.get('linkStatus') == 'exact_types' and isinstance(r.get('name'), str) and 0 < len(r['name']) <= 128]
             state.update(roster=roster, team=team, team_at=now)
         roster = state['roster']
         team_context = prepare_offseason_advice(state['team'], club_uid=club)
         if team_context is None or manager_key(team_context) != binding:
             state.update(roster=[], team=None, people={}, last_selected=[])
-            return answer('球队或当前经理的读取证据已失效，已停止使用旧名单，请重新提问。')
+            return await general()
         projected_roster = {row['uid']: row for row in team_context['facts']['team_candidates']}
         ids = re.findall(r'(?:球员|人物|person|player)\s*UID\s*[:：#]?\s*([1-9][0-9]{0,9})\b', message, re.I)
         selected = [r for r in roster if str(r['uid']) in ids or r['name'] in message]
@@ -157,7 +161,7 @@ class OffseasonConversation:
             cached = state['people'].get(row['uid'])
             value = cached[1] if cached and now - cached[0] <= 15 else await read(club, row['uid'])
             if not same(value):
-                return answer('选定球员的读取不再属于同一新鲜会话，已停止比较，不会使用旧值。')
+                return await general()
             state['people'][row['uid']] = (now, value)
             related.append({'person_uid': row['uid'], 'envelope': value})
         return await agent.offseason_advice((state['question'] + '\n本轮用户补充：' + message) if state['question'] and state['question'] != message else message, conversation, state['team'], character_context=supplied, club_uid=club, related_people=related)

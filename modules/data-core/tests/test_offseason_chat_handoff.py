@@ -28,7 +28,8 @@ def test_partial_readback_reaches_chat_and_blocked_advice_without_business_promo
         assert app.state.business_snapshots.read()['snapshot'] is None
         monkeypatch.setenv('FOOTBALL_ASSISTANT_OFFSEASON_CONSENT', '0')
         result = client.post('/v1/agent/business-advice', headers=AUTH, json={'message': 'Which keeper?', 'capability': 'tactical_analysis'})
-        assert result.json()['status'] == 'blocked'
+        assert result.status_code == 503  # General chat still needs an actually configured model.
+        assert result.json()['detail']['code'] == 'model_not_configured'
         assert len(calls) == 2
 
 
@@ -43,8 +44,11 @@ def test_reported_keeper_questions_return_scoped_confirmation_without_model(tmp_
     scope = {'save_id': 'session:test', 'character_id': 'official.eckera', 'persona': 'Do not echo this private persona'}
     app = create_app(settings(tmp_path))
     with TestClient(app, base_url='http://127.0.0.1') as client:
-        async def forbidden(*args, **kwargs):
-            raise AssertionError('Candidate confirmation must not call a model')
+        general_calls = []
+        async def forbidden(message, conversation, context, **kwargs):
+            assert context == {'source_status': 'general_knowledge'}
+            general_calls.append(message)
+            return {'reply': '先聊选门将的思路，我偏向接球稳、出击判断好的。', 'conversation_id': conversation}
         monkeypatch.setattr(app.state.agent, '_chat', forbidden)
         for message in ['你推荐谁给我们门将', '你推荐我们选择哪个门将呢']:
             result = client.post('/v1/chat', headers=AUTH, json={'message': message, 'conversation_id': 'reported', 'character_context': scope})
@@ -53,3 +57,5 @@ def test_reported_keeper_questions_return_scoped_confirmation_without_model(tmp_
             assert data['reply'].strip()
             assert data['character_context'] == {k: scope[k] for k in ('save_id', 'character_id')}
             assert 'private persona' not in str(data)
+
+        assert general_calls == ['你推荐我们选择哪个门将呢']  # Repeated confirmation no longer blocks the companion.

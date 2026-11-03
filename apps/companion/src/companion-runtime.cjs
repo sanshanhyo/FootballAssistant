@@ -342,7 +342,7 @@ class CompanionRuntime extends EventEmitter {
     const id = `${request.id}:snapshot`;
     const labels = { running: '读取模拟观测', completed: '模拟观测读取完成', cancelled: '模拟读取已取消', error: '模拟读取失败' };
     if (this.mode === 'real') Object.assign(labels, { running: '请求真实服务', completed: '真实服务已回复', cancelled: '真实请求已取消', error: '真实请求失败' });
-    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.diagnostic ? 'reader.windows-discovery' : request.capability ? (request.adviceMode === 'ui_evidence' ? 'agent.ui-advice' : 'agent.business-advice') : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
+    const event = { type: 'tool', requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, tool: { id, name: request.mode === 'real' ? (request.diagnostic ? 'reader.windows-discovery' : request.capability ? (request.adviceMode === 'ui_evidence' ? 'agent.ui-advice' : request.nativePartial ? 'agent.chat' : 'agent.business-advice') : 'agent.chat') : 'reader.snapshot', status, label: labels[status] || status, metadata: meta || this.tools.get(id)?.tool.metadata || (this.mode === 'mock' ? metadata(request.sessionId) : businessMetadata()) } };
     this.tools.set(id, event);
     if (this.tools.size > 100) this.tools.delete(this.tools.keys().next().value);
     this.publish(event);
@@ -358,7 +358,8 @@ class CompanionRuntime extends EventEmitter {
     const capability = this.mode === 'real' && !diagnostic ? adviceCapability(message, input?.capability) : null;
     const adviceMode = input?.adviceMode ?? 'native';
     if (!['ui_evidence', 'native'].includes(adviceMode)) throw new Error('不支持的建议模式。');
-    const request = { conversationId: this.characterLibrary ? this.backendConversationId : this.sessionId, characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
+    const nativePartial = adviceMode !== 'ui_evidence' && capability && this.client().capabilities(this.realConnection?.readiness).some(item => item.id === capability && item.available && item.partial);
+    const request = { nativePartial, conversationId: this.characterLibrary ? this.backendConversationId : this.sessionId, characterToken: this.characterSession?.current, characterContext: this.characterContext(), diagnostic, capability, adviceMode, mode: this.mode, id: randomUUID(), epoch: this.epoch, sessionId: this.sessionId, text: message, controller: new AbortController() };
     if (this.mode === 'real') {
       // Previous cards are historical, not current values after a new read or failure.
       for (const item of this.messages) if (item.sessionId === this.sessionId && item.role === 'assistant') item.cards = [];
@@ -374,13 +375,13 @@ class CompanionRuntime extends EventEmitter {
     try {
       this.tool(request, 'running');
       const result = request.mode === 'real'
-        ? await this.realClient.reply({ message: request.text, conversationId: request.conversationId, capability: request.capability, adviceMode: request.adviceMode, characterContext: request.characterContext, signal: request.controller.signal })
+        ? await this.realClient.reply({ message: request.text, conversationId: request.conversationId, capability: request.capability, adviceMode: request.adviceMode, nativePartial: request.nativePartial, characterContext: request.characterContext, signal: request.controller.signal })
         : await this.mockClient.snapshot({ sessionId: request.sessionId, signal: request.controller.signal });
       if (!this.active(request)) return;
       if (request.mode === 'real' && (typeof result?.text !== 'string' || !result.text.trim())) throw Error('后端未返回可显示的回复，请重试。');
       if (request.mode === 'real') {
         this.connectionController?.abort();
-        this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: request.capability ? result.metadata.limitations.join('、') || null : null, readiness: request.capability ? result.metadata.readiness : this.realConnection?.readiness };
+        this.realConnection = { state: 'connected', label: '真实模式 · 服务已连接', reason: request.capability ? result.metadata.limitations.join('、') || null : null, readiness: result.metadata.readiness?.offseason_readiness ? result.metadata.readiness : request.capability ? result.metadata.readiness : this.realConnection?.readiness };
       }
       this.tool(request, 'completed', result.metadata);
       this.addMessage({ id: randomUUID(), role: 'assistant', origin: 'reply', text: request.mode === 'real' ? result.text : '【模拟回复】已收到你的消息。这是前端交互演示，尚未调用 AI 或读取游戏。下面的信息卡展示来源、未知值和数据限制。', createdAt: new Date().toISOString(), requestId: request.id, sessionId: request.sessionId, epoch: request.epoch, metadata: result.metadata, cards: result.cards });
