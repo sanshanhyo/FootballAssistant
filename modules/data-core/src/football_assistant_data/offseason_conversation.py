@@ -17,8 +17,13 @@ class OffseasonConversation:
     def __init__(self):
         self.sessions = OrderedDict()
         self.lock = asyncio.Lock()
+        self.active_request = None
 
     async def reply(self, body, read, agent):
+        supplied = body.character_context.model_dump(exclude_none=True) if body.character_context else None
+        scope = supplied or {}
+        request_key = (scope.get('save_id', 'legacy'), scope.get('character_id', 'official.eckera'), body.conversation_id)
+        continuation = bool(re.fullmatch(r'(?:你看一下吧|再看看|比较一下|他们呢|怎么样|然后呢|为什么呢?)[。？?！!]*', body.message.strip()))
         # Serial selection updates avoid conflicting confirmations, but a slow
         # model must not leave later user messages queued without a bounded reply.
         try:
@@ -27,12 +32,25 @@ class OffseasonConversation:
             # The reader is busy, not the companion. Never queue indefinitely or
             # reuse the other request's observations, but keep this turn useful.
             supplied = body.character_context.model_dump(exclude_none=True) if body.character_context else None
-            result = await agent.general_advice(body.message, body.conversation_id, character_context=supplied)
+            active = self.active_request
+            prompt = body.message
+            if continuation and body.conversation_id and active and active[0] == request_key:
+                # Bind a follow-up to the latest pending user intent, never its
+                # unvalidated observations or another role/conversation's turn.
+                prompt = ('最近正在处理的用户问题（读取或回答尚未完成，不是游戏事实）：' + active[1]
+                          + '\n本轮用户补充：' + body.message)
+            result = await agent.general_advice(prompt, body.conversation_id, character_context=supplied)
             result['reader_handoff'] = {'reason': 'conversation_busy'}
             return result
+        question = body.message
+        previous = self.sessions.get(request_key)
+        if continuation and previous and previous.get('question'):
+            question = previous['question']
+        self.active_request = (request_key, question)
         try:
             return await self._reply(body, read, agent)
         finally:
+            self.active_request = None
             self.lock.release()
 
     async def _reply(self, body, read, agent):

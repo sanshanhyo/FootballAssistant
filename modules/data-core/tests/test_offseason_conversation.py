@@ -103,3 +103,46 @@ def test_removed_pending_team_cannot_leave_an_empty_confirmation_loop():
         finally:
             agent.close()
     asyncio.run(scenario())
+
+
+def test_busy_followup_uses_same_scope_inflight_question_not_completed_topic():
+    """Real async overlap with synthetic reader/model, no game/model calls."""
+    async def scenario():
+        reader = OffseasonConversation()
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        class Agent:
+            async def general_advice(self, message, conversation, **kwargs):
+                calls.append((message, conversation, kwargs))
+                return {'reply': '先讲门将选择的一般思路。', 'status': 'general_advice', 'source_status': 'general_knowledge'}
+        agent = Agent()
+        scope = {'save_id': 'session:synthetic', 'character_id': 'official.eckera'}
+        def body(message, cid='same', supplied=None):
+            return SimpleNamespace(message=message, conversation_id=cid,
+                character_context=SimpleNamespace(model_dump=lambda **kw: supplied or scope))
+        async def read(*args):
+            entered.set()
+            await release.wait()
+            return {'snapshot': None, 'reason': 'producer_failed'}
+        owner = asyncio.create_task(reader.reply(body('你推荐我们选择哪个门将呢'), read, agent))
+        try:
+            await entered.wait()
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert result['reader_handoff']['reason'] == 'conversation_busy'
+            assert '你推荐我们选择哪个门将呢' in calls[-1][0]
+            assert '你看一下吧' in calls[-1][0]
+            assert '未完成' in calls[-1][0]  # User intent only, not an observation/result.
+            await reader.reply(body('你看一下吧', cid='other'), read, agent)
+            assert calls[-1][0] == '你看一下吧'
+            await reader.reply(body('你看一下吧', supplied={**scope, 'character_id': 'example.other'}), read, agent)
+            assert calls[-1][0] == '你看一下吧'
+            await reader.reply(body('不聊足球了，讲个笑话'), read, agent)
+            assert calls[-1][0] == '不聊足球了，讲个笑话'
+            assert reader.lock.locked()
+        finally:
+            owner.cancel()
+            try: await owner
+            except asyncio.CancelledError: pass
+        assert not reader.lock.locked()
+        assert reader.active_request is None
+    asyncio.run(scenario())
