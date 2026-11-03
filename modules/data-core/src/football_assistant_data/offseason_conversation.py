@@ -27,7 +27,9 @@ class OffseasonConversation:
             # The reader is busy, not the companion. Never queue indefinitely or
             # reuse the other request's observations, but keep this turn useful.
             supplied = body.character_context.model_dump(exclude_none=True) if body.character_context else None
-            return await agent.general_advice(body.message, body.conversation_id, character_context=supplied)
+            result = await agent.general_advice(body.message, body.conversation_id, character_context=supplied)
+            result['reader_handoff'] = {'reason': 'conversation_busy'}
+            return result
         try:
             return await self._reply(body, read, agent)
         finally:
@@ -65,7 +67,16 @@ class OffseasonConversation:
         initial = prepare_offseason_advice(envelope)
         if initial is None:
             self.sessions.pop(key, None)
-            return None
+            # The old user question is conversational intent, not game evidence.
+            # Keep that intent after a failed read, but discard all native state.
+            question = previous.get('question') if previous and continuation else None
+            prompt = (question + '\n本轮用户补充：' + message) if question else message
+            result = await agent.general_advice(prompt, conversation, character_context=supplied)
+            result['reader_handoff'] = {'reason': 'initial_identity_or_freshness'}
+            reason = envelope.get('reason') if isinstance(envelope, dict) else None
+            if reason in {'producer_busy', 'producer_timeout', 'producer_failed', 'producer_invalid_output', 'fm_not_running', 'process_access_denied', 'read_failed', 'no_data', 'no_session'}:
+                result['reader_handoff']['reader_reason'] = reason
+            return result
         session = initial['session_id']
         manager = initial['facts'].get('current_manager')
         def manager_key(context):
@@ -150,7 +161,10 @@ class OffseasonConversation:
         if not state['club']:
             return await agent.offseason_advice(message, conversation, envelope, character_context=supplied)
         club = state['club']
-        if state['team'] is None or now - state['team_at'] > 25:
+        # Cache insertion time is not the observation time. A slow model or
+        # initial identity read can expire the cached capture within this TTL.
+        cached_team = prepare_offseason_advice(state['team'], club_uid=club) if state['team'] else None
+        if cached_team is None or manager_key(cached_team) != binding or time.monotonic() - state['team_at'] > 25:
             team = await read(club, 0)
             if not same(team):
                 state.update(roster=[], team=None, people={})
@@ -197,7 +211,7 @@ class OffseasonConversation:
         related = []
         for row in selected:
             cached = state['people'].get(row['uid'])
-            value = cached[1] if cached and now - cached[0] <= 15 else await read(club, row['uid'])
+            value = cached[1] if cached and time.monotonic() - cached[0] <= 15 and same(cached[1]) else await read(club, row['uid'])
             if not same(value):
                 return await general('person_identity_or_freshness', value)
             state['people'][row['uid']] = (time.monotonic(), value)

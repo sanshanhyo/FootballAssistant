@@ -8,7 +8,7 @@ from football_assistant_data.offseason_conversation import OffseasonConversation
 from test_native_identity_projection import native_envelope, positions
 
 
-def run_scenario(change=None):
+def run_scenario(change=None, *, fail_first=False):
     async def scenario():
         data = native_envelope()
         rows = data['snapshot']['team']['players']
@@ -30,11 +30,21 @@ def run_scenario(change=None):
         agent = AgentService(None, None)
         async def chat(message, conversation, context, **kwargs):
             contexts.append(context)
+            if fail_first and len(contexts) == 1:
+                from football_assistant_agent.service import ModelUnavailable
+                raise ModelUnavailable('模型服务没有返回可用的文本响应。', reason='invalid_response', subtype='token_limit')
             return {'reply': '本次两个候选只按已读原始属性比较。', 'conversation_id': conversation}
         agent._chat = chat
         reader = OffseasonConversation()
         try:
-            result = await reader.reply(body('你推荐我们选择哪个门将呢'), read, agent)
+            if fail_first:
+                import pytest
+                from football_assistant_agent.service import ModelUnavailable
+                with pytest.raises(ModelUnavailable):
+                    await reader.reply(body('你推荐我们选择哪个门将呢'), read, agent)
+                result = None
+            else:
+                result = await reader.reply(body('你推荐我们选择哪个门将呢'), read, agent)
             return reader, result, calls, contexts, data, read, body, agent
         except BaseException:
             agent.close()
@@ -268,6 +278,70 @@ def test_failed_roster_handoff_reports_only_bounded_reason_and_stage():
                 'reader_reason': 'producer_timeout', 'stage': 'team', 'elapsed_ms': 20001}
             assert 'SECRET_DO_NOT_RETURN' not in str(result)
             assert not contexts[-1].get('facts')
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_provider_failure_preserves_same_conversation_keeper_followup():
+    """Synthetic first-turn provider failure, not live model/game acceptance."""
+    async def scenario():
+        reader, _, calls, contexts, _, read, body, agent = await run_scenario(fail_first=True)()
+        seen = []
+        try:
+            assert not reader.lock.locked()
+            async def succeeding(message, conversation, context, **kwargs):
+                seen.append((message, context))
+                return {'reply': '只按刚读到的两位门将属性比较。', 'conversation_id': conversation}
+            agent._chat = succeeding
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert result['status'] == 'partial'
+            assert '你推荐我们选择哪个门将呢' in seen[-1][0]
+            assert '本轮用户补充：你看一下吧' in seen[-1][0]
+            assert len(seen[-1][1]['facts']['player_candidates']) == 2
+            assert not reader.lock.locked()
+            assert sum(person != 0 for _, person in calls) == 2
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_expired_cached_roster_is_refreshed_before_keeper_followup():
+    """Cache age is not proof of capture freshness after a slow model/read."""
+    async def scenario():
+        reader, _, calls, _, _, read, body, agent = await run_scenario(fail_first=True)()
+        try:
+            state = next(iter(reader.sessions.values()))
+            state['team'] = deepcopy(state['team'])
+            state['team']['snapshot']['capturedAt'] = '2000-01-01T00:00:00Z'
+            # Local cache insertion was recent, but its underlying observation is not.
+            before = len(calls)
+            result = await reader.reply(body('你看一下吧'), read, agent)
+            assert calls[before:before + 2] == [(0, 0), (34, 0)]
+            assert result['status'] == 'partial'
+            assert len(result['context']['facts']['player_candidates']) == 2
+        finally:
+            agent.close()
+    asyncio.run(scenario())
+
+
+def test_failed_initial_revalidation_keeps_only_question_for_general_followup():
+    async def scenario():
+        reader, _, _, _, _, _, body, agent = await run_scenario(fail_first=True)()
+        captured = []
+        async def unavailable(*args):
+            return {'reason': 'producer_timeout', 'snapshot': None}
+        async def chat(message, conversation, context, **kwargs):
+            captured.append((message, context))
+            return {'reply': '先说选门将的思路。', 'conversation_id': conversation}
+        agent._chat = chat
+        try:
+            result = await reader.reply(body('你看一下吧'), unavailable, agent)
+            assert result['status'] == 'general_advice'
+            assert result['reader_handoff']['reason'] == 'initial_identity_or_freshness'
+            assert '你推荐我们选择哪个门将呢' in captured[-1][0]
+            assert not captured[-1][1].get('facts')
+            assert not reader.sessions  # No stale identity/roster is retained.
         finally:
             agent.close()
     asyncio.run(scenario())
