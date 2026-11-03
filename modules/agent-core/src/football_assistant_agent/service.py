@@ -124,10 +124,12 @@ class AgentService:
         prepared = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid)
         if prepared is None:
             return None
+        primary_facts = dict(prepared["facts"])
+        related_facts = {}
         # Related person reads are bounded, same-process, and must belong to the
         # primary selected-club roster projection. Never merge a new game session.
         if club_uid and isinstance(related_people, (tuple, list)) and len(related_people) <= 2:
-            roster = {row["uid"] for row in prepared["facts"]["team_candidates"]}
+            roster = {row["uid"]: row for row in prepared["facts"]["team_candidates"]}
             candidates, seen = [], set()
             for related in related_people:
                 if not isinstance(related, dict) or type(related.get("person_uid")) is not int:
@@ -136,21 +138,37 @@ class AgentService:
                 if uid not in roster or uid in seen:
                     continue
                 item = prepare_offseason_advice(related.get("envelope"), club_uid=club_uid, person_uid=uid)
-                if item is None or item["session_id"] != prepared["session_id"] or item["facts"]["player_candidate"] is None:
+                if (item is None or item["session_id"] != prepared["session_id"]
+                        or item["facts"]["current_manager"] != prepared["facts"]["current_manager"]
+                        or item["facts"]["player_candidate"] is None):
                     continue
+                player = item["facts"]["player_candidate"]
+                roster_positions = roster[uid].get("positions")
+                if player.get("positions") is not None and roster_positions is not None and player["positions"] != roster_positions:
+                    continue
+                related_facts[uid] = dict(player)
+                raw_player = ((related.get("envelope") or {}).get("snapshot") or {}).get("player") or {}
+                raw_player = raw_player.get("value") or {}
+                # A legacy detail read may omit positions. Reuse only the same
+                # verified UID's roster evidence, never override a failed read.
+                if player.get("positions") is None and "positions" not in raw_player and roster_positions is not None:
+                    player["positions"] = roster_positions
                 seen.add(uid)
-                candidates.append(item["facts"]["player_candidate"])
+                candidates.append(player)
             prepared["facts"]["player_candidates"] = candidates
         coverage = ""
         prepared["freshness"] = "observed_for_request"
         if related_people:
             people = prepared["facts"].get("player_candidates", [])
             names = "、".join(person["name"] or "姓名未知的已选球员" for person in people) or "无人（本次没有通过校验的球员字段）"
-            coverage = "本次实际读取覆盖：" + names + "。未读取人员不参与比较；raw 是原始值，不是 20 分评级，位置仍未由读取确认。\n"
+            position_count = sum(person.get("positions") is not None for person in people)
+            position_coverage = (f"其中 {position_count} 人的位置熟练度通过原生校验，熟练度为 0 到 20；这不表示当前比赛位置。"
+                                 if position_count else "位置仍未由读取确认。")
+            coverage = "本次实际读取覆盖：" + names + "。未读取人员不参与比较；四项属性 raw 是原始值，不是 20 分评级。" + position_coverage + "\n"
             if not isinstance(related_people, (tuple, list)) or len(related_people) > 2 or len(people) != len(related_people):
                 return {"reply": coverage + "本次请求的球员信息未全部通过校验，暂不作完整比较。请确认要比较的人名后重试。",
                         "conversation_id": conversation_id, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
-        if asks_managed_team(message):
+        if asks_managed_team(message) and prepared["facts"]["current_manager"] is None:
             response = managed_team_unconfirmed(conversation_id, mode="native")
         else:
             # Process IDs, session hashes, producer identity and timestamps stay local.
@@ -160,15 +178,24 @@ class AgentService:
                 **({"character_context": character_context} if character_context is not None else {}))
             # A model can take longer than the input freshness window. Do not
             # display its conclusions as a current observation after that window.
-            still_fresh = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid) is not None
+            rechecked = prepare_offseason_advice(envelope, club_uid=club_uid, person_uid=person_uid)
+            still_fresh = rechecked is not None and rechecked["facts"] == primary_facts
             if related_people:
-                still_fresh = still_fresh and all(prepare_offseason_advice(item["envelope"], club_uid=club_uid,
-                    person_uid=item["person_uid"]) is not None for item in related_people)
+                for item in related_people:
+                    related = prepare_offseason_advice(item["envelope"], club_uid=club_uid, person_uid=item["person_uid"])
+                    still_fresh = (still_fresh and related is not None
+                                   and related["session_id"] == prepared["session_id"]
+                                   and related["facts"]["current_manager"] == prepared["facts"]["current_manager"]
+                                   and related["facts"]["player_candidate"] == related_facts.get(item["person_uid"]))
             if not still_fresh:
                 prepared["freshness"] = "expired_during_generation"
                 response["reply"] = coverage + "本次采样在生成期间已过期，未展示生成结论；请重新提问以读取新的数据。"
             else:
-                response["reply"] = "【实验性赛外读取 · 部分候选】仅为本次请求的采样，并非持续实时或完整存档数据，未确认当前执教身份。\n" + coverage + response["reply"]
+                identity = ("已校验本次当前本地经理与关联俱乐部，不代表网络权限或存档身份。"
+                            if prepared["facts"]["current_manager"] else "未确认当前执教身份。")
+                if prepared["facts"]["selected_club_is_current"] is False:
+                    identity += "本次所选俱乐部不是该经理的关联俱乐部。"
+                response["reply"] = "【实验性赛外读取 · 部分候选】仅为本次请求的采样，并非持续实时或完整存档数据。" + identity + "\n" + coverage + response["reply"]
         return {**response, "source_status": "partial_native_candidates", "status": "partial", "context": prepared, "character_context": self.response_scope(character_context)}
 
     async def calendar_advice(self, message, conversation_id, envelope, club_uid, start, end, *, character_context=None):
