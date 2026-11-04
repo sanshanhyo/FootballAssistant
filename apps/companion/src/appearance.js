@@ -15,6 +15,7 @@
     if (pet) {
       style.setProperty('--bubble-font',value?.fontFamily && Object.hasOwn(FONTS,value.fontFamily)?FONTS[prefs.fontFamily]:'"851 GBai Marker",sans-serif');
       style.setProperty('--font-scale',String(prefs.fontSize/14));
+      style.setProperty('--bubble-font-size',`${prefs.fontSize}px`);
     }
     document.documentElement.dataset.theme=prefs.darkMode?'dark':'light';return prefs;
   }
