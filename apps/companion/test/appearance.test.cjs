@@ -14,3 +14,11 @@ test('light motion defaults on and cross-window changes propagate the stored boo
   f.set(JSON.stringify({lightMotion:true}));f.events.get('storage')({key:Appearance.KEY});
   assert.deepEqual(values,[true,false,true]);stop();
 });
+test('bubble duration defaults and malformed values are bounded',()=>{
+  assert.equal(Appearance.normalize({}).bubbleDurationMode,'auto');
+  for (const value of [undefined,null,'bad',0,-1,1,61,Infinity,2.5]) assert.equal(Appearance.normalize({bubbleDurationMode:'bad',bubbleDurationSeconds:value}).bubbleDurationSeconds,8);
+  for (const value of [2,8,60]) assert.equal(Appearance.normalize({bubbleDurationMode:'fixed',bubbleDurationSeconds:value}).bubbleDurationSeconds,value);
+  const f=fixture(JSON.stringify({bubbleDurationMode:'fixed',bubbleDurationSeconds:60}));let prefs;
+  Appearance.bindPet({...f,onChange:value=>prefs=value});assert.equal(prefs.bubbleDurationSeconds,60);
+  f.set(JSON.stringify({bubbleDurationMode:'auto'}));f.events.get('storage')({key:Appearance.KEY});assert.equal(prefs.bubbleDurationMode,'auto');
+});

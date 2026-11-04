@@ -31,7 +31,10 @@ test('renderer bubble ignores drags and cancelled pointers, supports click/keybo
   emit('pointerdown');emit('pointermove',{clientX:40});emit('click');
   assert.equal(queue.state().index,0);
   emit('pointerdown');emit('pointercancel');emit('click');assert.equal(queue.state().index,0);
-  emit('pointerdown');emit('click');assert.equal(queue.state().index,1);
+  emit('pointerenter');assert.equal(timers.size,0);
+  emit('pointerdown');emit('click');assert.equal(queue.state().index,1);assert.equal(timers.size,0);
+  emit('focus');emit('pointerleave');assert.equal(timers.size,0);
+  emit('blur');assert.equal(timers.size,1);
   emit('keydown',{key:'Enter',repeat:true});assert.equal(queue.state().index,1);
   emit('keydown',{key:' ',repeat:false});assert.equal(queue.state().index,2);
   assert.equal(get('bubble-progress').textContent,'3 / 3');

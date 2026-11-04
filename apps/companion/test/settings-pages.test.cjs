@@ -136,3 +136,13 @@ test('save masks the committed key and reports session-only storage without secr
  h.$('model-api-key').value='test-secret';await h.$('model-fetch').fire('click');h.$('model-name').value='two';await h.$('model-config-form').fire('submit');await flush();
  assert.deepEqual(received,{provider:'openai',baseUrl:'https://api.openai.com/v1',model:'two',apiKey:'test-secret'});assert.equal(h.$('model-api-key').value,'');assert.match(h.$('model-storage-note').textContent,/仅本次/);assert.match(h.$('notice').textContent,/待重启/);
 });
+test('bubble duration persists, validates integer bounds, and survives unrelated appearance edits',async()=>{
+  const h=await harness();assert.equal(h.$('bubble-duration-mode').value,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
+  h.$('bubble-duration-mode').value='fixed';await h.$('bubble-duration-mode').fire('change');assert.equal(h.$('bubble-duration-row').hidden,false);
+  h.$('bubble-duration-seconds').value='60';await h.$('bubble-duration-seconds').fire('change');
+  const read=()=>JSON.parse(h.storage.get('football-assistant.appearance.v1'));
+  assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().fontFamily,undefined);
+  for (const invalid of ['','1','61','2.5','NaN']) {h.$('bubble-duration-seconds').value=invalid;await h.$('bubble-duration-seconds').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.match(h.$('error').textContent,/2–60/);}
+  h.$('font-size').value='18';await h.$('font-size').fire('change');assert.equal(read().bubbleDurationSeconds,60);assert.equal(read().bubbleDurationMode,'fixed');
+  h.$('bubble-duration-mode').value='auto';await h.$('bubble-duration-mode').fire('change');assert.equal(read().bubbleDurationMode,'auto');assert.equal(h.$('bubble-duration-row').hidden,true);
+});

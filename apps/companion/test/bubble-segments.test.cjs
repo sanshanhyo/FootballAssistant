@@ -108,3 +108,22 @@ test('approximate length keeps closing punctuation with its sentence at the boun
   const malformed = splitReply('中'.repeat(40) + '！'.repeat(100));
   assert.ok(malformed.every(part => graphemes(part).length <= 44));
 });
+test('fixed duration updates one timer, fences old callbacks and does not resurrect hidden pages',()=>{
+  const f=fixture();f.queue.replace('a','第一段。第二段。');const stale=[...f.timers.values()][0].callback;
+  f.queue.configure({bubbleDurationMode:'fixed',bubbleDurationSeconds:60});
+  assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,60000);stale();assert.equal(f.queue.state().hidden,false);
+  f.queue.next();assert.equal([...f.timers.values()][0].ms,60000);assert.equal(f.timers.size,1);
+  f.queue.configure({bubbleDurationMode:'fixed',bubbleDurationSeconds:-1});assert.equal([...f.timers.values()][0].ms,8000);
+  f.queue.configure({bubbleDurationMode:'auto'});assert.equal([...f.timers.values()][0].ms,dwellMs('第二段。'));
+  f.fire();f.queue.configure({bubbleDurationMode:'fixed',bubbleDurationSeconds:2});assert.equal(f.timers.size,0);assert.equal(f.queue.state().hidden,true);
+});
+test('reading pause permits paging but composes with hidden-window pause and never duplicates timers',()=>{
+  const f=fixture();f.queue.replace('a','一。二。三。');f.queue.setReading(true);assert.equal(f.timers.size,0);
+  assert.equal(f.queue.next(),true);assert.equal(f.queue.state().index,1);assert.equal(f.timers.size,0);
+  f.queue.configure({bubbleDurationMode:'fixed',bubbleDurationSeconds:2});assert.equal(f.timers.size,0);
+  f.queue.pause();f.queue.setReading(false);assert.equal(f.timers.size,0);assert.equal(f.queue.next(),false);
+  f.queue.resume();f.queue.resume();assert.equal(f.timers.size,1);assert.equal([...f.timers.values()][0].ms,2000);
+  f.queue.setReading(true);f.queue.pause();f.queue.resume();assert.equal(f.timers.size,0);
+  f.queue.setReading(false);f.queue.setReading(false);assert.equal(f.timers.size,1);
+  f.queue.dispose();f.queue.configure({bubbleDurationMode:'auto'});f.queue.setReading(true);assert.equal(f.timers.size,0);
+});

@@ -51,6 +51,7 @@
 
   function createQueue({ onChange = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, maxCharacters = 40 } = {}) {
     let key = null, fullText = '', chunks = [], index = 0, timer = null, version = 0, paused = false, disposed = false, hidden = true;
+    let reading = false, durationMode = 'auto', durationSeconds = 8;
     const state = () => ({ key, text: chunks[index] || '', index, count: chunks.length, hasNext: index + 1 < chunks.length, hidden });
     function stopTimer() { version++; if (timer !== null) clearTimer(timer); timer = null; }
     function hide() {
@@ -60,10 +61,10 @@
     }
     function schedule() {
       stopTimer();
-      if (disposed || paused || hidden || !chunks.length) return;
+      if (disposed || paused || reading || hidden || !chunks.length) return;
       const fence = version;
       // Reading time dismisses this page; it never consumes an unread page.
-      timer = setTimer(() => { if (disposed || paused || version !== fence) return; timer = null; hide(); }, dwellMs(chunks[index]));
+      timer = setTimer(() => { if (disposed || paused || version !== fence) return; timer = null; hide(); }, durationMode === 'fixed' ? durationSeconds * 1000 : dwellMs(chunks[index]));
     }
     function next() {
       if (disposed || paused || hidden || index + 1 >= chunks.length) return false;
@@ -90,6 +91,13 @@
         return current;
       },
       next, hide, reopen,
+      configure({ bubbleDurationMode, bubbleDurationSeconds } = {}) {
+        const mode = bubbleDurationMode === 'fixed' ? 'fixed' : 'auto';
+        const seconds = Number.isInteger(Number(bubbleDurationSeconds)) && Number(bubbleDurationSeconds) >= 2 && Number(bubbleDurationSeconds) <= 60 ? Number(bubbleDurationSeconds) : 8;
+        if (mode === durationMode && seconds === durationSeconds) return;
+        durationMode = mode; durationSeconds = seconds; schedule();
+      },
+      setReading(value) { if (reading !== Boolean(value)) { reading = Boolean(value); schedule(); } },
       clear() { stopTimer(); key = null; fullText = ''; chunks = []; index = 0; hidden = true; if (!disposed) onChange(state()); },
       pause() { paused = true; stopTimer(); },
       resume() { if (!disposed && paused) { paused = false; schedule(); } },
