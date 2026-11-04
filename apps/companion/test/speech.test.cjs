@@ -79,7 +79,7 @@ test('TTS cloud requests keep models in main config and return bounded audio for
   const service = createSpeechService({ env: cloudEnv, fetch: async (url, options) => { request = { url, options }; return replyAudio(); } });
   const result = await service.speak(operation({ provider: 'openai', text: '你好', voice: 'alloy', model: 'renderer-cannot-override' }));
   assert.equal(request.url, 'https://speech.example/v1/audio/speech');
-  assert.deepEqual(JSON.parse(request.options.body), { model: cloudEnv.FA_SPEECH_TTS_MODEL, input: '你好', voice: 'alloy', response_format: 'mp3' });
+  assert.deepEqual(JSON.parse(request.options.body), { model: cloudEnv.FA_SPEECH_TTS_MODEL, input: '你好', voice: 'alloy', response_format: 'mp3', speed: 1 });
   assert.equal(result.playback, 'renderer');
   assert.ok(result.audio instanceof ArrayBuffer);
   assert.equal(result.mimeType, 'audio/mpeg');
@@ -205,6 +205,37 @@ test('Edge uses fixed executable with text file input and removes temporary audi
     // can name the same executable with different spellings across sync/async APIs.
     assert.equal(invocation.file, realpathSync(executable));
     assert.equal(invocation.options.shell, false);
+    assert.equal(invocation.args.some(arg => arg.includes(text)), false);
+    assert.equal(result.audio.byteLength, 3);
+    await assert.rejects(fs.access(temporaryInput), { code: 'ENOENT' });
+  } finally { service.dispose(); await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('Bundled backend Edge mode receives safe prefix and speed', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'speech-edge-test-'));
+  const executable = path.join(directory, 'edge-tts');
+  await fs.writeFile(executable, '# test fixture', { mode: 0o700 });
+  let invocation; let temporaryInput;
+  const text = '不执行 $(touch unwanted) `shell` <xml>';
+  const service = createSpeechService({ env: {}, bundledEdgePath: executable, platform: 'darwin', spawn: (file, args, options) => {
+    invocation = { file, args, options };
+    const child = new EventEmitter(); child.kill = () => {};
+    temporaryInput = args[args.indexOf('--file') + 1];
+    const output = args[args.indexOf('--write-media') + 1];
+    void fs.readFile(temporaryInput, 'utf8').then(input => {
+      assert.equal(input, text);
+      return fs.writeFile(output, new Uint8Array([0x49, 0x44, 0x33]));
+    }).then(() => child.emit('exit', 0));
+    return child;
+  } });
+  try {
+    const result = await service.speak(operation({ provider: 'edge', text, speed: 0.5 }));
+    // Use the same canonicalization API as production; Windows 8.3 and long paths
+    // can name the same executable with different spellings across sync/async APIs.
+    assert.equal(invocation.file, realpathSync(executable));
+    assert.equal(invocation.options.shell, false);
+    assert.equal(invocation.args[0], '--edge-tts');
+    assert.ok(invocation.args.includes('--rate=-50%'));
     assert.equal(invocation.args.some(arg => arg.includes(text)), false);
     assert.equal(result.audio.byteLength, 3);
     await assert.rejects(fs.access(temporaryInput), { code: 'ENOENT' });
